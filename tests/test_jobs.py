@@ -82,6 +82,54 @@ class HandoffParseTests(unittest.TestCase):
         self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
         self.assertEqual(local, {"demo": "echo", "message": "ping"})
 
+    def test_reserve_synthesizes_opaque_job(self) -> None:
+        kind, cls, digest, local = parse_submit(
+            {"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 6}
+        )
+        self.assertEqual(kind, "job")
+        self.assertEqual(cls, "cpu")
+        expected = {
+            "class": "cpu",
+            "demo": "reserve",
+            "label": "ux-seed",
+            "seconds": 6,
+            "stages": 3,
+        }
+        self.assertEqual(digest, digest_canonical(expected))
+        self.assertEqual(local, expected)
+        self.assertNotEqual(local["demo"], "reserve_ifrs17")
+
+    def test_reserve_defaults_and_gpu_label(self) -> None:
+        kind, cls, digest, local = parse_submit({"demo": "reserve"})
+        self.assertEqual((kind, cls), ("job", "cpu"))
+        self.assertEqual(local["label"], "reserve-shaped")
+        self.assertEqual(local["stages"], 3)
+        self.assertEqual(local["seconds"], 6)
+        self.assertEqual(digest, digest_canonical(local))
+
+        kind, cls, digest, local = parse_submit({"demo": "reserve", "class": "gpu"})
+        self.assertEqual((kind, cls), ("job", "gpu"))
+        self.assertEqual(local["class"], "gpu")
+        self.assertEqual(digest, digest_canonical(local))
+
+    def test_reserve_rejects_bad_params_and_alias(self) -> None:
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve_ifrs17"})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "stages": 1})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "stages": True})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "seconds": -1})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "label": ""})
+        with self.assertRaises(InvalidClass):
+            parse_submit({"demo": "reserve", "class": "tpu"})
+        with self.assertRaises(InvalidHandoff):
+            parse_submit({"demo": "echo", "label": "nope"})
+        with self.assertRaises(InvalidHandoff):
+            parse_submit({"demo": "reserve", "message": "nope"})
+
     def test_engine_smuggle_keys_and_schemes(self) -> None:
         digest = _digest()
         probes = [
@@ -140,6 +188,8 @@ class HandoffParseTests(unittest.TestCase):
             {"kind": "job", "class": "cpu", "payload_digest": digest, "address": "x"},
             {"kind": "job", "class": "cpu", "payload_digest": "s3://bucket/key"},
             {"kind": "job", "class": "cpu", "payload_digest": digest, "image": "busybox"},
+            {"demo": "reserve", "engine": "local"},
+            {"demo": "reserve", "seconds": 8, "ray": "cluster"},
         ]
         for raw in probes:
             with self.subTest(raw=raw):
@@ -242,6 +292,77 @@ class JobStoreTests(unittest.TestCase):
         again = self.store.get(job.id)
         self.assertEqual(again.status, "canceled")
         self.assertIsNone(again.error)
+
+    def test_reserve_lifecycle_named_stages(self) -> None:
+        job = self.store.submit(
+            {"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 0.3}
+        )
+        self.assertEqual(job.kind, "job")
+        self.assertEqual(job.resource_class, "cpu")
+        self.assertEqual(job.status, STATUS_QUEUED)
+        self.assertEqual(job.local["demo"], "reserve")
+        self.assertEqual(
+            job.payload_digest,
+            digest_canonical(
+                {
+                    "class": "cpu",
+                    "demo": "reserve",
+                    "label": "ux-seed",
+                    "seconds": 0.3,
+                    "stages": 3,
+                }
+            ),
+        )
+        seen = set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snap = self.store.get(job.id)
+            if snap.local and snap.local.get("stage"):
+                seen.add(snap.local["stage"])
+            if snap.status == "succeeded":
+                break
+            time.sleep(0.01)
+        done = self.store.get(job.id)
+        self.assertEqual(done.status, "succeeded")
+        self.assertIn("UX seed", done.message or "")
+        self.assertIn("no IFRS17 math", done.message or "")
+        self.assertNotIn("engine", done.to_dict())
+        self.assertIn("admit", seen)
+        self.assertIn("project", seen)
+        self.assertIn("fold", seen)
+        self.assertEqual(done.local["stage"], "fold")
+        self.assertEqual(done.local["stage_index"], 3)
+
+    def test_reserve_cancel_mid_flight(self) -> None:
+        job = self.store.submit({"demo": "reserve", "stages": 3, "seconds": 8})
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snap = self.store.get(job.id)
+            if snap.status == "running" and (snap.local or {}).get("stage"):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("reserve job never reached a named running stage")
+        canceled = self.store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+        self.assertNotEqual(canceled.status, "cancelled")
+        self.assertEqual(canceled.message, "canceled by operator")
+        time.sleep(0.08)
+        again = self.store.get(job.id)
+        self.assertEqual(again.status, "canceled")
+        self.assertIsNone(again.error)
+        self.assertIn(again.local.get("stage"), {"admit", "project", "fold"})
+
+    def test_reserve_gpu_class_is_label_only(self) -> None:
+        job = self.store.submit({"demo": "reserve", "class": "gpu", "seconds": 0})
+        wait_status(self.store, job.id, {"succeeded"})
+        done = self.store.get(job.id)
+        self.assertEqual(done.resource_class, "gpu")
+        self.assertIn("label only", done.message or "")
+        self.assertIn("no GPU kernels", done.message or "")
+        blob = str(done.to_dict())
+        self.assertNotIn("ray://", blob)
+        self.assertNotIn("temporal://", blob)
 
     def test_cancel_missing(self) -> None:
         with self.assertRaises(JobNotFound):

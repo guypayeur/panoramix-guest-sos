@@ -2,9 +2,11 @@
 
 Process-local only. Opaque handoff is kind/class/payload_digest
 (runtime/compute_work.py on panoramix-runtime main, #70 Slice B). Local
-echo/sleep is a demo shortcut that synthesizes that shape.
-Real engines are selected later by panoramix-runtime bindings — this module
-has no engine URLs, addresses, or schemes. Does not close #70.
+echo/sleep/reserve is a demo shortcut that synthesizes that shape.
+Reserve is a UX seed stub (named stages, cancel mid-flight) — not IFRS17
+math and not a perf baseline. Real engines are selected later by
+panoramix-runtime bindings — this module has no engine URLs, addresses, or
+schemes. Does not close #70.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from sos.handoff import parse_submit
 from sos.handoff_vocab import (
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
+    DEMO_RESERVE,
     DEMO_SLEEP,
     STATUS_CANCELED,
     STATUS_FAILED,
@@ -27,6 +30,7 @@ from sos.handoff_vocab import (
     STATUS_RUNNING,
     STATUS_SUCCEEDED,
     TERMINAL,
+    reserve_stage_names,
 )
 
 DEFAULT_STEP_SECONDS = 0.15
@@ -153,7 +157,15 @@ class JobStore:
             local=_copy_local(job.local),
         )
 
-    def _advance(self, job_id: str, status: str, *, message: str | None = None, error: str | None = None) -> bool:
+    def _advance(
+        self,
+        job_id: str,
+        status: str,
+        *,
+        message: str | None = None,
+        error: str | None = None,
+        local_update: dict[str, Any] | None = None,
+    ) -> bool:
         """Move a live job to `status`. False if it already terminated (e.g. cancel)."""
         with self._lock:
             job = self._jobs.get(job_id)
@@ -165,6 +177,10 @@ class JobStore:
                 job.message = message
             if error is not None:
                 job.error = error
+            if local_update:
+                merged = dict(job.local) if job.local else {}
+                merged.update(local_update)
+                job.local = merged
             return True
 
     def _wait(self, job_id: str, cancel: threading.Event, seconds: float) -> bool:
@@ -204,6 +220,9 @@ class JobStore:
                 echoed = raw if isinstance(raw, str) else str(raw)
                 self._advance(job_id, STATUS_SUCCEEDED, message=echoed)
                 return
+            if demo == DEMO_RESERVE:
+                self._run_reserve(job_id, cancel, local)
+                return
             if not self._wait(job_id, cancel, self.step_seconds):
                 return
             self._advance(
@@ -213,3 +232,30 @@ class JobStore:
             )
         except Exception as exc:  # noqa: BLE001 — stub runner; surface as job failure
             self._advance(job_id, STATUS_FAILED, error=str(exc), message="stub runner failed")
+
+    def _run_reserve(self, job_id: str, cancel: threading.Event, local: dict[str, Any]) -> None:
+        """Walk named stub stages so cancel mid-flight is visible. No engines, no math."""
+        stages = int(local.get("stages") or 3)
+        seconds = float(local.get("seconds") or 0.0)
+        names = reserve_stage_names(stages)
+        per = seconds / stages if stages else 0.0
+        gpu_label = local.get("class") == "gpu"
+        for index, name in enumerate(names, start=1):
+            note = "UX seed stub; no IFRS17 math"
+            if gpu_label:
+                note += "; class=gpu is a label only (no GPU kernels)"
+            message = f"stage {index}/{stages}: {name} ({note})"
+            if not self._advance(
+                job_id,
+                STATUS_RUNNING,
+                message=message,
+                local_update={"stage": name, "stage_index": index},
+            ):
+                return
+            if not self._wait(job_id, cancel, per):
+                return
+        done = "reserve-shaped stub finished (UX seed only; no IFRS17 math"
+        if gpu_label:
+            done += "; class=gpu is a label only (no GPU kernels)"
+        done += ")"
+        self._advance(job_id, STATUS_SUCCEEDED, message=done)

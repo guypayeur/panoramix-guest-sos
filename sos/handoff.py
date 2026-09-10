@@ -2,8 +2,9 @@
 
 Hard reference: runtime/compute_work.py on panoramix-runtime main (not a PR
 number). Guest-facing submit shape is ``kind`` / ``class`` /
-``payload_digest`` — not engine brands. Local demo echo/sleep is a guest-only
-shortcut that synthesizes that shape before storage. Does not close #70.
+``payload_digest`` — not engine brands. Local demo echo/sleep/reserve is a
+guest-only shortcut that synthesizes that shape before storage. Reserve is a
+UX seed stub (not IFRS17 math, not a perf baseline). Does not close #70.
 Does not unlock #61 / #29.
 """
 
@@ -17,18 +18,28 @@ from typing import Any
 from sos.errors import EngineSmuggle, InvalidClass, InvalidDemo, InvalidDigest, InvalidHandoff, InvalidKind
 from sos.handoff_vocab import (
     DEFAULT_ECHO_MESSAGE,
+    DEFAULT_RESERVE_LABEL,
+    DEFAULT_RESERVE_SECONDS,
+    DEFAULT_RESERVE_STAGES,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
+    DEMO_RESERVE,
     DEMO_SLEEP,
     LOCAL_DEMOS,
+    MAX_RESERVE_SECONDS,
+    MAX_RESERVE_STAGES,
     MAX_SLEEP_SECONDS,
+    MIN_RESERVE_STAGES,
     RESOURCE_CLASSES,
     WORK_KINDS,
 )
 
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SEAM_KEYS = frozenset({"kind", "class", "payload_digest"})
-DEMO_KEYS = frozenset({"demo", "message", "seconds"})
+ECHO_DEMO_KEYS = frozenset({"demo", "message"})
+SLEEP_DEMO_KEYS = frozenset({"demo", "seconds"})
+RESERVE_DEMO_KEYS = frozenset({"demo", "label", "stages", "seconds", "class"})
+MAX_RESERVE_LABEL = 80
 
 # Schemes / prefixes that would smuggle an engine URL into the seam.
 ENGINE_SCHEMES = (
@@ -141,41 +152,105 @@ def _canon_seconds(seconds: float) -> int | float:
     return float(seconds)
 
 
-def parse_demo(body: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
-    """Local-only shortcut → synthesized job/cpu + digest + stub metadata."""
-    extra = sorted(str(k) for k in body if str(k) not in DEMO_KEYS)
-    if extra:
-        raise InvalidHandoff(
-            f"local demo refuses extra fields {extra} "
-            "(demo shortcut is demo/message/seconds only)"
+def _demo_allowed_keys(demo: str) -> frozenset[str]:
+    if demo == DEMO_ECHO:
+        return ECHO_DEMO_KEYS
+    if demo == DEMO_SLEEP:
+        return SLEEP_DEMO_KEYS
+    return RESERVE_DEMO_KEYS
+
+
+def _parse_nonneg_seconds(seconds: Any, *, name: str, maximum: float) -> int | float:
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        raise InvalidDemo(f"{name} seconds must be a non-negative number")
+    if seconds < 0:
+        raise InvalidDemo(f"{name} seconds must be a non-negative number")
+    if seconds > maximum:
+        raise InvalidDemo(f"{name} seconds must be <= {maximum:g}")
+    return _canon_seconds(float(seconds))
+
+
+def parse_reserve_demo(body: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
+    """UX-seed reserve shortcut → synthesized job + digest + stub metadata.
+
+    Optional ``class: gpu`` is a seam label only (still in-process; no GPU
+    kernels). Not IFRS17 math. Not the named iec baseline ``reserve_ifrs17``.
+    """
+    label = body.get("label", DEFAULT_RESERVE_LABEL)
+    if not isinstance(label, str):
+        raise InvalidDemo("reserve label must be a string")
+    label = label.strip()
+    if not label:
+        raise InvalidDemo("reserve label must be a non-empty string")
+    if len(label) > MAX_RESERVE_LABEL:
+        raise InvalidDemo(f"reserve label must be <= {MAX_RESERVE_LABEL} characters")
+
+    stages = body.get("stages", DEFAULT_RESERVE_STAGES)
+    if isinstance(stages, bool) or not isinstance(stages, int):
+        raise InvalidDemo("reserve stages must be an integer")
+    if stages < MIN_RESERVE_STAGES or stages > MAX_RESERVE_STAGES:
+        raise InvalidDemo(
+            f"reserve stages must be {MIN_RESERVE_STAGES}..{MAX_RESERVE_STAGES}"
         )
+
+    seconds = _parse_nonneg_seconds(
+        body.get("seconds", DEFAULT_RESERVE_SECONDS),
+        name="reserve",
+        maximum=MAX_RESERVE_SECONDS,
+    )
+
+    if "class" not in body:
+        cls = "cpu"
+    else:
+        class_raw = body.get("class")
+        cls = str(class_raw or "").strip().lower() if isinstance(class_raw, str) else ""
+        if cls not in RESOURCE_CLASSES:
+            raise InvalidClass(class_raw if isinstance(class_raw, str) else type(class_raw).__name__)
+
+    canonical = {
+        "class": cls,
+        "demo": DEMO_RESERVE,
+        "label": label,
+        "seconds": seconds,
+        "stages": stages,
+    }
+    local = dict(canonical)
+    digest = digest_canonical(canonical)
+    return "job", cls, digest, local
+
+
+def parse_demo(body: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
+    """Local-only shortcut → synthesized job + digest + stub metadata."""
     demo = body.get("demo")
     if not isinstance(demo, str) or demo.strip().lower() not in LOCAL_DEMOS:
         raise InvalidDemo(demo if isinstance(demo, str) else type(demo).__name__)
     demo = demo.strip().lower()
+    extra = sorted(str(k) for k in body if str(k) not in _demo_allowed_keys(demo))
+    if extra:
+        raise InvalidHandoff(
+            f"local demo refuses extra fields {extra} "
+            "(echo: demo/message; sleep: demo/seconds; "
+            "reserve: demo/label/stages/seconds/class)"
+        )
     if demo == DEMO_ECHO:
-        if "seconds" in body:
-            raise InvalidDemo("echo does not take seconds")
         message = body.get("message", DEFAULT_ECHO_MESSAGE)
         if not isinstance(message, str):
             raise InvalidDemo("echo message must be a string")
         canonical = {"demo": DEMO_ECHO, "message": message}
         local = {"demo": DEMO_ECHO, "message": message}
-    else:
-        if "message" in body:
-            raise InvalidDemo("sleep does not take message")
-        seconds = body.get("seconds", DEFAULT_SLEEP_SECONDS)
-        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
-            raise InvalidDemo("sleep seconds must be a non-negative number")
-        if seconds < 0:
-            raise InvalidDemo("sleep seconds must be a non-negative number")
-        if seconds > MAX_SLEEP_SECONDS:
-            raise InvalidDemo(f"sleep seconds must be <= {MAX_SLEEP_SECONDS}")
-        canon_seconds = _canon_seconds(float(seconds))
-        canonical = {"demo": DEMO_SLEEP, "seconds": canon_seconds}
-        local = {"demo": DEMO_SLEEP, "seconds": canon_seconds}
-    digest = digest_canonical(canonical)
-    return "job", "cpu", digest, local
+        digest = digest_canonical(canonical)
+        return "job", "cpu", digest, local
+    if demo == DEMO_SLEEP:
+        seconds = _parse_nonneg_seconds(
+            body.get("seconds", DEFAULT_SLEEP_SECONDS),
+            name="sleep",
+            maximum=MAX_SLEEP_SECONDS,
+        )
+        canonical = {"demo": DEMO_SLEEP, "seconds": seconds}
+        local = {"demo": DEMO_SLEEP, "seconds": seconds}
+        digest = digest_canonical(canonical)
+        return "job", "cpu", digest, local
+    return parse_reserve_demo(body)
 
 
 def parse_handoff(body: dict[str, Any]) -> tuple[str, str, str]:

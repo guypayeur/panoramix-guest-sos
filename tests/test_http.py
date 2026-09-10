@@ -63,6 +63,9 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["jobs"]["statuses"], ["queued", "running", "succeeded", "failed", "canceled"])
         self.assertNotIn("accepted", body["jobs"]["statuses"])
         self.assertNotIn("cancelled", body["jobs"]["statuses"])
+        self.assertEqual(body["jobs"]["local_demo"], ["echo", "reserve", "sleep"])
+        self.assertIn("stub", body["jobs"]["ux_seed"])
+        self.assertEqual(body["jobs"]["iec_named_baseline"], "grammar/examples/reserve_ifrs17")
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -79,6 +82,11 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Cancel", html)
             self.assertIn('value="echo"', html)
             self.assertIn('value="sleep"', html)
+            self.assertIn('value="reserve"', html)
+            self.assertIn("Reserve (shaped)", html)
+            self.assertIn("Stub / UX seed only", html)
+            self.assertIn("reserve_ifrs17", html)
+            self.assertIn("not</strong> a performance baseline", html)
             self.assertIn("payload_digest", html)
             self.assertIn("compute_work.py", html)
             self.assertNotIn("runtime#73", html)
@@ -87,6 +95,7 @@ class HttpAppTests(unittest.TestCase):
             self.assertNotIn("sos.demo.echo", html)
             self.assertNotIn("ray://", html)
             self.assertNotIn("temporal://", html)
+            self.assertNotIn("north-star Done", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -131,6 +140,41 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(job["local"]["demo"], "echo")
         done = wait_http_status(self.app, job["id"], {"succeeded"})
         self.assertEqual(done["message"], "hi")
+
+    def test_submit_demo_reserve_and_cancel(self) -> None:
+        created = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "stages": 3, "seconds": 8}).encode(),
+        )
+        self.assertEqual(created.status, 201)
+        job = _json(created)
+        self.assertEqual(job["kind"], "job")
+        self.assertEqual(job["class"], "cpu")
+        self.assertEqual(job["local"]["demo"], "reserve")
+        self.assertEqual(
+            job["payload_digest"],
+            digest_canonical(
+                {
+                    "class": "cpu",
+                    "demo": "reserve",
+                    "label": "reserve-shaped",
+                    "seconds": 8,
+                    "stages": 3,
+                }
+            ),
+        )
+        canceled = self.app.handle("POST", f"/v0/jobs/{job['id']}/cancel")
+        self.assertEqual(canceled.status, 200)
+        self.assertEqual(_json(canceled)["status"], "canceled")
+
+        smuggle = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "engine": "local"}).encode(),
+        )
+        self.assertEqual(smuggle.status, 400)
+        self.assertEqual(_json(smuggle)["error"], "engine_smuggle")
 
     def test_bad_kind(self) -> None:
         resp = self.app.handle(
