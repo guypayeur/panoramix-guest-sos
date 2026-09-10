@@ -1,7 +1,8 @@
 """SoS actuarial guest domain (day-one).
 
-Not an iec-proto-c lift. HTTP JSON on the Unit public port. Compute engines
-stay in panoramix-runtime bindings (runtime#70).
+Not an iec-proto-c lift. HTTP JSON on the Unit public port. Opaque work
+handoff is kind/class/payload_digest (runtime#73, #70 Slice B). Compute
+engines stay in panoramix-runtime bindings. Does not close #70.
 """
 
 __version__ = "0.1.0"

@@ -64,7 +64,6 @@ OPERATOR_HTML = """<!DOCTYPE html>
       padding: 0.4rem 0.55rem;
       width: 100%;
     }
-    textarea { min-height: 4.2rem; font-family: var(--mono); font-size: 0.82rem; }
     .row { display: flex; gap: 0.5rem; margin-top: 0.85rem; }
     button {
       width: auto;
@@ -110,11 +109,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
       border-radius: 999px;
       border: 1px solid var(--line);
     }
-    .st-accepted, .st-queued { color: #c9b36a; }
+    .st-queued { color: #c9b36a; }
     .st-running { color: var(--run); }
     .st-succeeded { color: var(--ok); }
     .st-failed { color: var(--bad); }
-    .st-cancelled { color: var(--muted); }
+    .st-canceled { color: var(--muted); }
     #flash { min-height: 1.2rem; font-size: 0.82rem; color: var(--bad); margin: 0.4rem 0 0; }
     #detail {
       font-family: var(--mono);
@@ -133,28 +132,37 @@ OPERATOR_HTML = """<!DOCTYPE html>
   <header>
     <div>
       <h1>SoS operator</h1>
-      <p class="sub">Day-one guest path: submit → status → cancel. Jobs are process-local stubs.
-        Compute engines stay in runtime bindings (runtime#70) — this page never takes engine URLs.</p>
+      <p class="sub">Day-one guest path: submit → status → cancel. Opaque handoff is
+        kind / class / payload_digest (runtime#73, #70 Slice B). Local echo/sleep
+        is a demo shortcut that synthesizes that shape — this page never takes engine URLs.</p>
     </div>
     <p class="sub" id="info-line">loading…</p>
   </header>
   <main>
     <section>
-      <h2>Submit demo job</h2>
+      <h2>Submit local demo</h2>
       <form id="submit-form">
-        <label for="kind">Kind</label>
-        <select id="kind">
-          <option value="sos.demo.echo">sos.demo.echo</option>
-          <option value="sos.demo.sleep">sos.demo.sleep</option>
+        <label for="demo">Demo</label>
+        <select id="demo">
+          <option value="echo">echo</option>
+          <option value="sleep">sleep</option>
         </select>
-        <label for="spec">Spec (JSON object)</label>
-        <textarea id="spec" spellcheck="false">{"message": "hello from operator"}</textarea>
+        <div id="echo-fields">
+          <label for="message">Message</label>
+          <input id="message" value="hello from operator" autocomplete="off">
+        </div>
+        <div id="sleep-fields" hidden>
+          <label for="seconds">Seconds</label>
+          <input id="seconds" type="number" min="0" max="30" step="0.1" value="8">
+        </div>
         <div class="row">
           <button type="submit">Submit</button>
           <button type="button" class="secondary" id="fill-sleep">Sleep template</button>
         </div>
       </form>
-      <p class="hint">Echo returns spec.message. Sleep waits spec.seconds (default 2, max 30) and can be cancelled while queued or running.</p>
+      <p class="hint">Stored as kind=job, class=cpu, payload_digest=sha256 of canonical demo params.
+        Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
+        The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>
     <section>
@@ -168,46 +176,47 @@ OPERATOR_HTML = """<!DOCTYPE html>
     </section>
   </main>
   <script>
-    const KIND_SLEEP = "sos.demo.sleep";
-    const SPECS = {
-      "sos.demo.echo": '{"message": "hello from operator"}',
-      "sos.demo.sleep": '{"seconds": 8}'
-    };
     let selectedId = null;
     let jobs = [];
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
 
-    $("kind").addEventListener("change", () => {
-      $("spec").value = SPECS[$("kind").value] || "{}";
-    });
+    function syncDemoFields() {
+      const sleep = $("demo").value === "sleep";
+      $("echo-fields").hidden = sleep;
+      $("sleep-fields").hidden = !sleep;
+    }
+    $("demo").addEventListener("change", syncDemoFields);
     $("fill-sleep").addEventListener("click", () => {
-      $("kind").value = KIND_SLEEP;
-      $("spec").value = SPECS[KIND_SLEEP];
+      $("demo").value = "sleep";
+      $("seconds").value = "8";
+      syncDemoFields();
     });
 
     $("submit-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       flash("");
-      let spec;
-      try { spec = JSON.parse($("spec").value); }
-      catch (e) { flash("Spec must be JSON: " + e.message); return; }
-      if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
-        flash("Spec must be a JSON object.");
-        return;
+      const demo = $("demo").value;
+      let body;
+      if (demo === "sleep") {
+        const seconds = Number($("seconds").value);
+        if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
+        body = { demo: "sleep", seconds };
+      } else {
+        body = { demo: "echo", message: $("message").value };
       }
       const res = await fetch("/v0/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: $("kind").value, spec })
+        body: JSON.stringify(body)
       });
-      const body = await res.json();
+      const payload = await res.json();
       if (!res.ok) {
-        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        flash(payload.error ? JSON.stringify(payload) : ("HTTP " + res.status));
         return;
       }
-      selectedId = body.id;
+      selectedId = payload.id;
       await refresh();
     });
 
@@ -217,7 +226,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     });
 
     function live(status) {
-      return status !== "succeeded" && status !== "failed" && status !== "cancelled";
+      return status !== "succeeded" && status !== "failed" && status !== "canceled";
     }
 
     async function cancelJob(id) {
@@ -238,6 +247,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return span;
     }
 
+    function shortDigest(digest) {
+      if (!digest) return "";
+      const hex = String(digest).replace(/^sha256:/, "");
+      return "sha256:" + hex.slice(0, 8) + "…";
+    }
+
     function render() {
       const host = $("list");
       host.replaceChildren();
@@ -253,7 +268,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       const table = document.createElement("table");
       const thead = document.createElement("thead");
-      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Id</th><th>Updated</th><th>Action</th></tr>";
+      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Class</th><th>Demo</th><th>Digest</th><th>Id</th><th>Updated</th><th>Action</th></tr>";
       table.appendChild(thead);
       const tbody = document.createElement("tbody");
       for (const job of jobs) {
@@ -262,6 +277,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tr.addEventListener("click", () => { selectedId = job.id; render(); });
         const tdS = document.createElement("td"); tdS.appendChild(pill(job.status));
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
+        const tdC = document.createElement("td"); tdC.textContent = job.class || "";
+        const tdD = document.createElement("td"); tdD.textContent = (job.local && job.local.demo) || "—";
+        const tdG = document.createElement("td"); tdG.className = "id"; tdG.textContent = shortDigest(job.payload_digest);
         const tdI = document.createElement("td"); tdI.className = "id"; tdI.textContent = job.id.slice(0, 8);
         const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = (job.updated_at || "").replace("T", " ").replace("Z", "");
         const tdA = document.createElement("td");
@@ -278,7 +296,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         } else {
           tdA.textContent = "—";
         }
-        tr.append(tdS, tdK, tdI, tdU, tdA);
+        tr.append(tdS, tdK, tdC, tdD, tdG, tdI, tdU, tdA);
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
@@ -313,6 +331,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
     }
 
+    syncDemoFields();
     loadInfo();
     refresh();
     setInterval(refresh, 1000);
