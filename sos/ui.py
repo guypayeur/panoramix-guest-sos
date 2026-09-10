@@ -75,8 +75,24 @@ OPERATOR_HTML = """<!DOCTYPE html>
       font-weight: 650;
       padding: 0.45rem 0.85rem;
     }
-    button.secondary { background: transparent; color: var(--text); border-color: var(--line); font-weight: 500; }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+    button.danger {
+      background: transparent;
+      color: #f3b4b4;
+      border: 1px solid var(--bad);
+      font-weight: 650;
+    }
+    button.danger:disabled {
+      color: var(--muted);
+      border-color: var(--line);
+      background: transparent;
+      opacity: 1;
+      cursor: not-allowed;
+    }
+    button.row-cancel {
+      padding: 0.18rem 0.5rem;
+      font-size: 0.75rem;
+    }
     .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.7rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     th, td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -146,7 +162,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <div id="list"><p class="empty">No jobs yet.</p></div>
       <h2 style="margin-top:1.1rem">Detail</h2>
       <div class="row" style="margin:0 0 0.55rem">
-        <button type="button" class="secondary" id="cancel-btn" disabled>Cancel selected</button>
+        <button type="button" class="danger" id="cancel-btn" disabled>Cancel selected job</button>
       </div>
       <pre id="detail">Select a job.</pre>
     </section>
@@ -197,14 +213,23 @@ OPERATOR_HTML = """<!DOCTYPE html>
 
     $("cancel-btn").addEventListener("click", async () => {
       if (!selectedId) return;
+      await cancelJob(selectedId);
+    });
+
+    function live(status) {
+      return status !== "succeeded" && status !== "failed" && status !== "cancelled";
+    }
+
+    async function cancelJob(id) {
       flash("");
-      const res = await fetch("/v0/jobs/" + selectedId + "/cancel", { method: "POST" });
+      const res = await fetch("/v0/jobs/" + id + "/cancel", { method: "POST" });
       const body = await res.json();
       if (!res.ok) {
         flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
       }
+      selectedId = id;
       await refresh();
-    });
+    }
 
     function pill(status) {
       const span = document.createElement("span");
@@ -223,11 +248,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
         host.appendChild(p);
         $("detail").textContent = "Select a job.";
         $("cancel-btn").disabled = true;
+        $("cancel-btn").textContent = "Cancel selected job";
         return;
       }
       const table = document.createElement("table");
       const thead = document.createElement("thead");
-      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Id</th><th>Updated</th></tr>";
+      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Id</th><th>Updated</th><th>Action</th></tr>";
       table.appendChild(thead);
       const tbody = document.createElement("tbody");
       for (const job of jobs) {
@@ -238,7 +264,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
         const tdI = document.createElement("td"); tdI.className = "id"; tdI.textContent = job.id.slice(0, 8);
         const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = (job.updated_at || "").replace("T", " ").replace("Z", "");
-        tr.append(tdS, tdK, tdI, tdU);
+        const tdA = document.createElement("td");
+        if (live(job.status)) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "danger row-cancel";
+          btn.textContent = "Cancel";
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            cancelJob(job.id);
+          });
+          tdA.appendChild(btn);
+        } else {
+          tdA.textContent = "—";
+        }
+        tr.append(tdS, tdK, tdI, tdU, tdA);
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
@@ -247,8 +287,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const selected = jobs.find(j => j.id === selectedId) || jobs[0];
       selectedId = selected.id;
       $("detail").textContent = JSON.stringify(selected, null, 2);
-      const terminal = selected.status === "succeeded" || selected.status === "failed" || selected.status === "cancelled";
-      $("cancel-btn").disabled = terminal;
+      const can = live(selected.status);
+      $("cancel-btn").disabled = !can;
+      $("cancel-btn").textContent = can ? "Cancel selected job" : "Cannot cancel (terminal)";
     }
 
     async function refresh() {

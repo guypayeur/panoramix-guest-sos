@@ -63,6 +63,7 @@ class HttpAppTests(unittest.TestCase):
             html = resp.body.decode("utf-8")
             self.assertIn("SoS operator", html)
             self.assertIn("/v0/jobs", html)
+            self.assertIn("Cancel", html)
             self.assertNotIn("ray://", html)
             self.assertNotIn("temporal://", html)
 
