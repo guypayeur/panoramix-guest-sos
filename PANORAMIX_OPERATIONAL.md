@@ -4,7 +4,11 @@ Guest for [guypayeur/panoramix](https://github.com/guypayeur/panoramix). Pin **0
 
 ## Claim
 
-This repo is a real guest origin (not under `platform-tools/fixtures/`). The platform owns the envelope; sos stays opaque domain code. Day-one is a health/info HTTP stub, **not** iec-proto-c and **not** a compute plane.
+This repo is a real guest origin (not under `platform-tools/fixtures/`). The platform owns the envelope; sos stays opaque domain code. Day-one is a **jobs HTTP API + operator UI** with an in-process stub runner — **not** iec-proto-c and **not** a compute plane.
+
+## Guest compute seam (pending #70)
+
+The guest submits **opaque work** over HTTP (`POST /v0/jobs` with `kind` + `spec`). Status and cancel stay on that same public port. Runtime bindings will select engines later. This guest does **not** invent `PLATFORM_RAY_*`, Temporal addresses, or other engine URL schemes in code, docs, or env examples. How bindings attach compute is documented on [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70), not in `.platform/contract.yaml`.
 
 ## Domain-leak log
 
@@ -14,19 +18,20 @@ This repo is a real guest origin (not under `platform-tools/fixtures/`). The pla
 | Lift iec-proto-c L1–L2 (or any iec tree) into this Git | **Rejected** — greenfield guest; iec is a north-star UX/perf **benchmark**, not a dependency |
 | Put actuarial request/response schema types on the adapter | **Rejected** — guest speaks HTTP on the public port |
 | Encode Temporal workflow IDs / Ray addresses in Unit Git | **Rejected** — [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) guest seam: submit work without engine URLs/schemas in the contract |
+| Add `PLATFORM_RAY_*` / engine URL env examples so “jobs can run for real” | **Rejected** — guest HTTP only; bindings select engines later |
 | Add a “SoS SDK” facet so apply understands the DSL | **Rejected** — HTTP/1.1 + `PLATFORM_*` env is the envelope |
-| Teach `apply` to walk `sos/` imports | **Rejected** — Rec 2 gotcha: digest is entrypoint paths only (`platform_run.py`) |
-| Pin Flask/FastAPI/Ray on the Unit | **Rejected** — `build` is admission shape; this stub is stdlib; emulate does not execute `build.command` |
-| Claim day-one feature parity with iec-proto-c | **Rejected** — north star is UX/perf on agreed workflows ([runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70)); day-one may be thinner |
+| Teach `apply` to walk `sos/` imports so UI/job edits bump digest | **Rejected** — Rec 2 gotcha: digest is entrypoint paths only (`platform_run.py`). Entry may import `sos.http` (httpbin pattern); sibling `sos/` edits still must not be assumed to change emulate digest |
+| Pin Flask/FastAPI/Ray on the Unit | **Rejected** — `build` is admission shape; this guest is stdlib; emulate does not execute `build.command` |
+| Claim day-one feature/UX/perf parity with iec-proto-c | **Rejected** — north star is UX/perf on agreed workflows ([runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70)); day-one is thinner |
 | Unlock AWS/GKE/ECS from this guest | **Rejected** — local lab before AWS; cloud spend issues stay locked on the runtime |
 
 ## Digest gotcha
 
-`run.entrypoint` names only `platform_run.py`. Editing `sos/control.py` alone must **not** change the deploy digest under emulate’s entrypoint rule. Editing `platform_run.py` must.
+`run.entrypoint` names only `platform_run.py`. Editing `sos/jobs.py` (or other siblings) alone must **not** change the deploy digest under emulate’s entrypoint rule. Editing `platform_run.py` must. The thin entrypoint **may** import `sos.http` (like httpbin’s `platform_run` importing `httpbin.core.app`); that import does not expand the digest to the package.
 
 ## Engines
 
-Do not add engine fields here. The container/compute runtime ([panoramix-runtime](https://github.com/guypayeur/panoramix-runtime)) records image digests and binding-selected engines **outside** this Unit. How a future SoS guest submits compute work without embedding engine URLs is documented on [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) — not in `.platform/contract.yaml`.
+Do not add engine fields here. The container/compute runtime ([panoramix-runtime](https://github.com/guypayeur/panoramix-runtime)) records image digests and binding-selected engines **outside** this Unit.
 
 ## Run (with panoramix tools available)
 
