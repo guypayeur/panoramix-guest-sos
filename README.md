@@ -2,12 +2,12 @@
 
 Day-one **SoS** (actuarial) guest for [Panoramix](https://github.com/guypayeur/panoramix).
 
-Pin **0.5**. This repository is opaque domain code plus a platform Unit contract. Compute engines live in [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) bindings — see [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) Slice B ([runtime#73](https://github.com/guypayeur/panoramix-runtime/pull/73)). This guest does **not** close #70 and does **not** unlock cloud #61 / #29.
+Pin **0.5**. This repository is opaque domain code plus a platform Unit contract. Compute engines live in [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) bindings — see [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) Slice B. The opaque handoff shape is defined by [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py) on runtime **main**. This guest does **not** close #70 and does **not** unlock cloud #61 / #29.
 
 ## What this is
 
 - A greenfield Panoramix **0.5** guest: Unit `sos`, public HTTP on **18280**, probes at `/health`.
-- A **day-one operator path**: submit work, watch status, cancel. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` (runtime#73). In-process stub runner only — engines stay in runtime bindings.
+- A **day-one operator path**: submit work, watch status, cancel. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` ([`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). In-process stub runner only — engines stay in runtime bindings.
 - Stdlib Python 3.12 (`platform_run.py` + `sos/`). Thin entrypoint imports domain the same way [httpbin](https://github.com/guypayeur/panoramix-guest-httpbin) `platform_run.py` imports `httpbin.core.app`.
 - A minimal operator UI at `GET /` (also `GET /ui`) that polls the JSON API.
 
@@ -62,7 +62,7 @@ Operator UI: open http://127.0.0.1:18280/ (or `/ui`).
 
 `POST /v0/jobs` accepts either:
 
-1. **Opaque seam** (must match [runtime#73](https://github.com/guypayeur/panoramix-runtime/pull/73) `runtime/compute_work.py`):
+1. **Opaque seam** (must match [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py) on panoramix-runtime main, #70 Slice B):
    - `kind`: `job` | `stage` | `chunk`
    - `class`: `cpu` | `gpu`
    - `payload_digest`: `sha256:` + 64 lowercase hex

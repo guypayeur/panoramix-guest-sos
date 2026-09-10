@@ -1,6 +1,6 @@
 # Panoramix operational notes (sos guest)
 
-Guest for [guypayeur/panoramix](https://github.com/guypayeur/panoramix). Pin **0.5**. Compute engines: [panoramix-runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) (Slice B handoff: [runtime#73](https://github.com/guypayeur/panoramix-runtime/pull/73)). Not #70 Done; does not unlock #61 / #29.
+Guest for [guypayeur/panoramix](https://github.com/guypayeur/panoramix). Pin **0.5**. Compute engines: [panoramix-runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70) Slice B. Hard reference: [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py) on runtime main. Not #70 Done; does not unlock #61 / #29.
 
 ## Claim
 
@@ -8,7 +8,7 @@ This repo is a real guest origin (not under `platform-tools/fixtures/`). The pla
 
 ## Guest compute seam (#70 Slice B; not Done)
 
-The guest submits **opaque work** over HTTP (`POST /v0/jobs`) using the Slice B shape from [runtime#73](https://github.com/guypayeur/panoramix-runtime/pull/73) (`runtime/compute_work.py`): `kind` (`job`|`stage`|`chunk`), `class` (`cpu`|`gpu`), `payload_digest` (`sha256:` + 64 hex). Status lifecycle is `queued` → `running` → `succeeded` | `failed` | `canceled`. List/get/cancel stay on the same public port.
+The guest submits **opaque work** over HTTP (`POST /v0/jobs`) using the Slice B shape in [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py) on panoramix-runtime main: `kind` (`job`|`stage`|`chunk`), `class` (`cpu`|`gpu`), `payload_digest` (`sha256:` + 64 hex). Status lifecycle is `queued` → `running` → `succeeded` | `failed` | `canceled`. List/get/cancel stay on the same public port.
 
 A **local-only** demo shortcut (`demo: echo|sleep` plus params) synthesizes that opaque shape so the operator UI does not require hand-computed digests. Stub runner metadata may nest under `local`; it is not a runtime handoff field.
 

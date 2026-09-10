@@ -1,7 +1,8 @@
 """In-guest job store and stub runner.
 
-Process-local only. Opaque handoff is kind/class/payload_digest (runtime#73,
-#70 Slice B). Local echo/sleep is a demo shortcut that synthesizes that shape.
+Process-local only. Opaque handoff is kind/class/payload_digest
+(runtime/compute_work.py on panoramix-runtime main, #70 Slice B). Local
+echo/sleep is a demo shortcut that synthesizes that shape.
 Real engines are selected later by panoramix-runtime bindings — this module
 has no engine URLs, addresses, or schemes. Does not close #70.
 """

@@ -80,6 +80,8 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn('value="echo"', html)
             self.assertIn('value="sleep"', html)
             self.assertIn("payload_digest", html)
+            self.assertIn("compute_work.py", html)
+            self.assertNotIn("runtime#73", html)
             self.assertIn("canceled", html)
             self.assertNotIn("cancelled", html)
             self.assertNotIn("sos.demo.echo", html)

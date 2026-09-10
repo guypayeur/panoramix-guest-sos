@@ -133,7 +133,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <div>
       <h1>SoS operator</h1>
       <p class="sub">Day-one guest path: submit → status → cancel. Opaque handoff is
-        kind / class / payload_digest (runtime#73, #70 Slice B). Local echo/sleep
+        kind / class / payload_digest (runtime/compute_work.py, #70 Slice B). Local echo/sleep
         is a demo shortcut that synthesizes that shape — this page never takes engine URLs.</p>
     </div>
     <p class="sub" id="info-line">loading…</p>

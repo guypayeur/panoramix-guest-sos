@@ -1,8 +1,10 @@
-"""Opaque work handoff aligned with panoramix-runtime #70 Slice B (runtime#73).
+"""Opaque work handoff aligned with panoramix-runtime #70 Slice B.
 
-Guest-facing submit shape is ``kind`` / ``class`` / ``payload_digest`` — not
-engine brands. Local demo echo/sleep is a guest-only shortcut that synthesizes
-that shape before storage. Does not close #70. Does not unlock #61 / #29.
+Hard reference: runtime/compute_work.py on panoramix-runtime main (not a PR
+number). Guest-facing submit shape is ``kind`` / ``class`` /
+``payload_digest`` — not engine brands. Local demo echo/sleep is a guest-only
+shortcut that synthesizes that shape before storage. Does not close #70.
+Does not unlock #61 / #29.
 """
 
 from __future__ import annotations
