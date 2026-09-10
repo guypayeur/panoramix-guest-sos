@@ -13,7 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
-from sos.jobs import JobStore, KNOWN_KINDS, SosError
+from sos.errors import SosError
+from sos.handoff_vocab import LOCAL_DEMOS, RESOURCE_CLASSES, WORK_KINDS, WORK_STATUSES
+from sos.jobs import JobStore
 from sos.ui import OPERATOR_HTML
 
 MAX_BODY = 64 * 1024
@@ -26,7 +28,13 @@ INFO_PAYLOAD = {
     "status": "day-one",
     "iec_equivalent": False,
     "engines": "runtime-bindings-only",
-    "jobs": {"kinds": list(KNOWN_KINDS)},
+    "jobs": {
+        "kinds": sorted(WORK_KINDS),
+        "classes": sorted(RESOURCE_CLASSES),
+        "statuses": list(WORK_STATUSES),
+        "handoff": ["kind", "class", "payload_digest"],
+        "local_demo": sorted(LOCAL_DEMOS),
+    },
     "ui": "/",
 }
 
@@ -113,15 +121,7 @@ class SosApp:
 
     def _create_job(self, body: bytes) -> HttpResponse:
         payload = _read_json_object(body)
-        kind = payload.get("kind")
-        spec = payload.get("spec", {})
-        if "kind" not in payload:
-            raise SosError("invalid_kind", detail="kind is required")
-        if "spec" in payload and not isinstance(spec, dict):
-            raise SosError("invalid_spec", detail="spec must be a JSON object")
-        if spec is None:
-            spec = {}
-        job = self.store.submit(kind, spec)
+        job = self.store.submit(payload)
         return _json_response(
             201,
             job.to_dict(),
