@@ -10,7 +10,9 @@ This repo is a real guest origin (not under `platform-tools/fixtures/`). The pla
 
 The guest submits **opaque work** over HTTP (`POST /v0/jobs`) using the Slice B shape in [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py) on panoramix-runtime main: `kind` (`job`|`stage`|`chunk`), `class` (`cpu`|`gpu`), `payload_digest` (`sha256:` + 64 hex). Status lifecycle is `queued` → `running` → `succeeded` | `failed` | `canceled`. List/get/cancel stay on the same public port.
 
-A **local-only** demo shortcut (`demo: echo|sleep` plus params) synthesizes that opaque shape so the operator UI does not require hand-computed digests. Stub runner metadata may nest under `local`; it is not a runtime handoff field.
+A **local-only** demo shortcut (`demo: echo|sleep|reserve` plus params) synthesizes that opaque shape so the operator UI does not require hand-computed digests. Stub runner metadata may nest under `local`; it is not a runtime handoff field.
+
+`demo: "reserve"` is a **stub / UX seed** for operator submit → status → cancel beside the named iec baseline **`grammar/examples/reserve_ifrs17`** ([runtime `proofs/fixtures/iec-parity/method.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/proofs/fixtures/iec-parity/method.yaml) after [#82](https://github.com/guypayeur/panoramix-runtime/pull/82); UX journey [`run_lifecycle_monitoring.md`](https://github.com/guypayeur/iec-proto-c/blob/main/docs/ux/journeys/run_lifecycle_monitoring.md)). Guest is thinner: in-process named stages and cancel only — **not** IFRS17 math, **not** a perf baseline, **not** pause/resume. Comparable perf waits on runtime compute-plane engines. This does **not** close #70.
 
 Runtime bindings will select engines later (slices C/D/E). This guest does **not** invent `PLATFORM_RAY_*` or other engine URL env. Request bodies that smuggle engine brand keys or URL schemes are **400**. How bindings attach compute is documented on [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70), not in `.platform/contract.yaml`. This alignment does **not** close #70 and does **not** unlock #61 / #29.
 
@@ -27,6 +29,7 @@ Runtime bindings will select engines later (slices C/D/E). This guest does **not
 | Add a “SoS SDK” facet so apply understands the DSL | **Rejected** — HTTP/1.1 + `PLATFORM_*` env is the envelope |
 | Teach `apply` to walk `sos/` imports so UI/job edits bump digest | **Rejected** — Rec 2 gotcha: digest is entrypoint paths only (`platform_run.py`). Entry may import `sos.http` (httpbin pattern); sibling `sos/` edits still must not be assumed to change emulate digest |
 | Pin Flask/FastAPI/Ray on the Unit | **Rejected** — `build` is admission shape; this guest is stdlib; emulate does not execute `build.command` |
+| Claim `demo: reserve` is IFRS17 math, iec `grammar/examples/reserve_ifrs17`, or a perf baseline | **Rejected** — UX seed stub only; named iec baseline stays on runtime `proofs/fixtures/iec-parity/method.yaml`; comparable perf waits on compute-plane engines |
 | Claim day-one feature/UX/perf parity with iec-proto-c | **Rejected** — north star is UX/perf on agreed workflows ([runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70)); day-one is thinner |
 | Unlock AWS/GKE/ECS from this guest | **Rejected** — local lab before AWS; cloud spend issues stay locked on the runtime |
 

@@ -34,6 +34,8 @@ INFO_PAYLOAD = {
         "statuses": list(WORK_STATUSES),
         "handoff": ["kind", "class", "payload_digest"],
         "local_demo": sorted(LOCAL_DEMOS),
+        "ux_seed": "reserve is a stub lifecycle for operator UX; not a perf baseline",
+        "iec_named_baseline": "grammar/examples/reserve_ifrs17",
     },
     "ui": "/",
 }

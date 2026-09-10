@@ -126,6 +126,17 @@ OPERATOR_HTML = """<!DOCTYPE html>
       overflow: auto;
     }
     .empty { color: var(--muted); font-size: 0.88rem; padding: 0.4rem 0; }
+    .banner {
+      margin: 0.85rem 1.4rem 0;
+      padding: 0.7rem 0.9rem;
+      border: 1px solid var(--warn);
+      background: #241c10;
+      color: #f0d9a8;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      max-width: 72rem;
+    }
+    .banner strong { color: #ffd27a; }
   </style>
 </head>
 <body>
@@ -133,11 +144,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <div>
       <h1>SoS operator</h1>
       <p class="sub">Day-one guest path: submit → status → cancel. Opaque handoff is
-        kind / class / payload_digest (runtime/compute_work.py, #70 Slice B). Local echo/sleep
-        is a demo shortcut that synthesizes that shape — this page never takes engine URLs.</p>
+        kind / class / payload_digest (runtime/compute_work.py, #70 Slice B). Local
+        echo / sleep / reserve is a demo shortcut that synthesizes that shape —
+        this page never takes engine URLs.</p>
     </div>
     <p class="sub" id="info-line">loading…</p>
   </header>
+  <p class="banner"><strong>Stub / UX seed only.</strong> Reserve (shaped) is an
+    in-process lifecycle demo so operators can compare submit → status pills →
+    cancel with iec <code>docs/ux/journeys/run_lifecycle_monitoring.md</code>.
+    It is <strong>not</strong> a performance baseline, <strong>not</strong> IFRS17
+    math, and <strong>not</strong> runtime #70 Done. Comparable perf waits on
+    runtime compute-plane engines. Named iec baseline remains
+    <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
+    <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
+    no pause / resume / progress endpoints — cancel only.</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -146,6 +167,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         <select id="demo">
           <option value="echo">echo</option>
           <option value="sleep">sleep</option>
+          <option value="reserve">Reserve (shaped)</option>
         </select>
         <div id="echo-fields">
           <label for="message">Message</label>
@@ -155,13 +177,27 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <label for="seconds">Seconds</label>
           <input id="seconds" type="number" min="0" max="30" step="0.1" value="8">
         </div>
+        <div id="reserve-fields" hidden>
+          <label for="label">Label</label>
+          <input id="label" value="reserve-shaped" autocomplete="off">
+          <label for="stages">Stages</label>
+          <input id="stages" type="number" min="2" max="8" step="1" value="3">
+          <label for="resource-class">Class (UX label)</label>
+          <select id="resource-class">
+            <option value="cpu" selected>cpu</option>
+            <option value="gpu">gpu (label only — no GPU kernels)</option>
+          </select>
+        </div>
         <div class="row">
           <button type="submit">Submit</button>
           <button type="button" class="secondary" id="fill-sleep">Sleep template</button>
+          <button type="button" class="secondary" id="fill-reserve">Reserve template</button>
         </div>
       </form>
-      <p class="hint">Stored as kind=job, class=cpu, payload_digest=sha256 of canonical demo params.
+      <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical demo params.
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
+        Reserve (shaped) walks a few named stub stages (admit → project → fold, …) so cancel mid-flight is visible —
+        still an in-memory thread, not engines, not IFRS17 math.
         The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>
@@ -183,14 +219,27 @@ OPERATOR_HTML = """<!DOCTYPE html>
     const flash = (msg) => { $("flash").textContent = msg || ""; };
 
     function syncDemoFields() {
-      const sleep = $("demo").value === "sleep";
-      $("echo-fields").hidden = sleep;
-      $("sleep-fields").hidden = !sleep;
+      const demo = $("demo").value;
+      $("echo-fields").hidden = demo !== "echo";
+      $("sleep-fields").hidden = demo !== "sleep";
+      $("reserve-fields").hidden = demo !== "reserve";
+      if (demo === "reserve" && $("sleep-fields").hidden) {
+        // Reuse the seconds input for reserve duration.
+        $("sleep-fields").hidden = false;
+      }
     }
     $("demo").addEventListener("change", syncDemoFields);
     $("fill-sleep").addEventListener("click", () => {
       $("demo").value = "sleep";
       $("seconds").value = "8";
+      syncDemoFields();
+    });
+    $("fill-reserve").addEventListener("click", () => {
+      $("demo").value = "reserve";
+      $("label").value = "reserve-shaped";
+      $("stages").value = "3";
+      $("seconds").value = "8";
+      $("resource-class").value = "cpu";
       syncDemoFields();
     });
 
@@ -203,6 +252,18 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const seconds = Number($("seconds").value);
         if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
         body = { demo: "sleep", seconds };
+      } else if (demo === "reserve") {
+        const seconds = Number($("seconds").value);
+        const stages = Number($("stages").value);
+        if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
+        if (!Number.isInteger(stages)) { flash("Stages must be an integer."); return; }
+        body = {
+          demo: "reserve",
+          label: $("label").value,
+          stages,
+          seconds,
+          class: $("resource-class").value
+        };
       } else {
         body = { demo: "echo", message: $("message").value };
       }
@@ -268,7 +329,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       const table = document.createElement("table");
       const thead = document.createElement("thead");
-      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Class</th><th>Demo</th><th>Digest</th><th>Id</th><th>Updated</th><th>Action</th></tr>";
+      thead.innerHTML = "<tr><th>Status</th><th>Kind</th><th>Class</th><th>Demo</th><th>Stage</th><th>Digest</th><th>Id</th><th>Updated</th><th>Action</th></tr>";
       table.appendChild(thead);
       const tbody = document.createElement("tbody");
       for (const job of jobs) {
@@ -279,6 +340,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
         const tdC = document.createElement("td"); tdC.textContent = job.class || "";
         const tdD = document.createElement("td"); tdD.textContent = (job.local && job.local.demo) || "—";
+        const tdSt = document.createElement("td");
+        tdSt.textContent = (job.local && job.local.stage) || "—";
         const tdG = document.createElement("td"); tdG.className = "id"; tdG.textContent = shortDigest(job.payload_digest);
         const tdI = document.createElement("td"); tdI.className = "id"; tdI.textContent = job.id.slice(0, 8);
         const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = (job.updated_at || "").replace("T", " ").replace("Z", "");
@@ -296,7 +359,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         } else {
           tdA.textContent = "—";
         }
-        tr.append(tdS, tdK, tdC, tdD, tdG, tdI, tdU, tdA);
+        tr.append(tdS, tdK, tdC, tdD, tdSt, tdG, tdI, tdU, tdA);
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
