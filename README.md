@@ -7,7 +7,7 @@ Pin **0.5**. This repository is opaque domain code plus a platform Unit contract
 ## What this is
 
 - A greenfield Panoramix **0.5** guest: Unit `sos`, public HTTP on **18280**, probes at `/health`.
-- A **day-one operator path**: submit work, watch status, cancel. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` ([`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). In-process stub runner is the **fallback** (the default). Engines stay in runtime bindings. Local demos: `echo`, `sleep`, and **`reserve`** (shaped UX seed — not IFRS17 math, not a perf baseline until runtime #83 + remeasure). Guest **emits WorkHandoff JSON only**; operator/ctl admits it via the binding. No guest→ctl HTTP for compute-work.
+- A **day-one operator path**: submit work, watch status, cancel. Pause/resume is **durable-path only** (injected hook or operator/ctl `reserve-temporal pause|resume`) — stub-only jobs refuse it. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` ([`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). In-process stub runner is the **fallback** (the default). Engines stay in runtime bindings. Local demos: `echo`, `sleep`, and **`reserve`** (shaped UX seed — not IFRS17 math, not a perf baseline until runtime #83 + remeasure). Guest **emits WorkHandoff JSON only**; operator/ctl admits it via the binding. No guest→ctl HTTP for compute-work.
 - Stdlib Python 3.12 (`platform_run.py` + `sos/`). Thin entrypoint imports domain the same way [httpbin](https://github.com/guypayeur/panoramix-guest-httpbin) `platform_run.py` imports `httpbin.core.app`.
 - A minimal operator UI at `GET /` (also `GET /ui`) that polls the JSON API.
 
@@ -76,16 +76,17 @@ Operator UI: open http://127.0.0.1:18280/ (or `/ui`).
 
 Default catalog is **recorded** (CI). Recorded digest is `sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e` (`runtime.reserve.digest_for(recorded_params())` on main). `{"demo":"reserve","catalog":"live"}` uses the heavier live catalog. `{"demo":"reserve","catalog":"parity"}` (alias `parity-scale`) uses the third catalog (`runtime.reserve.parity_params()` / `digest_for` on main); digest is `sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102`. Catalogs: recorded / live / parity (parity-scale). Explicit ints (`accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) override catalog fields. Optional `label` / `stages` / `seconds` are **local stub UX only** and are not in the digest. `class: "gpu"` is a **UX / opaque label only** on the stub. The seam `kind` is always `job`. Guest **emits WorkHandoff JSON only** — it never calls `runtime.apply compute-work`. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline until #83 + remeasure; named iec baseline remains `reserve_ifrs17`. Not #70 Done.
 
-Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if an operator-injected hook admits the job). Selected-job UI shows id, status pill, kind/class/digest, created/updated/elapsed, `message` / `local.stage`, and `local.backed`.
+Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` ⇄ `paused` → `succeeded` | `failed` | `canceled` (one L). `paused` is **non-terminal**. Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if an operator-injected hook admits the job). Selected-job UI shows id, status pill, kind/class/digest, created/updated/elapsed, `message` / `local.stage`, and `local.backed`. Durable-path responses set `pause_resume: true` when honest; stub jobs stay `false`.
 
 Ctl export (no engine fields; nested `payload` is omitted because runtime `parse_work` rejects that key on submit):
 
 - `GET /v0/jobs/{id}/handoff` — exactly `id` / `kind` / `class` / `payload_digest` / `status` (WorkHandoff projection).
 - `GET /v0/jobs/{id}/payload` — canonical JSON bytes as `utf8` + `hex` plus `payload_digest`. Demo shortcuts store bytes; opaque digest-only submit returns **404** `payload_unknown`.
-- `GET /v0/jobs/{id}/progress` — `{id, status, stage, stages_total?, message, backed}` derived from existing stub fields. **Not** iec chunk progress.
+- `GET /v0/jobs/{id}/progress` — `{id, status, stage, stages_total?, message, backed, pause_resume}` derived from existing stub fields. **Not** iec chunk progress.
 - `GET /v0/jobs/{id}/events` — local event trail `[{ts, event, detail}]` (also on the job resource). **Not** a regulatory audit.
+- `POST /v0/jobs/{id}/pause` / `POST /v0/jobs/{id}/resume` — durable path only. Stub-only (`local.backed == "stub"` or no runtime ref) returns **409** `stub_only`. Illegal transitions (pause when not `running`, resume when not `paused`, terminal) return **409**. Cancel is not pause.
 
-Operator UI cancel uses a confirm dialog: this guest has **no pause/resume**; Cancel ends the run (`canceled`); stub-backed cancel is local, runtime-backed cancel signals the injected hook then marks the guest job `canceled` if still live. See [docs/ux-side-by-side.md](docs/ux-side-by-side.md). This does **not** close #70.
+Operator UI Pause/Resume controls are **disabled** for stub jobs (with an explanation pointing at ctl). Durable-backed jobs can pause (`paused`) and resume (`running`). Cancel confirm dialog: cancel ends the run (`canceled`) from running or paused; pause exists on the durable/ctl path only. See [docs/ux-side-by-side.md](docs/ux-side-by-side.md). This does **not** close #70.
 
 Engine brand keys/schemes on the body (`engine`, `engine_kind`, `payload`, `url` / `uri` / `endpoint` / `address`, `ray:` / `temporal:` / `s3:` / `image:` / …) return **400** `engine_smuggle`.
 
@@ -136,7 +137,7 @@ Transport today is **operator/ctl-mediated only**. This guest does **not** open 
 
 Two paths:
 
-1. **Stub fallback (default):** `POST /v0/jobs` runs in-process. `local.backed` is `stub`. Submit/status/cancel stay on this Unit.
+1. **Stub fallback (default):** `POST /v0/jobs` runs in-process. `local.backed` is `stub`. Submit/status/cancel stay on this Unit. Pause/resume is **refused** (`409 stub_only`).
 2. **Operator binding path:** operator/ctl reads the exported WorkHandoff and admits that tuple on the runtime compute plane via the binding. This Unit only **emits** the JSON.
 
 ```bash
@@ -154,19 +155,21 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 
 #### Durable temporal-local reserve (operator/ctl)
 
-Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main**.
+Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` (`admit|status|cancel|pause|resume`; lifecycle status `paused`) and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main** (verified @ `3a164cd`).
 
 ```bash
 python3 -m runtime.apply reserve-temporal admit --catalog recorded   # or live|parity; or --handoff JSON
 python3 -m runtime.apply reserve-temporal status --id cw_…
+python3 -m runtime.apply reserve-temporal pause --id cw_…
+python3 -m runtime.apply reserve-temporal resume --id cw_…
 python3 -m runtime.apply reserve-temporal cancel --id cw_…
 ```
 
-Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume is not claimed. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
+Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume on the guest HTTP/UI is durable-path only (injected hook); stub jobs return `409 stub_only` and point here. Cancel is not pause. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
 
-`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel.
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`.
 
-**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**. This guest has no pause/resume — Cancel ends the run.
+**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live (running or paused). Terminal cancel is still **409**. Cancel is not pause. Pause/resume require the durable path.
 
 Jobs are process-local and disappear on restart. The stub records opaque work locally; it does not start an engine.
 
@@ -179,6 +182,13 @@ ID=$(curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
 
 curl -sS -X POST "http://127.0.0.1:18280/v0/jobs/${ID}/cancel"
 curl -sS "http://127.0.0.1:18280/v0/jobs/${ID}"
+```
+
+Pause/resume of a **stub** job (default) is refused:
+
+```bash
+curl -sS -X POST "http://127.0.0.1:18280/v0/jobs/${ID}/pause"
+# 409 {"error":"stub_only", ...} — requires durable path; see ctl pause|resume
 ```
 
 Bad `kind` / `class` / `payload_digest` return **400**. Cancel of a terminal job returns **409** `{"error":"already_terminal", ...}`. Missing ids return **404**. Opaque digest-only jobs have no stored bytes: `GET .../payload` returns **404** `payload_unknown`.

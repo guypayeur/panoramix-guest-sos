@@ -9,6 +9,7 @@ import unittest
 from sos.errors import (
     AlreadyTerminal,
     EngineSmuggle,
+    IllegalTransition,
     InvalidClass,
     InvalidDemo,
     InvalidDigest,
@@ -16,6 +17,7 @@ from sos.errors import (
     InvalidKind,
     JobNotFound,
     PayloadUnknown,
+    StubOnly,
 )
 from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for, recorded_params
 from sos.handoff_vocab import (
@@ -527,7 +529,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(ctx.exception.http_status, 409)
         body = ctx.exception.to_dict()
         self.assertEqual(body["status"], "succeeded")
-        self.assertIn("no pause/resume", body["note"])
+        self.assertIn("not pause", body["note"].lower())
 
     def test_progress_and_events_reserve(self) -> None:
         job = self.store.submit(
@@ -539,6 +541,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIsNone(progress["stage"])
         self.assertEqual(progress["backed"], BACKED_STUB)
         self.assertEqual(progress["stages_total"], 3)
+        self.assertIs(progress["pause_resume"], False)
         self.assertIn("not iec chunk progress", progress["note"])
         self.assertNotIn("parallelism claimed", progress["note"])
 
@@ -682,6 +685,119 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(canceled.status, "canceled")
         self.assertEqual(canceled.message, "canceled by operator")
 
+    def test_pause_resume_stub_only_refused(self) -> None:
+        job = self.store.submit({"demo": "sleep", "seconds": 8})
+        self.assertEqual(job.local["backed"], BACKED_STUB)
+        self.assertIs(job.to_dict()["pause_resume"], False)
+        with self.assertRaises(StubOnly) as ctx:
+            self.store.pause(job.id)
+        self.assertEqual(ctx.exception.http_status, 409)
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["error"], "stub_only")
+        self.assertEqual(body["action"], "pause")
+        self.assertIn("durable path", body["detail"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal pause|resume",
+            body["detail"],
+        )
+        with self.assertRaises(StubOnly) as ctx:
+            self.store.resume(job.id)
+        self.assertEqual(ctx.exception.to_dict()["action"], "resume")
+        self.store.cancel(job.id)
+
+    def test_pause_resume_durable_hook(self) -> None:
+        class TinyHook:
+            def __init__(self) -> None:
+                self.reported: str | None = "running"
+                self.pauses: list[str] = []
+                self.resumes: list[str] = []
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                self.pauses.append(job_id)
+                self.reported = "paused"
+                return True
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                self.resumes.append(job_id)
+                self.reported = "running"
+                return True
+
+        hook = TinyHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        self.assertEqual(job.status, "running")
+        self.assertIs(job.to_dict()["pause_resume"], True)
+        self.assertIs(job.to_progress()["pause_resume"], True)
+
+        paused = store.pause(job.id)
+        self.assertEqual(paused.status, "paused")
+        self.assertEqual(paused.message, "paused via runtime hook")
+        self.assertEqual(hook.pauses, [job.id])
+        self.assertIn("paused", [item["event"] for item in paused.events])
+        self.assertEqual(store.handoff(job.id)["status"], "paused")
+        self.assertNotIn("pause_resume", store.handoff(job.id))
+
+        with self.assertRaises(IllegalTransition) as ctx:
+            store.pause(job.id)
+        self.assertEqual(ctx.exception.http_status, 409)
+        self.assertEqual(ctx.exception.to_dict()["error"], "illegal_transition")
+        self.assertEqual(ctx.exception.to_dict()["status"], "paused")
+
+        resumed = store.resume(job.id)
+        self.assertEqual(resumed.status, "running")
+        self.assertEqual(hook.resumes, [job.id])
+        self.assertIn("running", [item["event"] for item in resumed.events])
+
+        with self.assertRaises(IllegalTransition):
+            store.resume(job.id)
+
+        canceled = store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+
+        hook.reported = None
+        queued = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(queued.status, STATUS_QUEUED)
+        with self.assertRaises(IllegalTransition) as ctx:
+            store.pause(queued.id)
+        self.assertEqual(ctx.exception.to_dict()["status"], "queued")
+        with self.assertRaises(IllegalTransition):
+            store.resume(queued.id)
+
+        hook.reported = "succeeded"
+        done = store.submit({"demo": "echo", "message": "x"})
+        self.assertEqual(done.status, "succeeded")
+        with self.assertRaises(AlreadyTerminal):
+            store.pause(done.id)
+        with self.assertRaises(AlreadyTerminal):
+            store.resume(done.id)
+
+        paused_hook = TinyHook()
+        paused_store = JobStore(step_seconds=0.02, runtime_hook=paused_hook)
+        live = paused_store.submit({"demo": "reserve", "seconds": 8})
+        paused_store.pause(live.id)
+        canceled_paused = paused_store.cancel(live.id)
+        self.assertEqual(canceled_paused.status, "canceled")
+
+    def test_inert_hook_has_noop_pause_resume(self) -> None:
+        from sos.runtime_hook import InertRuntimeHandoffHook
+
+        hook = InertRuntimeHandoffHook()
+        self.assertIs(hook.pause("id", None), False)
+        self.assertIs(hook.resume("id", None), False)
+        self.assertIs(hook.cancel("id", None), False)
+        self.assertIsNone(hook.admit({}, None))
+        self.assertIsNone(hook.status("id", None))
+
     def test_guest_never_imports_runtime(self) -> None:
         from pathlib import Path
 
@@ -696,8 +812,10 @@ class JobStoreTests(unittest.TestCase):
             blob = "\n".join(imports)
             self.assertNotIn("from runtime", blob, path)
             self.assertNotIn("import runtime", blob, path)
-            self.assertNotIn("-m runtime.apply", text, path)
-            self.assertNotIn("runtime.apply reserve", text, path)
+            # Guest may document operator/ctl pause|resume; it must not invoke apply.
+            self.assertNotIn("subprocess", text, path)
+            self.assertNotIn("os.system", text, path)
+            self.assertNotIn("Popen", text, path)
 
     def test_docs_match_confirmed_ctl_contract(self) -> None:
         from pathlib import Path
@@ -722,8 +840,17 @@ class JobStoreTests(unittest.TestCase):
         for name in ("README.md", "PANORAMIX_OPERATIONAL.md"):
             text = root.joinpath(name).read_text(encoding="utf-8")
             self.assertIn("python3 -m runtime.apply reserve-temporal", text, name)
+            self.assertIn("python3 -m runtime.apply reserve-temporal pause", text, name)
+            self.assertIn("python3 -m runtime.apply reserve-temporal resume", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
+            self.assertIn("verified @ `3a164cd`", text, name)
+            self.assertIn("pause|resume", text, name)
+            self.assertIn("`paused`", text, name)
+            self.assertNotIn("73c311c", text, name)
+            self.assertNotIn("28437ea", text, name)
             self.assertNotIn("landing pr", text.lower(), name)
+            self.assertNotIn("pending ci", text.lower(), name)
+            self.assertNotIn("landing pr #92", text.lower(), name)
             self.assertNotIn("runtime#89", text.lower(), name)
             self.assertNotIn("after #89", text.lower(), name)
             self.assertIn("runtime.apply compute-work", text, name)
@@ -770,7 +897,15 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("GET /v0/jobs/{id}/events", ux)
         self.assertIn("local event trail", ux.lower())
         self.assertIn("not iec chunk progress", ux.lower())
-        self.assertIn("no pause", ux.lower())
+        self.assertIn("**match** (thinner)", ux)
+        self.assertIn("python3 -m runtime.apply reserve-temporal pause", ux)
+        self.assertIn("python3 -m runtime.apply reserve-temporal resume", ux)
+        self.assertIn("stub_only", ux)
+        self.assertIn("409", ux)
+        self.assertIn("| 2.1 Pause |", ux)
+        self.assertIn("| 3.1a Resume |", ux)
+        self.assertNotIn("| 2.1 Pause | `POST /v1/jobs/{id}/pause` | **missing**", ux)
+        self.assertNotIn("| 3.1a Resume | `POST /v1/jobs/{id}/resume` | **missing**", ux)
         self.assertIn("parity (parity-scale)", ux)
         self.assertIn("runtime.reserve.parity_params", ux)
         self.assertIn("digest_for", ux)
@@ -789,7 +924,14 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)
         self.assertIn("local-reserve-temporal.example.yaml", ux)
+        self.assertIn("verified @ `3a164cd`", ux)
+        self.assertIn("pause|resume", ux)
+        self.assertIn("`paused`", ux)
+        self.assertNotIn("73c311c", ux)
+        self.assertNotIn("28437ea", ux)
         self.assertNotIn("landing pr", ux.lower())
+        self.assertNotIn("pending ci", ux.lower())
+        self.assertNotIn("landing pr #92", ux.lower())
         self.assertNotIn("runtime#89", ux.lower())
         self.assertNotIn("after #89", ux.lower())
         self.assertIn("- [ ] Temporal-backed UX", ux)

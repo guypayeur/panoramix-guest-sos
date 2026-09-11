@@ -4,7 +4,9 @@ Served on the Unit public port. JSON errors are `{"error": ..., ...}`.
 No engine URL schemes in request or response bodies. Ctl exports
 ``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
-Transport is operator/ctl-mediated: no guest→ctl HTTP, no
+Pause/resume (``POST .../pause`` / ``POST .../resume``) require the
+durable path; stub-only jobs return 409 stub_only. Transport is
+operator/ctl-mediated: no guest→ctl HTTP, no
 ``runtime.apply compute-work`` from this guest.
 """
 
@@ -19,6 +21,7 @@ from urllib.parse import urlsplit
 
 from sos.errors import SosError
 from sos.handoff_vocab import (
+    CTL_PAUSE_RESUME,
     LOCAL_DEMOS,
     PARITY_PAYLOAD_DIGEST,
     RECORDED_PAYLOAD_DIGEST,
@@ -79,7 +82,8 @@ INFO_PAYLOAD = {
             "mesh": "compute-job -> sos",
             "note": (
                 "Transport is operator/ctl-mediated. Guest UX is "
-                "submit/status/cancel. Emit WorkHandoff JSON only — no "
+                "submit/status/cancel plus durable-path pause/resume. "
+                "Emit WorkHandoff JSON only — no "
                 "guest→ctl HTTP, no runtime.apply compute-work, no env "
                 "that adds mesh destinations. Stub is the fallback; "
                 "operator/ctl admits via the binding. "
@@ -90,11 +94,20 @@ INFO_PAYLOAD = {
         "events": "GET /v0/jobs/{id}/events",
         "progress_honesty": "stub stage metadata; not iec chunk progress",
         "events_honesty": "local event trail; not a regulatory audit",
-        "pause_resume": False,
+        "pause": "POST /v0/jobs/{id}/pause",
+        "resume": "POST /v0/jobs/{id}/resume",
+        "pause_resume": True,
+        "pause_resume_honesty": (
+            "durable path only (runtime-backed / injected hook). "
+            "Stub-only jobs return 409 stub_only. Cancel is not pause. "
+            f"Operator/ctl: {CTL_PAUSE_RESUME}"
+        ),
         "cancel_note": (
-            "No pause/resume. Cancel ends a live run (canceled). "
+            "Cancel ends a live run (canceled), including paused. "
+            "Cancel is not pause. Pause/resume is durable-path only. "
             "Stub-backed cancel is local; runtime-backed cancel signals "
-            "the injected hook, then marks the guest job canceled if still live."
+            "the injected hook, then marks the guest job canceled if still live. "
+            f"Operator/ctl: {CTL_PAUSE_RESUME}"
         ),
     },
     "ui": "/",
@@ -102,6 +115,8 @@ INFO_PAYLOAD = {
 
 _JOB_RE = re.compile(r"^/v0/jobs/([^/]+)$")
 _CANCEL_RE = re.compile(r"^/v0/jobs/([^/]+)/cancel$")
+_PAUSE_RE = re.compile(r"^/v0/jobs/([^/]+)/pause$")
+_RESUME_RE = re.compile(r"^/v0/jobs/([^/]+)/resume$")
 _HANDOFF_RE = re.compile(r"^/v0/jobs/([^/]+)/handoff$")
 _PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
 _PROGRESS_RE = re.compile(r"^/v0/jobs/([^/]+)/progress$")
@@ -176,6 +191,18 @@ class SosApp:
             if method != "POST":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.cancel(cancel.group(1))
+            return _json_response(200, job.to_dict())
+        pause = _PAUSE_RE.match(path)
+        if pause:
+            if method != "POST":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            job = self.store.pause(pause.group(1))
+            return _json_response(200, job.to_dict())
+        resume = _RESUME_RE.match(path)
+        if resume:
+            if method != "POST":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            job = self.store.resume(resume.group(1))
             return _json_response(200, job.to_dict())
         handoff = _HANDOFF_RE.match(path)
         if handoff:

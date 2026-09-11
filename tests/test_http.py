@@ -65,7 +65,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["kind"], INFO_PAYLOAD["kind"])
         self.assertEqual(body["jobs"]["kinds"], ["chunk", "job", "stage"])
         self.assertEqual(body["jobs"]["classes"], ["cpu", "gpu"])
-        self.assertEqual(body["jobs"]["statuses"], ["queued", "running", "succeeded", "failed", "canceled"])
+        self.assertEqual(body["jobs"]["statuses"], ["queued", "running", "paused", "succeeded", "failed", "canceled"])
         self.assertNotIn("accepted", body["jobs"]["statuses"])
         self.assertNotIn("cancelled", body["jobs"]["statuses"])
         self.assertEqual(body["jobs"]["local_demo"], ["echo", "reserve", "sleep"])
@@ -113,10 +113,22 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn("never calls", ctl["note"])
         self.assertEqual(body["jobs"]["progress"], "GET /v0/jobs/{id}/progress")
         self.assertEqual(body["jobs"]["events"], "GET /v0/jobs/{id}/events")
-        self.assertIs(body["jobs"]["pause_resume"], False)
+        self.assertEqual(body["jobs"]["pause"], "POST /v0/jobs/{id}/pause")
+        self.assertEqual(body["jobs"]["resume"], "POST /v0/jobs/{id}/resume")
+        self.assertIs(body["jobs"]["pause_resume"], True)
+        self.assertIn("durable path only", body["jobs"]["pause_resume_honesty"])
+        self.assertIn("stub_only", body["jobs"]["pause_resume_honesty"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal pause|resume",
+            body["jobs"]["pause_resume_honesty"],
+        )
         self.assertIn("not iec chunk progress", body["jobs"]["progress_honesty"])
         self.assertIn("not a regulatory audit", body["jobs"]["events_honesty"])
-        self.assertIn("No pause/resume", body["jobs"]["cancel_note"])
+        self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal pause|resume",
+            body["jobs"]["cancel_note"],
+        )
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -169,12 +181,18 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Local event trail", html)
             self.assertIn("View/copy handoff", html)
             self.assertIn("Fetch payload", html)
-            self.assertIn("no pause / resume", html)
+            self.assertNotIn("no pause / resume", html)
             self.assertIn("not iec chunk progress", html)
             self.assertIn("not a regulatory audit", html)
             self.assertIn("docs/ux-side-by-side.md", html)
             self.assertIn("End run (canceled)", html)
             self.assertIn("Stub-backed jobs cancel locally", html)
+            self.assertIn("id=\"pause-btn\"", html)
+            self.assertIn("id=\"resume-btn\"", html)
+            self.assertIn("durable path", html)
+            self.assertIn("409 stub_only", html)
+            self.assertIn("python3 -m runtime.apply reserve-temporal pause|resume", html)
+            self.assertIn("Cancel is not pause", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -383,6 +401,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["id"], job_id)
         self.assertEqual(body["backed"], "stub")
         self.assertEqual(body["stages_total"], 3)
+        self.assertIs(body["pause_resume"], False)
         self.assertIn("not iec chunk progress", body["note"])
         self.assertNotIn("chunks_done", body)
         self.assertNotIn("parallelism", body)
@@ -425,7 +444,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(conflict.status, 409)
         body = _json(conflict)
         self.assertEqual(body["error"], "already_terminal")
-        self.assertIn("no pause/resume", body["note"])
+        self.assertIn("not pause", body["note"].lower())
         self.assertIn("canceled", body["note"])
 
     def test_missing_job(self) -> None:
@@ -463,6 +482,140 @@ class HttpAppTests(unittest.TestCase):
     def test_cancel_missing(self) -> None:
         resp = self.app.handle("POST", "/v0/jobs/missing/cancel")
         self.assertEqual(resp.status, 404)
+
+    def test_pause_resume_stub_only_refused(self) -> None:
+        created = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "sleep", "seconds": 8}).encode(),
+        )
+        job_id = _json(created)["id"]
+        self.assertEqual(_json(created)["local"]["backed"], "stub")
+        self.assertIs(_json(created)["pause_resume"], False)
+
+        pause = self.app.handle("POST", f"/v0/jobs/{job_id}/pause")
+        self.assertEqual(pause.status, 409)
+        body = _json(pause)
+        self.assertEqual(body["error"], "stub_only")
+        self.assertEqual(body["action"], "pause")
+        self.assertIn("durable path", body["detail"])
+        self.assertIn("python3 -m runtime.apply reserve-temporal pause|resume", body["detail"])
+
+        resume = self.app.handle("POST", f"/v0/jobs/{job_id}/resume")
+        self.assertEqual(resume.status, 409)
+        self.assertEqual(_json(resume)["error"], "stub_only")
+        self.assertEqual(_json(resume)["action"], "resume")
+
+        missing = self.app.handle("POST", "/v0/jobs/nope/pause")
+        self.assertEqual(missing.status, 404)
+        self.assertEqual(_json(missing)["error"], "not_found")
+        missing_r = self.app.handle("POST", "/v0/jobs/nope/resume")
+        self.assertEqual(missing_r.status, 404)
+        self.assertEqual(
+            self.app.handle("GET", f"/v0/jobs/{job_id}/pause").status, 405
+        )
+        self.assertEqual(
+            self.app.handle("GET", f"/v0/jobs/{job_id}/resume").status, 405
+        )
+        self.app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+
+    def test_pause_resume_durable_http(self) -> None:
+        class FakeHook:
+            def __init__(self) -> None:
+                self.reported = "running"
+                self.pauses: list[str] = []
+                self.resumes: list[str] = []
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                self.pauses.append(job_id)
+                self.reported = "paused"
+                return True
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                self.resumes.append(job_id)
+                self.reported = "running"
+                return True
+
+        hook = FakeHook()
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=hook))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        self.assertEqual(created.status, 201)
+        job = _json(created)
+        job_id = job["id"]
+        self.assertEqual(job["local"]["backed"], "runtime")
+        self.assertEqual(job["status"], "running")
+        self.assertIs(job["pause_resume"], True)
+
+        paused = app.handle("POST", f"/v0/jobs/{job_id}/pause")
+        self.assertEqual(paused.status, 200)
+        body = _json(paused)
+        self.assertEqual(body["status"], "paused")
+        self.assertIs(body["pause_resume"], True)
+        self.assertIn("paused", [item["event"] for item in body["events"]])
+        self.assertEqual(hook.pauses, [job_id])
+
+        handoff = _json(app.handle("GET", f"/v0/jobs/{job_id}/handoff"))
+        self.assertEqual(handoff["status"], "paused")
+        self.assertEqual(
+            set(handoff),
+            {"id", "kind", "class", "payload_digest", "status"},
+        )
+
+        again = app.handle("POST", f"/v0/jobs/{job_id}/pause")
+        self.assertEqual(again.status, 409)
+        self.assertEqual(_json(again)["error"], "illegal_transition")
+
+        resumed = app.handle("POST", f"/v0/jobs/{job_id}/resume")
+        self.assertEqual(resumed.status, 200)
+        self.assertEqual(_json(resumed)["status"], "running")
+        self.assertEqual(hook.resumes, [job_id])
+
+        queued_hook = FakeHook()
+        queued_hook.reported = None  # type: ignore[assignment]
+        queued_app = SosApp(JobStore(step_seconds=0.02, runtime_hook=queued_hook))
+        queued = queued_app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        qid = _json(queued)["id"]
+        self.assertEqual(_json(queued)["status"], "queued")
+        bad_pause = queued_app.handle("POST", f"/v0/jobs/{qid}/pause")
+        self.assertEqual(bad_pause.status, 409)
+        self.assertEqual(_json(bad_pause)["error"], "illegal_transition")
+        bad_resume = queued_app.handle("POST", f"/v0/jobs/{qid}/resume")
+        self.assertEqual(bad_resume.status, 409)
+        self.assertEqual(_json(bad_resume)["error"], "illegal_transition")
+
+        done_hook = FakeHook()
+        done_hook.reported = "succeeded"
+        done_app = SosApp(JobStore(step_seconds=0.02, runtime_hook=done_hook))
+        done = done_app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        did = _json(done)["id"]
+        self.assertEqual(_json(done)["status"], "succeeded")
+        term_pause = done_app.handle("POST", f"/v0/jobs/{did}/pause")
+        self.assertEqual(term_pause.status, 409)
+        self.assertEqual(_json(term_pause)["error"], "already_terminal")
+        term_resume = done_app.handle("POST", f"/v0/jobs/{did}/resume")
+        self.assertEqual(term_resume.status, 409)
+        self.assertEqual(_json(term_resume)["error"], "already_terminal")
 
     def test_invalid_json(self) -> None:
         resp = self.app.handle("POST", "/v0/jobs", b"{")
