@@ -10,7 +10,11 @@ from pathlib import Path
 
 from platform_run import parse_listen
 from sos.handoff import digest_canonical, digest_bytes
-from sos.handoff_vocab import RECORDED_CANONICAL_JSON, RECORDED_PAYLOAD_DIGEST
+from sos.handoff_vocab import (
+    PARITY_PAYLOAD_DIGEST,
+    RECORDED_CANONICAL_JSON,
+    RECORDED_PAYLOAD_DIGEST,
+)
 from sos.http import INFO_PAYLOAD, SosApp
 from sos.jobs import JobStore
 
@@ -79,9 +83,15 @@ class HttpAppTests(unittest.TestCase):
                 "runtime.reserve.digest_for",
                 "runtime.reserve.recorded_params",
                 "runtime.reserve.live_params",
+                "runtime.reserve.parity_params",
             ],
         )
-        self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live"])
+        self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live", "parity"])
+        self.assertEqual(
+            body["jobs"]["reserve_digest_parity"],
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        self.assertEqual(body["jobs"]["runtime_reserve_parity"], "runtime.reserve.parity_params")
         self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
         ctl = body["jobs"]["ctl_handoff"]
         self.assertEqual(ctl["mode"], "operator-ctl")
@@ -101,6 +111,12 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("not a perf baseline until runtime #83", ctl["note"].lower())
         self.assertIn("Not #70 Done", ctl["note"])
         self.assertNotIn("never calls", ctl["note"])
+        self.assertEqual(body["jobs"]["progress"], "GET /v0/jobs/{id}/progress")
+        self.assertEqual(body["jobs"]["events"], "GET /v0/jobs/{id}/events")
+        self.assertIs(body["jobs"]["pause_resume"], False)
+        self.assertIn("not iec chunk progress", body["jobs"]["progress_honesty"])
+        self.assertIn("not a regulatory audit", body["jobs"]["events_honesty"])
+        self.assertIn("No pause/resume", body["jobs"]["cancel_note"])
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -146,7 +162,19 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("digest_for", html)
             self.assertIn("recorded_params", html)
             self.assertIn('value="recorded"', html)
+            self.assertIn('value="parity"', html)
+            self.assertIn("parity-scale", html)
             self.assertNotIn("north-star Done", html)
+            self.assertIn("Job detail", html)
+            self.assertIn("Local event trail", html)
+            self.assertIn("View/copy handoff", html)
+            self.assertIn("Fetch payload", html)
+            self.assertIn("no pause / resume", html)
+            self.assertIn("not iec chunk progress", html)
+            self.assertIn("not a regulatory audit", html)
+            self.assertIn("docs/ux-side-by-side.md", html)
+            self.assertIn("End run (canceled)", html)
+            self.assertIn("Stub-backed jobs cancel locally", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -249,6 +277,28 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(smuggle.status, 400)
         self.assertEqual(_json(smuggle)["error"], "engine_smuggle")
 
+        parity = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "parity", "seconds": 0}).encode(),
+        )
+        self.assertEqual(parity.status, 201)
+        body = _json(parity)
+        self.assertEqual(body["local"]["catalog"], "parity")
+        self.assertEqual(body["payload_digest"], PARITY_PAYLOAD_DIGEST)
+        self.assertEqual(
+            body["payload_digest"],
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        alias = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "parity-scale", "seconds": 0}).encode(),
+        )
+        self.assertEqual(alias.status, 201)
+        self.assertEqual(_json(alias)["local"]["catalog"], "parity")
+        self.assertEqual(_json(alias)["payload_digest"], PARITY_PAYLOAD_DIGEST)
+
     def test_bad_kind(self) -> None:
         resp = self.app.handle(
             "POST",
@@ -319,6 +369,64 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(
             self.app.handle("POST", "/v0/jobs/nope/handoff").status, 405
         )
+
+    def test_progress_and_events_http(self) -> None:
+        created = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "stages": 3, "seconds": 8}).encode(),
+        )
+        job_id = _json(created)["id"]
+        progress = self.app.handle("GET", f"/v0/jobs/{job_id}/progress")
+        self.assertEqual(progress.status, 200)
+        body = _json(progress)
+        self.assertEqual(body["id"], job_id)
+        self.assertEqual(body["backed"], "stub")
+        self.assertEqual(body["stages_total"], 3)
+        self.assertIn("not iec chunk progress", body["note"])
+        self.assertNotIn("chunks_done", body)
+        self.assertNotIn("parallelism", body)
+
+        events = self.app.handle("GET", f"/v0/jobs/{job_id}/events")
+        self.assertEqual(events.status, 200)
+        trail = _json(events)
+        self.assertEqual(trail["id"], job_id)
+        self.assertIn("not a regulatory audit", trail["note"])
+        names = [item["event"] for item in trail["events"]]
+        self.assertIn("submitted", names)
+        self.assertIn("backed", names)
+
+        canceled = self.app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(canceled.status, 200)
+        job = _json(canceled)
+        self.assertEqual(job["status"], "canceled")
+        self.assertIn("canceled", [item["event"] for item in job["events"]])
+
+        missing_p = self.app.handle("GET", "/v0/jobs/nope/progress")
+        self.assertEqual(missing_p.status, 404)
+        missing_e = self.app.handle("GET", "/v0/jobs/nope/events")
+        self.assertEqual(missing_e.status, 404)
+        self.assertEqual(
+            self.app.handle("POST", f"/v0/jobs/{job_id}/progress").status, 405
+        )
+        self.assertEqual(
+            self.app.handle("POST", f"/v0/jobs/{job_id}/events").status, 405
+        )
+
+    def test_cancel_terminal_includes_pause_note(self) -> None:
+        created = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "echo", "message": "x"}).encode(),
+        )
+        job_id = _json(created)["id"]
+        wait_http_status(self.app, job_id, {"succeeded"})
+        conflict = self.app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(conflict.status, 409)
+        body = _json(conflict)
+        self.assertEqual(body["error"], "already_terminal")
+        self.assertIn("no pause/resume", body["note"])
+        self.assertIn("canceled", body["note"])
 
     def test_missing_job(self) -> None:
         resp = self.app.handle("GET", "/v0/jobs/not-a-job")

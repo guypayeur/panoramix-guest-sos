@@ -21,6 +21,8 @@ from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for,
 from sos.handoff_vocab import (
     BACKED_STUB,
     LIVE_PAYLOAD_DIGEST,
+    PARITY_CANONICAL_JSON,
+    PARITY_PAYLOAD_DIGEST,
     RECORDED_CANONICAL_JSON,
     RECORDED_PAYLOAD_DIGEST,
     STATUS_CANCELED,
@@ -201,6 +203,37 @@ class HandoffParseTests(unittest.TestCase):
         self.assertEqual(LIVE_PAYLOAD_DIGEST, live_digest)
         self.assertNotEqual(live_digest, digest)
 
+        parity_canonical = (
+            '{"accounts":2048,"discount_bps":300,"horizon":64,"lapse_bps":80,'
+            '"paths":4096,"seed":17070,"workload":"reserve"}'
+        )
+        parity_digest = "sha256:" + hashlib.sha256(
+            parity_canonical.encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(
+            parity_digest,
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        self.assertEqual(PARITY_CANONICAL_JSON, parity_canonical)
+        self.assertEqual(PARITY_PAYLOAD_DIGEST, parity_digest)
+        parity = parse_submit({"demo": "reserve", "catalog": "parity"})
+        self.assertEqual(parity.kind, "job")
+        self.assertEqual(parity.resource_class, "cpu")
+        self.assertEqual(parity.local["catalog"], "parity")
+        self.assertEqual(parity.local["accounts"], 2048)
+        self.assertEqual(parity.local["horizon"], 64)
+        self.assertEqual(parity.local["paths"], 4096)
+        self.assertEqual(parity.local["seed"], 17070)
+        self.assertEqual(parity.local["lapse_bps"], 80)
+        self.assertEqual(parity.local["discount_bps"], 300)
+        self.assertEqual(parity.payload_digest, parity_digest)
+        self.assertEqual(parity.payload_bytes.decode("utf-8"), parity_canonical)
+        alias = parse_submit({"demo": "reserve", "catalog": "parity-scale"})
+        self.assertEqual(alias.local["catalog"], "parity")
+        self.assertEqual(alias.payload_digest, parity_digest)
+        self.assertNotEqual(parity_digest, digest)
+        self.assertNotEqual(parity_digest, live_digest)
+
     def test_reserve_payload_digest_is_stable(self) -> None:
         a = parse_submit({"demo": "reserve", "stages": 3, "label": "ux-seed", "seconds": 6})
         b = parse_submit({"seconds": 6, "demo": "reserve", "label": "ux-seed", "stages": 3})
@@ -224,6 +257,10 @@ class HandoffParseTests(unittest.TestCase):
         live = parse_submit({"demo": "reserve", "catalog": "live"})
         self.assertEqual(live.payload_digest, LIVE_PAYLOAD_DIGEST)
         self.assertNotEqual(live.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        parity = parse_submit({"demo": "reserve", "catalog": "parity"})
+        self.assertEqual(parity.payload_digest, PARITY_PAYLOAD_DIGEST)
+        self.assertNotEqual(parity.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        self.assertNotEqual(parity.payload_digest, LIVE_PAYLOAD_DIGEST)
         custom = parse_submit({"demo": "reserve", "accounts": 49})
         self.assertNotEqual(custom.payload_digest, RECORDED_PAYLOAD_DIGEST)
         self.assertEqual(custom.local["accounts"], 49)
@@ -361,7 +398,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(job.kind, "chunk")
         self.assertEqual(job.resource_class, "gpu")
         self.assertEqual(job.status, STATUS_QUEUED)
-        self.assertIsNone(job.local)
+        self.assertEqual(job.local, {"backed": BACKED_STUB})
         wait_status(self.store, job.id, {"succeeded"})
         done = self.store.get(job.id)
         self.assertIn("opaque", done.message or "")
@@ -488,7 +525,73 @@ class JobStoreTests(unittest.TestCase):
         with self.assertRaises(AlreadyTerminal) as ctx:
             self.store.cancel(job.id)
         self.assertEqual(ctx.exception.http_status, 409)
-        self.assertEqual(ctx.exception.to_dict()["status"], "succeeded")
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["status"], "succeeded")
+        self.assertIn("no pause/resume", body["note"])
+
+    def test_progress_and_events_reserve(self) -> None:
+        job = self.store.submit(
+            {"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 8}
+        )
+        progress = self.store.progress(job.id)
+        self.assertEqual(progress["id"], job.id)
+        self.assertEqual(progress["status"], STATUS_QUEUED)
+        self.assertIsNone(progress["stage"])
+        self.assertEqual(progress["backed"], BACKED_STUB)
+        self.assertEqual(progress["stages_total"], 3)
+        self.assertIn("not iec chunk progress", progress["note"])
+        self.assertNotIn("parallelism claimed", progress["note"])
+
+        events = self.store.events(job.id)
+        self.assertEqual(events["id"], job.id)
+        self.assertIn("not a regulatory audit", events["note"])
+        names = [item["event"] for item in events["events"]]
+        self.assertIn("submitted", names)
+        self.assertIn("backed", names)
+        self.assertTrue(any(item["detail"] == BACKED_STUB for item in events["events"]))
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snap = self.store.get(job.id)
+            if snap.status == "running" and (snap.local or {}).get("stage"):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("reserve job never reached a named running stage")
+
+        mid = self.store.progress(job.id)
+        self.assertEqual(mid["status"], "running")
+        self.assertIn(mid["stage"], {"admit", "project", "fold"})
+        self.assertEqual(mid["stages_total"], 3)
+        self.assertIn(mid["stage_index"], {1, 2, 3})
+        self.assertIn("stub stage metadata", mid["note"].lower())
+
+        canceled = self.store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+        trail = [item["event"] for item in canceled.events]
+        self.assertIn("canceled", trail)
+        self.assertIn("stage", trail)
+        body = self.store.events(job.id)
+        self.assertEqual(body["events"][-1]["event"], "canceled")
+        self.assertEqual(body["events"][-1]["detail"], "canceled by operator")
+        handoff = self.store.handoff(job.id)
+        self.assertNotIn("events", handoff)
+        self.assertNotIn("progress", handoff)
+
+    def test_progress_echo_has_no_fake_chunks(self) -> None:
+        job = self.store.submit({"demo": "echo", "message": "hi"})
+        wait_status(self.store, job.id, {"succeeded"})
+        progress = self.store.progress(job.id)
+        self.assertEqual(progress["status"], "succeeded")
+        self.assertIsNone(progress["stage"])
+        self.assertNotIn("stages_total", progress)
+        self.assertNotIn("stage_index", progress)
+        self.assertIn("not iec chunk progress", progress["note"])
+        events = [item["event"] for item in self.store.events(job.id)["events"]]
+        self.assertIn("submitted", events)
+        self.assertIn("succeeded", events)
+        self.assertNotIn("pause", events)
+        self.assertNotIn("resume", events)
 
     def test_handoff_export_and_payload_bytes(self) -> None:
         job = self.store.submit({"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 0})
@@ -603,7 +706,12 @@ class JobStoreTests(unittest.TestCase):
         vocab = root.joinpath("sos/handoff_vocab.py").read_text(encoding="utf-8")
         self.assertIn("runtime.reserve.recorded_params", vocab)
         self.assertIn("live_params", vocab)
+        self.assertIn("parity_params", vocab)
         self.assertIn("digest_for", vocab)
+        self.assertIn(
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+            vocab,
+        )
         self.assertIn("docs/reserve.md", vocab)
         self.assertNotIn("TODO(#83)", vocab)
         self.assertNotIn("PR #84", vocab)
@@ -619,7 +727,16 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("runtime.reserve.digest_for", text, name)
             self.assertIn("recorded_params", text, name)
             self.assertIn("live_params", text, name)
+            self.assertIn("parity_params", text, name)
             self.assertIn("docs/reserve.md", text, name)
+            self.assertNotIn("until on main", text, name)
+            self.assertNotIn("until those helpers", text, name)
+            self.assertNotIn("until helpers land", text, name)
+            self.assertIn(
+                "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+                text,
+                name,
+            )
             self.assertIn("stub fallback", text.lower(), name)
             self.assertIn("operator binding", text.lower(), name)
             self.assertIn("guest→ctl HTTP", text, name)
@@ -629,11 +746,38 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("#83 + remeasure", text, name)
             self.assertNotIn("awaiting runtime stamp", text.lower(), name)
             self.assertIn("not #70 done", text.lower(), name)
+            self.assertIn("/progress", text, name)
+            self.assertIn("/events", text, name)
             self.assertIn(
                 "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
                 text,
                 name,
             )
+
+        ux = root.joinpath("docs/ux-side-by-side.md").read_text(encoding="utf-8")
+        self.assertIn("run_lifecycle_monitoring.md", ux)
+        self.assertIn("GET /v0/jobs/{id}/progress", ux)
+        self.assertIn("GET /v0/jobs/{id}/events", ux)
+        self.assertIn("local event trail", ux.lower())
+        self.assertIn("not iec chunk progress", ux.lower())
+        self.assertIn("no pause", ux.lower())
+        self.assertIn("parity (parity-scale)", ux)
+        self.assertIn("runtime.reserve.parity_params", ux)
+        self.assertIn("digest_for", ux)
+        self.assertIn("docs/reserve.md", ux)
+        self.assertIn("recorded / live / parity (parity-scale)", ux)
+        self.assertNotIn("until on main", ux)
+        self.assertNotIn("until those helpers", ux)
+        self.assertIn(
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+            ux,
+        )
+        self.assertIn("- [ ] `north_star_done: true`", ux)
+        self.assertNotIn("- [x] `north_star_done: true`", ux)
+        self.assertIn("- [ ] Operator/actuary path", ux)
+        self.assertIn("does **not** mark #70 Done", ux)
+        self.assertNotIn("ray:", ux)
+        self.assertNotIn("temporal:", ux)
 
 
 if __name__ == "__main__":

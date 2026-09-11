@@ -89,4 +89,14 @@ class AlreadyTerminal(SosError):
     http_status = 409
 
     def __init__(self, job_id: str, status: str) -> None:
-        super().__init__("already_terminal", id=job_id, status=status)
+        super().__init__(
+            "already_terminal",
+            id=job_id,
+            status=status,
+            note=(
+                "This guest has no pause/resume. Cancel ends a live run "
+                "(status canceled). Stub-backed cancel is local; "
+                "runtime-backed cancel signals the injected hook, then marks "
+                "the guest job canceled if it was still live."
+            ),
+        )

@@ -29,13 +29,17 @@ MAX_SLEEP_SECONDS = 30.0
 # Reserve-shaped work request — small stable param set, thinner than IFRS17.
 # Hardcoded catalogs; do not import runtime; do not vendor iec.
 #
-# Mirrored from panoramix-runtime **main** helpers (see docs/reserve.md):
-# runtime.reserve.recorded_params, live_params, digest_for.
-# Do not change RECORDED_PAYLOAD_DIGEST unless those helpers change on main.
+# Mirrored from panoramix-runtime **main** helpers (docs/reserve.md):
+# runtime.reserve.recorded_params, live_params, parity_params, digest_for.
+# Do not change RECORDED_PAYLOAD_DIGEST / PARITY_PAYLOAD_DIGEST unless
+# those helpers change on main.
 RESERVE_WORKLOAD = "reserve"
 RESERVE_CATALOG_RECORDED = "recorded"
 RESERVE_CATALOG_LIVE = "live"
-RESERVE_CATALOGS = frozenset({RESERVE_CATALOG_RECORDED, RESERVE_CATALOG_LIVE})
+RESERVE_CATALOG_PARITY = "parity"
+RESERVE_CATALOGS = frozenset(
+    {RESERVE_CATALOG_RECORDED, RESERVE_CATALOG_LIVE, RESERVE_CATALOG_PARITY}
+)
 RESERVE_CATALOG_ALIASES = {
     "recorded": RESERVE_CATALOG_RECORDED,
     "ci": RESERVE_CATALOG_RECORDED,
@@ -43,6 +47,8 @@ RESERVE_CATALOG_ALIASES = {
     "live": RESERVE_CATALOG_LIVE,
     "lab": RESERVE_CATALOG_LIVE,
     "heavy": RESERVE_CATALOG_LIVE,
+    "parity": RESERVE_CATALOG_PARITY,
+    "parity-scale": RESERVE_CATALOG_PARITY,
 }
 RESERVE_PARAM_KEYS = (
     "accounts",
@@ -70,6 +76,16 @@ LIVE_PARAMS: dict[str, int | str] = {
     "lapse_bps": 80,
     "discount_bps": 300,
 }
+# Third catalog. Mirrors runtime.reserve.parity_params on main. Same keys; not IFRS17.
+PARITY_PARAMS: dict[str, int | str] = {
+    "workload": RESERVE_WORKLOAD,
+    "accounts": 2048,
+    "horizon": 64,
+    "paths": 4096,
+    "seed": 17070,
+    "lapse_bps": 80,
+    "discount_bps": 300,
+}
 # sha256 of canonical JSON (sort_keys, separators=(",", ":")) of payload_for
 # recorded catalog. Must equal runtime.reserve.digest_for(recorded_params())
 # on panoramix-runtime main (docs/reserve.md).
@@ -79,9 +95,18 @@ RECORDED_PAYLOAD_DIGEST = (
 LIVE_PAYLOAD_DIGEST = (
     "sha256:9207915bfa0c563ccc6d167ef79db47c5318219bd0269aae5c4b8313d2fceea6"
 )
+# Must equal runtime.reserve.digest_for(parity_params()) on panoramix-runtime
+# main (docs/reserve.md).
+PARITY_PAYLOAD_DIGEST = (
+    "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102"
+)
 RECORDED_CANONICAL_JSON = (
     '{"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,'
     '"paths":96,"seed":17070,"workload":"reserve"}'
+)
+PARITY_CANONICAL_JSON = (
+    '{"accounts":2048,"discount_bps":300,"horizon":64,"lapse_bps":80,'
+    '"paths":4096,"seed":17070,"workload":"reserve"}'
 )
 
 # Local stub UX only — not part of payload_digest.

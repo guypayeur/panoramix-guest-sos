@@ -4,8 +4,9 @@ Hard reference: runtime/compute_work.py on panoramix-runtime main.
 Guest emits WorkHandoff JSON only (kind/class/payload_digest + status/id).
 Does not call runtime.apply compute-work. Does not open guest→ctl HTTP.
 Reserve catalogs mirror runtime.reserve.recorded_params / live_params /
-digest_for on panoramix-runtime main (docs/reserve.md). Ctl export has
-no nested ``payload`` field. Does not close #70. Does not unlock #61 / #29.
+parity_params / digest_for on panoramix-runtime main (docs/reserve.md).
+Ctl export has no nested ``payload`` field. Does not close #70. Does not
+unlock #61 / #29.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from sos.handoff_vocab import (
     DEMO_SLEEP,
     LIVE_PARAMS,
     LOCAL_DEMOS,
+    PARITY_PARAMS,
     MAX_RESERVE_SECONDS,
     MAX_RESERVE_STAGES,
     MAX_SLEEP_SECONDS,
@@ -205,6 +207,11 @@ def live_params() -> dict[str, Any]:
     return dict(LIVE_PARAMS)
 
 
+def parity_params() -> dict[str, Any]:
+    """Parity-scale catalog. Mirrors runtime.reserve.parity_params on main."""
+    return dict(PARITY_PARAMS)
+
+
 def params_for_catalog(catalog: str) -> dict[str, Any]:
     name = str(catalog or RESERVE_CATALOG_RECORDED).strip().lower()
     resolved = RESERVE_CATALOG_ALIASES.get(name)
@@ -212,8 +219,10 @@ def params_for_catalog(catalog: str) -> dict[str, Any]:
         return recorded_params()
     if resolved == "live":
         return live_params()
+    if resolved == "parity":
+        return parity_params()
     raise InvalidDemo(
-        f"reserve catalog must be recorded|live (got {catalog!r})"
+        f"reserve catalog must be recorded|live|parity (got {catalog!r})"
     )
 
 
@@ -237,8 +246,10 @@ def payload_for(params: dict[str, Any]) -> dict[str, Any]:
 def digest_for(params: dict[str, Any]) -> str:
     """sha256 of payload_for canonical JSON.
 
-    Must match runtime.reserve.digest_for on panoramix-runtime main.
+    Must match runtime.reserve.digest_for on panoramix-runtime main
+    (docs/reserve.md).
     Recorded catalog is sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e.
+    Parity catalog is sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102.
     """
     return digest_canonical(payload_for(params))
 

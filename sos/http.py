@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from sos.errors import SosError
 from sos.handoff_vocab import (
     LOCAL_DEMOS,
+    PARITY_PAYLOAD_DIGEST,
     RECORDED_PAYLOAD_DIGEST,
     RESOURCE_CLASSES,
     WORK_KINDS,
@@ -58,14 +59,17 @@ INFO_PAYLOAD = {
             "seed",
             "workload",
         ],
-        "reserve_catalogs": ["recorded", "live"],
+        "reserve_catalogs": ["recorded", "live", "parity"],
         "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
+        "reserve_digest_parity": PARITY_PAYLOAD_DIGEST,
         "runtime_reserve": "docs/reserve.md",
         "runtime_reserve_helpers": [
             "runtime.reserve.digest_for",
             "runtime.reserve.recorded_params",
             "runtime.reserve.live_params",
+            "runtime.reserve.parity_params",
         ],
+        "runtime_reserve_parity": "runtime.reserve.parity_params",
         "ctl_handoff": {
             "mode": "operator-ctl",
             "guest_to_ctl_http": False,
@@ -82,6 +86,16 @@ INFO_PAYLOAD = {
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
+        "progress": "GET /v0/jobs/{id}/progress",
+        "events": "GET /v0/jobs/{id}/events",
+        "progress_honesty": "stub stage metadata; not iec chunk progress",
+        "events_honesty": "local event trail; not a regulatory audit",
+        "pause_resume": False,
+        "cancel_note": (
+            "No pause/resume. Cancel ends a live run (canceled). "
+            "Stub-backed cancel is local; runtime-backed cancel signals "
+            "the injected hook, then marks the guest job canceled if still live."
+        ),
     },
     "ui": "/",
 }
@@ -90,6 +104,8 @@ _JOB_RE = re.compile(r"^/v0/jobs/([^/]+)$")
 _CANCEL_RE = re.compile(r"^/v0/jobs/([^/]+)/cancel$")
 _HANDOFF_RE = re.compile(r"^/v0/jobs/([^/]+)/handoff$")
 _PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
+_PROGRESS_RE = re.compile(r"^/v0/jobs/([^/]+)/progress$")
+_EVENTS_RE = re.compile(r"^/v0/jobs/([^/]+)/events$")
 
 
 @dataclass
@@ -171,6 +187,16 @@ class SosApp:
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             return _json_response(200, self.store.payload(payload.group(1)))
+        progress = _PROGRESS_RE.match(path)
+        if progress:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.progress(progress.group(1)))
+        events = _EVENTS_RE.match(path)
+        if events:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.events(events.group(1)))
         job_match = _JOB_RE.match(path)
         if job_match:
             if method != "GET":
