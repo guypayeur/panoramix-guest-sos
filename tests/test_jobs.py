@@ -527,6 +527,29 @@ class JobStoreTests(unittest.TestCase):
             self.assertNotIn("-m runtime.apply", text, path)
             self.assertNotIn("runtime.apply reserve", text, path)
 
+    def test_docs_match_confirmed_ctl_contract(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        vocab = root.joinpath("sos/handoff_vocab.py").read_text(encoding="utf-8")
+        self.assertIn("TODO(#83)", vocab)
+        self.assertIn(
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+            vocab,
+        )
+        for name in ("README.md", "PANORAMIX_OPERATIONAL.md"):
+            text = root.joinpath(name).read_text(encoding="utf-8")
+            self.assertNotIn("python3 -m runtime.apply", text, name)
+            self.assertNotIn("runtime.apply reserve", text, name)
+            self.assertIn("runtime.apply compute-work", text, name)
+            self.assertIn("stub fallback", text.lower(), name)
+            self.assertIn("operator binding", text.lower(), name)
+            self.assertIn("guest→ctl HTTP", text, name)
+            self.assertIn("digests will be aligned when #83 lands", text, name)
+            self.assertIn("#83 + remeasure", text, name)
+            self.assertNotIn("awaiting runtime stamp", text.lower(), name)
+            self.assertIn("not #70 done", text.lower(), name)
+
 
 if __name__ == "__main__":
     unittest.main()

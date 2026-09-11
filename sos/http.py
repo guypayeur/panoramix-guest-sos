@@ -4,6 +4,8 @@ Served on the Unit public port. JSON errors are `{"error": ..., ...}`.
 No engine URL schemes in request or response bodies. Ctl exports
 ``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
+Transport is operator/ctl-mediated: no guest→ctl HTTP, no
+``runtime.apply compute-work`` from this guest.
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ INFO_PAYLOAD = {
         "statuses": list(WORK_STATUSES),
         "handoff": ["kind", "class", "payload_digest"],
         "local_demo": sorted(LOCAL_DEMOS),
-        "ux_seed": "reserve is a stub lifecycle for operator UX; not a perf baseline",
+        "ux_seed": (
+            "reserve is a stub lifecycle for operator UX; "
+            "not a perf baseline until runtime #83 + remeasure"
+        ),
         "iec_named_baseline": "grammar/examples/reserve_ifrs17",
         "reserve_payload_keys": [
             "accounts",
@@ -58,15 +63,18 @@ INFO_PAYLOAD = {
         "runtime_reserve": "docs/reserve.md",
         "ctl_handoff": {
             "mode": "operator-ctl",
-            "awaiting_runtime_stamp": True,
+            "guest_to_ctl_http": False,
+            "guest_callable_submit": False,
             "handoff": "GET /v0/jobs/{id}/handoff",
             "payload": "GET /v0/jobs/{id}/payload",
             "mesh": "compute-job -> sos",
             "note": (
-                "Guest UX stays submit/status/cancel. Operator/ctl admits the "
-                "opaque handoff to runtime compute (docs/reserve.md / PR #84). "
-                "Guest emits handoff JSON only — it never calls runtime.apply. "
-                "Digest must match runtime.reserve.digest_for."
+                "Transport is operator/ctl-mediated. Guest UX is "
+                "submit/status/cancel. Emit WorkHandoff JSON only — no "
+                "guest→ctl HTTP, no runtime.apply compute-work, no env "
+                "that adds mesh destinations. Stub is the fallback; "
+                "operator/ctl admits via the binding. "
+                "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
     },

@@ -1,15 +1,9 @@
 """In-guest job store and stub runner.
 
-Process-local only. Opaque handoff is kind/class/payload_digest
-(runtime/compute_work.py on panoramix-runtime main, #70 Slice B). Local
-echo/sleep/reserve is a demo shortcut that synthesizes that shape.
-Reserve payload bytes match runtime.reserve.payload_for / digest_for
-(PR #84 catalogs). Guest emits handoff JSON only — never runtime.apply.
-
-When no runtime admit is configured (the default inert hook), the
-in-process stub remains the fallback. Operator/ctl GETs /handoff +
-/payload and admits to runtime compute; mesh is compute-job → sos.
-Does not close #70.
+Process-local only. Emits WorkHandoff JSON (kind/class/payload_digest +
+status/id). Does not call runtime.apply compute-work. Mesh is
+compute-job → sos (worker calls Unit). In-process stub is the fallback;
+operator/ctl admits the exported handoff. Does not close #70.
 """
 
 from __future__ import annotations
@@ -136,8 +130,7 @@ class JobStore:
                 if live is not None and live.status not in TERMINAL:
                     live.runtime_ref = runtime_ref
                     live.message = (
-                        "admitted via runtime hook (awaiting runtime stamp; "
-                        "no local stub)"
+                        "admitted via runtime hook (operator/ctl; no local stub)"
                     )
                     live.updated_at = self._clock()
                     merged = dict(live.local) if live.local else {}

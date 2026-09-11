@@ -1,13 +1,15 @@
-"""Inert runtime admit/cancel hook — awaiting a platform-stamped guest path.
+"""Inert runtime admit/cancel hook.
 
-Operator/ctl takes GET /v0/jobs/{id}/handoff plus /payload and admits that
-opaque tuple to panoramix-runtime ``submit_work`` / ``parse_work``. Compute
-mesh is ``from: compute-job`` → ``to: sos`` (engine calls guest). This guest
-does not call Ray / Temporal / AWS.
+Transport today is **operator/ctl-mediated only**. This guest emits
+WorkHandoff JSON (kind/class/payload_digest + status/id). It does not
+open guest→ctl HTTP for compute-work, does not call
+``runtime.apply compute-work``, and does not set env that adds mesh
+destinations. Mesh on local-sos-compute is ``from: compute-job`` →
+``to: sos`` (worker calls Unit).
 
-Runtime main documents no guest-callable submit env (no PLATFORM_COMPUTE_*,
-no PLATFORM_RAY_*). Until a stamp exists, ``admit`` / ``cancel`` / ``status``
-return None/False and JobStore falls back to the in-process stub.
+Do not invent PLATFORM_RAY_* / engine URLs / guest-callable ctl HTTP.
+``admit`` / ``cancel`` / ``status`` stay no-ops; JobStore falls back to
+the in-process stub.
 
 Does not close #70. Does not unlock #61 / #29.
 """
@@ -18,7 +20,7 @@ from typing import Any, Protocol
 
 
 class RuntimeHandoffHook(Protocol):
-    """Admit/cancel/status against runtime compute when a stamp exists."""
+    """Admit/cancel/status when an operator injects a live hook."""
 
     def admit(
         self, handoff: dict[str, str], payload_bytes: bytes | None
@@ -35,8 +37,9 @@ class RuntimeHandoffHook(Protocol):
 class InertRuntimeHandoffHook:
     """Default hook: always fall back to the local stub.
 
-    TODO: awaiting runtime stamp of a guest-callable submit path. Do not
-    invent PLATFORM_COMPUTE_* / PLATFORM_RAY_* / engine URL env here.
+    Transport is operator/ctl-mediated. Do not add guest→ctl HTTP,
+    PLATFORM_MESH_* destinations, PLATFORM_RAY_*, engine URLs, or a call
+    to runtime.apply compute-work.
     """
 
     def admit(

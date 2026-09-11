@@ -153,17 +153,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
   <p class="banner"><strong>Stub / UX seed only.</strong> Reserve (shaped) is an
     in-process lifecycle demo so operators can compare submit → status pills →
     cancel with iec <code>docs/ux/journeys/run_lifecycle_monitoring.md</code>.
-    It is <strong>not</strong> a performance baseline, <strong>not</strong> IFRS17
-    math, and <strong>not</strong> runtime #70 Done. Comparable perf waits on
-    runtime compute-plane engines. Named iec baseline remains
+    It is <strong>not</strong> a performance baseline until runtime #83 + remeasure,
+    <strong>not</strong> IFRS17 math, and <strong>not</strong> runtime #70 Done.
+    Named iec baseline remains
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
     <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
-    no pause / resume / progress endpoints — cancel only. Operator/ctl admits
-    opaque work via <code>GET /v0/jobs/{id}/handoff</code> and
-    <code>/payload</code> (mesh is compute-job → sos; awaiting a platform-stamped
-    guest submit path). Reserve digest keys match runtime
-    <code>docs/reserve.md</code> / PR #84 (<code>runtime.reserve.digest_for</code>).
-    Guest never calls <code>runtime.apply</code>.</p>
+    no pause / resume / progress endpoints — cancel only.
+    <strong>Stub fallback</strong> (default, in-process) vs
+    <strong>operator binding path</strong>: operator/ctl reads
+    <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
+    (mesh is compute-job → sos; worker calls this Unit). Transport today is
+    operator/ctl-mediated only — no guest→ctl HTTP, no
+    <code>runtime.apply compute-work</code> from the guest, no env that adds
+    mesh destinations. Recorded digest is frozen; remirror when runtime #83
+    lands.</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -205,12 +208,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
         </div>
       </form>
       <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical catalog JSON
-        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — same as runtime.reserve.digest_for).
+        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — small stable set; remirror when runtime #83 lands).
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
         Reserve (shaped) defaults to the <strong>recorded</strong> catalog. Stages/seconds are local stub UX only
         (admit → project → fold, …) so cancel mid-flight is visible — still an in-memory thread, not engines, not IFRS17 math.
         Ctl: GET /v0/jobs/{id}/handoff (kind/class/payload_digest/status) and /payload (canonical bytes).
-        Guest never calls runtime.apply. The seam kind is job — never a demo label.</p>
+        Guest never calls runtime.apply compute-work. The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>
     <section>

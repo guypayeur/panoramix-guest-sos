@@ -7,7 +7,7 @@ Pin **0.5**. This repository is opaque domain code plus a platform Unit contract
 ## What this is
 
 - A greenfield Panoramix **0.5** guest: Unit `sos`, public HTTP on **18280**, probes at `/health`.
-- A **day-one operator path**: submit work, watch status, cancel. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` ([`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). In-process stub runner is the **fallback** when no runtime admit is configured (the default). Engines stay in runtime bindings. Local demos: `echo`, `sleep`, and **`reserve`** (shaped UX seed — not IFRS17 math, not a perf baseline). Operator/ctl exports `GET /v0/jobs/{id}/handoff` + `/payload` and admits that tuple to runtime compute.
+- A **day-one operator path**: submit work, watch status, cancel. Guest-facing handoff is opaque `kind` / `class` / `payload_digest` ([`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). In-process stub runner is the **fallback** (the default). Engines stay in runtime bindings. Local demos: `echo`, `sleep`, and **`reserve`** (shaped UX seed — not IFRS17 math, not a perf baseline until runtime #83 + remeasure). Guest **emits WorkHandoff JSON only**; operator/ctl admits it via the binding. No guest→ctl HTTP for compute-work.
 - Stdlib Python 3.12 (`platform_run.py` + `sos/`). Thin entrypoint imports domain the same way [httpbin](https://github.com/guypayeur/panoramix-guest-httpbin) `platform_run.py` imports `httpbin.core.app`.
 - A minimal operator UI at `GET /` (also `GET /ui`) that polls the JSON API.
 
@@ -16,7 +16,7 @@ Pin **0.5**. This repository is opaque domain code plus a platform Unit contract
 - **Not** a lift of [iec-proto-c](https://github.com/guypayeur/iec-proto-c). This tree does not vend iec code, L1–L2 layers, ADSL/compiler, or claim feature/UX/perf equivalence.
 - **Not** a place for `image:`, `ray:`, `temporal:`, or `aws:` fields on Unit/System YAML. Pin stays **0.5**.
 - **Not** engine management. Ray / Temporal / GPU / AWS stay in runtime bindings ([runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70)).
-- **Not** cloud-first. Local lab before AWS. Do not set `PLATFORM_RAY_*` (or any engine URL) here.
+- **Not** cloud-first. Local lab before AWS. Do not invent `PLATFORM_RAY_*`, engine URLs, guest-callable ctl HTTP, or env that adds mesh destinations.
 
 ## North star (documented only)
 
@@ -27,7 +27,7 @@ Day-one **is thinner** than iec-proto-c. The Done-when north star — owned with
 
 Those boxes live on [panoramix-runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70). Slice B alignment here is the opaque seam only — **not** #70 Done.
 
-The named iec comparison path (runtime [method.yaml](https://github.com/guypayeur/panoramix-runtime/blob/main/proofs/fixtures/iec-parity/method.yaml) after [#82](https://github.com/guypayeur/panoramix-runtime/pull/82)) is **`grammar/examples/reserve_ifrs17`**, with UX journey [`docs/ux/journeys/run_lifecycle_monitoring.md`](https://github.com/guypayeur/iec-proto-c/blob/main/docs/ux/journeys/run_lifecycle_monitoring.md). This guest’s `demo: "reserve"` is a **thinner stub / UX seed** so operators can walk submit → status pills → cancel beside that named baseline. Payload bytes are the **recorded** (default) or **live** catalog from runtime [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) / [PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84); `payload_digest` must equal `runtime.reserve.digest_for`. Comparable **perf** waits on a runtime engine actually running that digest ([runtime#83](https://github.com/guypayeur/panoramix-runtime/issues/83) / #70). This path does **not** claim UX/perf parity and does **not** close #70.
+The named iec comparison path (runtime [method.yaml](https://github.com/guypayeur/panoramix-runtime/blob/main/proofs/fixtures/iec-parity/method.yaml) after [#82](https://github.com/guypayeur/panoramix-runtime/pull/82)) is **`grammar/examples/reserve_ifrs17`**, with UX journey [`docs/ux/journeys/run_lifecycle_monitoring.md`](https://github.com/guypayeur/iec-proto-c/blob/main/docs/ux/journeys/run_lifecycle_monitoring.md). This guest’s `demo: "reserve"` is a **thinner stub / UX seed** so operators can walk submit → status pills → cancel beside that named baseline. Payload bytes use a **small stable param set** (`workload`, `accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) — thinner than IFRS17, not vendored iec. Runtime [#83](https://github.com/guypayeur/panoramix-runtime/issues/83) will document those keys; **digests will be aligned when #83 lands**. Until then the recorded digest stays frozen (see Jobs API). This path does **not** claim UX/perf parity, is **not** a perf baseline until #83 + remeasure, and does **not** close #70.
 
 ## Contract
 
@@ -68,15 +68,15 @@ Operator UI: open http://127.0.0.1:18280/ (or `/ui`).
    - `kind`: `job` | `stage` | `chunk`
    - `class`: `cpu` | `gpu`
    - `payload_digest`: `sha256:` + 64 lowercase hex
-2. **Local demo shortcut** (operator UX only): `{"demo":"echo","message":"..."}`, `{"demo":"sleep","seconds":8}`, or `{"demo":"reserve", ...}`. The server synthesizes `{kind:"job", class:"cpu"|"gpu", payload_digest}` from canonical JSON of the stored payload bytes (`json.dumps(..., sort_keys=True, separators=(",", ":"))` then sha256). For **reserve**, those bytes **must match** runtime [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) / [PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84) `runtime.reserve.digest_for`:
+2. **Local demo shortcut** (operator UX only): `{"demo":"echo","message":"..."}`, `{"demo":"sleep","seconds":8}`, or `{"demo":"reserve", ...}`. The server synthesizes `{kind:"job", class:"cpu"|"gpu", payload_digest}` from canonical JSON of the stored payload bytes (`json.dumps(..., sort_keys=True, separators=(",", ":"))` then sha256). For **reserve**, bytes are the small catalog below (TODO(#83): remirror keys if runtime #83 documents a different set on main; **digests will be aligned when #83 lands**):
 
 ```json
 {"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,"paths":96,"seed":17070,"workload":"reserve"}
 ```
 
-Default catalog is **recorded** (CI). `{"demo":"reserve","catalog":"live"}` uses the heavier live catalog. Explicit ints (`accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) override catalog fields. Optional `label` / `stages` / `seconds` are **local stub UX only** and are not in the digest. `class: "gpu"` is a **UX label only** on the stub. The seam `kind` is always `job`. Guest **emits handoff JSON only** — it never calls `runtime.apply`. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline; named iec baseline remains `reserve_ifrs17`. Not #70 Done until a runtime engine runs the digest.
+Default catalog is **recorded** (CI). Recorded digest is `sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e` and stays frozen until the #83 remirror. `{"demo":"reserve","catalog":"live"}` uses the heavier live catalog. Explicit ints (`accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) override catalog fields. Optional `label` / `stages` / `seconds` are **local stub UX only** and are not in the digest. `class: "gpu"` is a **UX / opaque label only** on the stub. The seam `kind` is always `job`. Guest **emits WorkHandoff JSON only** — it never calls `runtime.apply compute-work`. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline until #83 + remeasure; named iec baseline remains `reserve_ifrs17`. Not #70 Done.
 
-Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if a future stamped hook admits the job).
+Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if an operator-injected hook admits the job).
 
 Ctl export (no engine fields; nested `payload` is omitted because runtime `parse_work` rejects that key on submit):
 
@@ -122,9 +122,14 @@ curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
   -d '{"demo":"reserve","class":"gpu","seconds":8}'
 ```
 
-### Operator / ctl handoff (awaiting runtime stamp)
+### Operator / ctl handoff (stub fallback vs binding)
 
-Compute-plane mesh is **from `compute-job` → to `sos`** (the engine calls the guest). This guest does **not** call Ray / Temporal / AWS, and it does **not** invent `PLATFORM_RAY_*` or `PLATFORM_COMPUTE_*`. Runtime **main** documents no guest-callable submit env for this seam (searched; none found). Until the platform stamps one, **operator/ctl** takes the guest job’s opaque handoff and admits it to runtime compute (`python3 -m runtime.apply reserve` / `submit_work` / `parse_work` — guest never invokes apply). Digests must match [`runtime.reserve.digest_for`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/reserve.py) ([PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84), [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md)). Example bindings: [`local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml) and [`local-reserve.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve.example.yaml) (Unit sos @18280, pin 0.5; engine in the binding only).
+Transport today is **operator/ctl-mediated only**. This guest does **not** open guest→ctl HTTP for compute-work, does **not** call `runtime.apply compute-work`, and does **not** invent `PLATFORM_RAY_*`, engine URLs, guest-callable ctl HTTP, or env that adds mesh destinations. Mesh on [`local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml) is **from `compute-job` → to `sos`** (the worker calls this Unit). Example binding: [`local-reserve.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve.example.yaml) (Unit sos @18280, pin 0.5; engine in the binding only).
+
+Two paths:
+
+1. **Stub fallback (default):** `POST /v0/jobs` runs in-process. `local.backed` is `stub`. Submit/status/cancel stay on this Unit.
+2. **Operator binding path:** operator/ctl reads the exported WorkHandoff and admits that tuple on the runtime compute plane via the binding. This Unit only **emits** the JSON.
 
 ```bash
 # Guest UX (unchanged):
@@ -135,12 +140,13 @@ curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
 # Ctl reads the WorkHandoff projection + canonical payload bytes:
 curl -sS http://127.0.0.1:18280/v0/jobs/<id>/handoff
 curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
-# Admit those fields on the runtime compute plane (operator/ctl), not via guest env.
+# Admit those fields on the runtime compute plane (operator/ctl / binding).
+# Guest never POSTs to ctl and never calls runtime.apply compute-work.
 ```
 
-A code hook (`sos.runtime_hook.InertRuntimeHandoffHook`) is the extension point for a future stamped path. It is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. When that hook later admits, cancel will try the hook first, then fall back to local cancel.
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel.
 
-**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (future hook) → cancel signals runtime, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**.
+**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**.
 
 Jobs are process-local and disappear on restart. The stub records opaque work locally; it does not start an engine.
 
