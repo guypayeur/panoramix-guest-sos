@@ -69,7 +69,7 @@ INFO_PAYLOAD = {
             "runtime.reserve.live_params",
             "runtime.reserve.parity_params",
         ],
-        "runtime_reserve_parity": "runtime#87",
+        "runtime_reserve_parity": "runtime.reserve.parity_params",
         "ctl_handoff": {
             "mode": "operator-ctl",
             "guest_to_ctl_http": False,

@@ -4,9 +4,9 @@ Hard reference: runtime/compute_work.py on panoramix-runtime main.
 Guest emits WorkHandoff JSON only (kind/class/payload_digest + status/id).
 Does not call runtime.apply compute-work. Does not open guest→ctl HTTP.
 Reserve catalogs mirror runtime.reserve.recorded_params / live_params /
-parity_params / digest_for (docs/reserve.md; parity via runtime #87 until
-those helpers land on main). Ctl export has no nested ``payload`` field.
-Does not close #70. Does not unlock #61 / #29.
+parity_params / digest_for on panoramix-runtime main (docs/reserve.md).
+Ctl export has no nested ``payload`` field. Does not close #70. Does not
+unlock #61 / #29.
 """
 
 from __future__ import annotations
@@ -208,7 +208,7 @@ def live_params() -> dict[str, Any]:
 
 
 def parity_params() -> dict[str, Any]:
-    """Parity-scale catalog. Mirrors runtime.reserve.parity_params (#87 / docs/reserve.md)."""
+    """Parity-scale catalog. Mirrors runtime.reserve.parity_params on main."""
     return dict(PARITY_PARAMS)
 
 
@@ -247,7 +247,7 @@ def digest_for(params: dict[str, Any]) -> str:
     """sha256 of payload_for canonical JSON.
 
     Must match runtime.reserve.digest_for on panoramix-runtime main
-    (parity via #87 / docs/reserve.md until helpers land on main).
+    (docs/reserve.md).
     Recorded catalog is sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e.
     Parity catalog is sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102.
     """

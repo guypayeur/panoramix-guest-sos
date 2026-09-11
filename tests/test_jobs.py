@@ -729,6 +729,9 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("live_params", text, name)
             self.assertIn("parity_params", text, name)
             self.assertIn("docs/reserve.md", text, name)
+            self.assertNotIn("until on main", text, name)
+            self.assertNotIn("until those helpers", text, name)
+            self.assertNotIn("until helpers land", text, name)
             self.assertIn(
                 "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
                 text,
@@ -759,8 +762,12 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("not iec chunk progress", ux.lower())
         self.assertIn("no pause", ux.lower())
         self.assertIn("parity (parity-scale)", ux)
-        self.assertIn("#87", ux)
+        self.assertIn("runtime.reserve.parity_params", ux)
+        self.assertIn("digest_for", ux)
+        self.assertIn("docs/reserve.md", ux)
         self.assertIn("recorded / live / parity (parity-scale)", ux)
+        self.assertNotIn("until on main", ux)
+        self.assertNotIn("until those helpers", ux)
         self.assertIn(
             "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
             ux,

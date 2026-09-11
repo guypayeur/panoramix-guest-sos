@@ -29,10 +29,10 @@ MAX_SLEEP_SECONDS = 30.0
 # Reserve-shaped work request — small stable param set, thinner than IFRS17.
 # Hardcoded catalogs; do not import runtime; do not vendor iec.
 #
-# Mirrored from panoramix-runtime helpers (docs/reserve.md; parity via #87
-# until those helpers land on main): runtime.reserve.recorded_params,
-# live_params, parity_params, digest_for.
-# Do not change RECORDED_PAYLOAD_DIGEST unless those helpers change on main.
+# Mirrored from panoramix-runtime **main** helpers (docs/reserve.md):
+# runtime.reserve.recorded_params, live_params, parity_params, digest_for.
+# Do not change RECORDED_PAYLOAD_DIGEST / PARITY_PAYLOAD_DIGEST unless
+# those helpers change on main.
 RESERVE_WORKLOAD = "reserve"
 RESERVE_CATALOG_RECORDED = "recorded"
 RESERVE_CATALOG_LIVE = "live"
@@ -76,7 +76,7 @@ LIVE_PARAMS: dict[str, int | str] = {
     "lapse_bps": 80,
     "discount_bps": 300,
 }
-# Third catalog from runtime #87 (parity_params). Same keys; not IFRS17.
+# Third catalog. Mirrors runtime.reserve.parity_params on main. Same keys; not IFRS17.
 PARITY_PARAMS: dict[str, int | str] = {
     "workload": RESERVE_WORKLOAD,
     "accounts": 2048,
@@ -95,7 +95,8 @@ RECORDED_PAYLOAD_DIGEST = (
 LIVE_PAYLOAD_DIGEST = (
     "sha256:9207915bfa0c563ccc6d167ef79db47c5318219bd0269aae5c4b8313d2fceea6"
 )
-# Must equal runtime.reserve.digest_for(parity_params()) after #87 / docs/reserve.md.
+# Must equal runtime.reserve.digest_for(parity_params()) on panoramix-runtime
+# main (docs/reserve.md).
 PARITY_PAYLOAD_DIGEST = (
     "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102"
 )

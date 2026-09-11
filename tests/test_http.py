@@ -91,7 +91,7 @@ class HttpAppTests(unittest.TestCase):
             body["jobs"]["reserve_digest_parity"],
             "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
         )
-        self.assertEqual(body["jobs"]["runtime_reserve_parity"], "runtime#87")
+        self.assertEqual(body["jobs"]["runtime_reserve_parity"], "runtime.reserve.parity_params")
         self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
         ctl = body["jobs"]["ctl_handoff"]
         self.assertEqual(ctl["mode"], "operator-ctl")
