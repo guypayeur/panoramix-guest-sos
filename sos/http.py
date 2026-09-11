@@ -6,9 +6,9 @@ No engine URL schemes in request or response bodies. Ctl exports
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
 Pause/resume (``POST .../pause`` / ``POST .../resume``) require the
 durable path; stub-only jobs return 409 stub_only. Events prefer
-``hook.events()`` JSONL when durable-backed. Transport is
-operator/ctl-mediated: no guest→ctl HTTP, no
-``runtime.apply compute-work`` from this guest.
+``hook.events()`` JSONL when durable-backed. Compare uses in-process
+job history only. Transport is operator/ctl-mediated: no guest→ctl
+HTTP, no ``runtime.apply compute-work`` from this guest.
 """
 
 from __future__ import annotations
@@ -99,6 +99,7 @@ INFO_PAYLOAD = {
         },
         "progress": "GET /v0/jobs/{id}/progress",
         "events": "GET /v0/jobs/{id}/events",
+        "compare": "GET /v0/jobs/{id}/compare",
         "progress_honesty": (
             "durable reserve-temporal path-slices when a hook provides them; "
             "else stub stage metadata; not iec planner parallelism; "
@@ -118,6 +119,13 @@ INFO_PAYLOAD = {
             "(admit / project / fold / complete); not Slack; "
             "not a live team directory. "
             "Event trail stays on the same panel; not a SIEM."
+        ),
+        "compare_honesty": (
+            "guest process history only — recent same-catalog jobs when "
+            "catalog is on the job, else same kind/class. Elapsed from "
+            "created/updated timestamps; typical/ETA only from succeeded "
+            "prior walls when two or more samples exist. not a forecast; "
+            "not IFRS17; not iec SPA historical widget. No guest→ctl HTTP."
         ),
         "pause": "POST /v0/jobs/{id}/pause",
         "resume": "POST /v0/jobs/{id}/resume",
@@ -146,6 +154,7 @@ _HANDOFF_RE = re.compile(r"^/v0/jobs/([^/]+)/handoff$")
 _PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
 _PROGRESS_RE = re.compile(r"^/v0/jobs/([^/]+)/progress$")
 _EVENTS_RE = re.compile(r"^/v0/jobs/([^/]+)/events$")
+_COMPARE_RE = re.compile(r"^/v0/jobs/([^/]+)/compare$")
 
 
 @dataclass
@@ -249,6 +258,11 @@ class SosApp:
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             return _json_response(200, self.store.events(events.group(1)))
+        compare = _COMPARE_RE.match(path)
+        if compare:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.compare(compare.group(1)))
         job_match = _JOB_RE.match(path)
         if job_match:
             if method != "GET":

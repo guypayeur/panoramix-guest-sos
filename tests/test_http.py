@@ -113,6 +113,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn("never calls", ctl["note"])
         self.assertEqual(body["jobs"]["progress"], "GET /v0/jobs/{id}/progress")
         self.assertEqual(body["jobs"]["events"], "GET /v0/jobs/{id}/events")
+        self.assertEqual(body["jobs"]["compare"], "GET /v0/jobs/{id}/compare")
         self.assertEqual(body["jobs"]["pause"], "POST /v0/jobs/{id}/pause")
         self.assertEqual(body["jobs"]["resume"], "POST /v0/jobs/{id}/resume")
         self.assertIs(body["jobs"]["pause_resume"], True)
@@ -144,6 +145,11 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("admit / project / fold / complete", body["jobs"]["investigate_honesty"])
         self.assertIn("same panel", body["jobs"]["investigate_honesty"])
         self.assertIn("not a SIEM", body["jobs"]["investigate_honesty"])
+        self.assertIn("not a forecast", body["jobs"]["compare_honesty"])
+        self.assertIn("not IFRS17", body["jobs"]["compare_honesty"])
+        self.assertIn("not iec SPA historical widget", body["jobs"]["compare_honesty"])
+        self.assertIn("guest process history", body["jobs"]["compare_honesty"])
+        self.assertIn("No guest→ctl HTTP", body["jobs"]["compare_honesty"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal pause|resume",
@@ -229,6 +235,14 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Not Slack", html)
             self.assertIn("Event trail is on this panel", html)
             self.assertIn("not a SIEM", html)
+            self.assertIn("Vs recent guest jobs", html)
+            self.assertIn("/compare", html)
+            self.assertIn("Not a forecast", html)
+            self.assertIn("Not IFRS17", html)
+            self.assertIn("Not iec SPA historical widget", html)
+            self.assertIn("No prior jobs in this process to compare", html)
+            self.assertIn("typical_elapsed_s", html)
+            self.assertIn("eta_elapsed_s", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -465,16 +479,77 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(job["status"], "canceled")
         self.assertIn("canceled", [item["event"] for item in job["events"]])
 
+        compare = self.app.handle("GET", f"/v0/jobs/{job_id}/compare")
+        self.assertEqual(compare.status, 200)
+        vs = _json(compare)
+        self.assertEqual(vs["id"], job_id)
+        self.assertEqual(vs["source"], "guest_history")
+        self.assertEqual(vs["priors_n"], 0)
+        self.assertNotIn("typical_elapsed_s", vs)
+        self.assertNotIn("eta_elapsed_s", vs)
+        self.assertIn("No prior jobs", vs["note"])
+        self.assertIn("Not a forecast", vs["note"])
+        self.assertIn("Not IFRS17", vs["note"])
+        self.assertIn("Not iec SPA historical widget", vs["note"])
+
         missing_p = self.app.handle("GET", "/v0/jobs/nope/progress")
         self.assertEqual(missing_p.status, 404)
         missing_e = self.app.handle("GET", "/v0/jobs/nope/events")
         self.assertEqual(missing_e.status, 404)
+        missing_c = self.app.handle("GET", "/v0/jobs/nope/compare")
+        self.assertEqual(missing_c.status, 404)
         self.assertEqual(
             self.app.handle("POST", f"/v0/jobs/{job_id}/progress").status, 405
         )
         self.assertEqual(
             self.app.handle("POST", f"/v0/jobs/{job_id}/events").status, 405
         )
+        self.assertEqual(
+            self.app.handle("POST", f"/v0/jobs/{job_id}/compare").status, 405
+        )
+
+    def test_compare_http_empty_single_multi(self) -> None:
+        first = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 0, "stages": 2}).encode(),
+        )
+        first_id = _json(first)["id"]
+        wait_http_status(self.app, first_id, {"succeeded"})
+        empty = _json(self.app.handle("GET", f"/v0/jobs/{first_id}/compare"))
+        self.assertEqual(empty["priors_n"], 0)
+        self.assertNotIn("typical_elapsed_s", empty)
+        self.assertNotIn("eta_elapsed_s", empty)
+
+        second = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 0, "stages": 2}).encode(),
+        )
+        second_id = _json(second)["id"]
+        wait_http_status(self.app, second_id, {"succeeded"})
+        single = _json(self.app.handle("GET", f"/v0/jobs/{second_id}/compare"))
+        self.assertEqual(single["priors_n"], 1)
+        self.assertEqual(single["priors"][0]["id"], first_id)
+        self.assertIn("elapsed_s", single["priors"][0])
+        self.assertNotIn("typical_elapsed_s", single)
+        self.assertNotIn("eta_elapsed_s", single)
+
+        third = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 0, "stages": 2}).encode(),
+        )
+        third_id = _json(third)["id"]
+        wait_http_status(self.app, third_id, {"succeeded"})
+        multi = _json(self.app.handle("GET", f"/v0/jobs/{third_id}/compare"))
+        self.assertEqual(multi["priors_n"], 2)
+        self.assertIn("typical_elapsed_s", multi)
+        self.assertNotIn("eta_elapsed_s", multi)
+        self.assertIn("Not a forecast", multi["note"])
+        handoff = _json(self.app.handle("GET", f"/v0/jobs/{third_id}/handoff"))
+        self.assertNotIn("typical_elapsed_s", handoff)
+        self.assertNotIn("compare", handoff)
 
     def test_cancel_terminal_includes_pause_note(self) -> None:
         created = self.app.handle(
