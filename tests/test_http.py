@@ -68,6 +68,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("stub", body["jobs"]["ux_seed"])
         self.assertEqual(body["jobs"]["iec_named_baseline"], "grammar/examples/reserve_ifrs17")
         self.assertEqual(body["jobs"]["reserve_digest_recorded"], RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(
+            body["jobs"]["reserve_digest_recorded"],
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+        )
         self.assertEqual(body["jobs"]["runtime_reserve"], "docs/reserve.md")
         self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live"])
         self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
@@ -192,6 +196,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(job["local"]["demo"], "reserve")
         self.assertEqual(job["local"]["catalog"], "recorded")
         self.assertEqual(job["payload_digest"], RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(
+            job["payload_digest"],
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+        )
         handoff = self.app.handle("GET", f"/v0/jobs/{job['id']}/handoff")
         self.assertEqual(handoff.status, 200)
         exported = _json(handoff)
@@ -212,6 +220,11 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["utf8"].encode("utf-8"), bytes.fromhex(body["hex"]))
         self.assertNotIn("payload", body)
         self.assertEqual(body["utf8"], RECORDED_CANONICAL_JSON)
+        self.assertEqual(
+            body["utf8"],
+            '{"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,'
+            '"paths":96,"seed":17070,"workload":"reserve"}',
+        )
         self.assertIn('"workload":"reserve"', body["utf8"])
         self.assertNotIn("reserve_ifrs17", body["utf8"])
         self.assertNotIn('"work":', body["utf8"])

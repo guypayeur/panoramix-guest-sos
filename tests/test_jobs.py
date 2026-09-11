@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 import unittest
 
@@ -131,6 +132,74 @@ class HandoffParseTests(unittest.TestCase):
         self.assertEqual((parsed.kind, parsed.resource_class), ("job", "gpu"))
         self.assertEqual(parsed.local["class"], "gpu")
         self.assertEqual(parsed.payload_digest, RECORDED_PAYLOAD_DIGEST)
+
+    def test_known_recorded_catalog_digest(self) -> None:
+        """Golden digest: independent of handoff_vocab constants.
+
+        Canonical JSON bytes:
+        {"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,
+         "paths":96,"seed":17070,"workload":"reserve"}
+        payload_digest =
+        sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e
+        """
+        canonical = (
+            '{"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,'
+            '"paths":96,"seed":17070,"workload":"reserve"}'
+        )
+        digest = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        self.assertEqual(
+            digest,
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+        )
+        self.assertEqual(RECORDED_CANONICAL_JSON, canonical)
+        self.assertEqual(RECORDED_PAYLOAD_DIGEST, digest)
+        self.assertEqual(
+            digest_canonical(
+                {
+                    "accounts": 48,
+                    "discount_bps": 300,
+                    "horizon": 12,
+                    "lapse_bps": 80,
+                    "paths": 96,
+                    "seed": 17070,
+                    "workload": "reserve",
+                }
+            ),
+            digest,
+        )
+
+        parsed = parse_submit({"demo": "reserve"})
+        self.assertEqual(parsed.kind, "job")
+        self.assertEqual(parsed.resource_class, "cpu")
+        self.assertEqual(parsed.local["catalog"], "recorded")
+        self.assertEqual(parsed.payload_digest, digest)
+        self.assertEqual(parsed.payload_bytes.decode("utf-8"), canonical)
+
+        live_canonical = (
+            '{"accounts":640,"discount_bps":300,"horizon":40,"lapse_bps":80,'
+            '"paths":2048,"seed":17070,"workload":"reserve"}'
+        )
+        live_digest = "sha256:" + hashlib.sha256(
+            live_canonical.encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(
+            live_digest,
+            "sha256:9207915bfa0c563ccc6d167ef79db47c5318219bd0269aae5c4b8313d2fceea6",
+        )
+        live = parse_submit({"demo": "reserve", "catalog": "live"})
+        self.assertEqual(live.kind, "job")
+        self.assertEqual(live.resource_class, "cpu")
+        self.assertEqual(live.local["catalog"], "live")
+        self.assertEqual(live.local["accounts"], 640)
+        self.assertEqual(live.local["horizon"], 40)
+        self.assertEqual(live.local["paths"], 2048)
+        self.assertEqual(live.local["seed"], 17070)
+        self.assertEqual(live.local["lapse_bps"], 80)
+        self.assertEqual(live.local["discount_bps"], 300)
+        self.assertEqual(live.payload_digest, live_digest)
+        self.assertEqual(live.payload_bytes.decode("utf-8"), live_canonical)
+        self.assertEqual(LIVE_PAYLOAD_DIGEST, live_digest)
+        self.assertNotEqual(live_digest, digest)
 
     def test_reserve_payload_digest_is_stable(self) -> None:
         a = parse_submit({"demo": "reserve", "stages": 3, "label": "ux-seed", "seconds": 6})
