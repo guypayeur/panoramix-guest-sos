@@ -724,7 +724,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("python3 -m runtime.apply reserve-temporal", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
             self.assertIn("runtime.apply compute-work", text, name)
-            self.assertIn("never** calls `runtime.apply compute-work`", text, name)
+            self.assertIn("does **not** call `runtime.apply compute-work`", text, name)
             self.assertIn("hook stays inert", text.lower(), name)
             self.assertIn("workflow cancel", text.lower(), name)
             self.assertIn("workflow_id", text, name)
