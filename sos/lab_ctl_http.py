@@ -10,7 +10,8 @@ Not engine URLs. Pin stays 0.5.
 
 Opt-in via ``PANORAMIX_CTL_HTTP`` pointing at a loopback origin
 (example: ``http://127.0.0.1:19215``, the ``publish.ctl_port`` on
-``local-reserve-temporal``). Unset, non-loopback, or an unusable URL
+``local-reserve-temporal``). Shape is panoramix-runtime **main**
+@ ``fb901542`` (PR #100). Unset, non-loopback, or an unusable URL
 fails closed (caller keeps the inert stub). Optional
 ``PANORAMIX_CTL_HTTP_BEARER`` sends ``Authorization: Bearer …`` when
 the binding has ``ctl.require``. Optional

@@ -1257,6 +1257,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("PANORAMIX_RUNTIME_ROOT", text, name)
             self.assertIn("PANORAMIX_CTL_HTTP", text, name)
             self.assertIn("/reserve-temporal/", text, name)
+            self.assertIn("fb901542", text, name)
             self.assertTrue(
                 "fail closed" in text.lower() or "fails closed" in text.lower(),
                 name,
@@ -1432,6 +1433,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("PANORAMIX_RUNTIME_ROOT", ux)
         self.assertIn("PANORAMIX_CTL_HTTP", ux)
         self.assertIn("/reserve-temporal/", ux)
+        self.assertIn("fb901542", ux)
         self.assertIn("opt-in lab", ux.lower())
         self.assertIn("workflow cancel", ux.lower())
         self.assertNotIn("ray:", ux)

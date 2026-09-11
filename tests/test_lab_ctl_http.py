@@ -481,6 +481,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("fail closed", text)
         self.assertIn("Not guest→mesh ctl", text)
         self.assertIn("PANORAMIX_CTL_HTTP", text)
+        self.assertIn("fb901542", text)
         self.assertNotIn("Fixes #70", text)
         self.assertNotIn("Fixes #78", text)
         imports = [
