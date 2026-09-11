@@ -144,6 +144,19 @@ OPERATOR_HTML = """<!DOCTYPE html>
       max-width: 72rem;
     }
     .banner strong { color: #ffd27a; }
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      padding: 0.22rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      max-width: 28rem;
+    }
+    .badge-inert { color: var(--muted); }
+    .badge-http { color: var(--ok); border-color: var(--ok); }
+    .badge-apply { color: var(--warn); border-color: var(--warn); }
     .meta { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.28rem 0.7rem; font-size: 0.86rem; }
     .meta dt { color: var(--muted); }
     .meta dd { margin: 0; word-break: break-all; }
@@ -248,7 +261,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
         echo / sleep / reserve is a demo shortcut that synthesizes that shape —
         this page never takes engine URLs. Pause/Resume is durable-path only.</p>
     </div>
-    <p class="sub" id="info-line">loading…</p>
+    <div>
+      <p class="sub" id="info-line">loading…</p>
+      <p class="badge badge-inert" id="durable-badge">Hook: inert stub — fail-closed without PANORAMIX_CTL_HTTP. No pretend durable path.</p>
+    </div>
   </header>
   <p class="banner"><strong>Stub / UX seed only.</strong> Reserve (shaped) is an
     in-process lifecycle demo so operators can compare submit → status pills →
@@ -1223,11 +1239,34 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
     }
 
+    function renderDurableBadge(info) {
+      const el = $("durable-badge");
+      if (!el) return;
+      const hook = (info && info.jobs && info.jobs.durable_hook) || {};
+      const kind = hook.kind || "inert";
+      el.className = "badge";
+      if (kind === "ctl_http" && hook.durable_path === true) {
+        el.classList.add("badge-http");
+        el.textContent = "Durable path active — loopback ctl HTTP"
+          + (hook.ctl_http ? (" " + hook.ctl_http) : "")
+          + ". Not guest→mesh ctl. Not #70 Done.";
+        return;
+      }
+      if (kind === "ctl_apply" && hook.durable_path === true) {
+        el.classList.add("badge-apply");
+        el.textContent = "Durable path — local reserve-temporal apply hook. Not guest→mesh ctl. Not #70 Done.";
+        return;
+      }
+      el.classList.add("badge-inert");
+      el.textContent = "Hook: inert stub — fail-closed without PANORAMIX_CTL_HTTP. No pretend durable path.";
+    }
+
     async function loadInfo() {
       try {
         const res = await fetch("/v0/info");
         const info = await res.json();
         $("info-line").textContent = info.product + " · " + info.status + " · engines " + info.engines;
+        renderDurableBadge(info);
       } catch (e) {
         $("info-line").textContent = "info unavailable";
       }
