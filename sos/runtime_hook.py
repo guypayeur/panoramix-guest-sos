@@ -1,26 +1,27 @@
-"""Inert runtime admit/cancel/pause/resume/progress/events hook.
+"""Runtime admit/cancel/pause/resume/progress/events hook.
 
-Transport today is **operator/ctl-mediated only**. This guest emits
-WorkHandoff JSON (kind/class/payload_digest + status/id). It does not
-open guest→ctl HTTP for compute-work, does not call
+Transport stays **operator/ctl-mediated**. This guest emits WorkHandoff
+JSON (kind/class/payload_digest + status/id). It does not open
+guest→ctl HTTP for compute-work, does not call
 ``runtime.apply compute-work``, and does not set env that adds mesh
 destinations. Mesh on local-sos-compute is ``from: compute-job`` →
 ``to: sos`` (worker calls Unit).
 
 Do not invent PLATFORM_RAY_* / engine URLs / guest-callable ctl HTTP.
-``admit`` / ``cancel`` / ``status`` / ``pause`` / ``resume`` /
-``progress`` / ``events`` stay no-ops; JobStore falls back to the
-in-process stub. Temporal-local admit/status/progress/events/cancel/
-pause/resume is operator/ctl via reserve-temporal; this hook stays
-inert. Optional guest→ctl loopback is deferred until a documented safe
-loopback admit exists.
+Default ``InertRuntimeHandoffHook`` stays no-op; JobStore falls back to
+the in-process stub. An **opt-in lab adapter** (``PANORAMIX_RUNTIME_ROOT``)
+may inject ``LabReserveTemporalHook`` on this same seam and invoke
+local ``python3 -m runtime.apply reserve-temporal``.
+That is not a second control plane and not mesh ctl HTTP. Unset or
+missing runtime root fails closed (inert).
 
 Does not close #70. Does not close #78. Does not unlock #61 / #29.
+Does not stamp north_star_done. Cloud stays locked.
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 
 class RuntimeHandoffHook(Protocol):
@@ -70,7 +71,9 @@ class InertRuntimeHandoffHook:
     Transport is operator/ctl-mediated. Do not add guest→ctl HTTP,
     PLATFORM_MESH_* destinations, PLATFORM_RAY_*, engine URLs, or a call
     to runtime.apply compute-work. pause/resume stay False; progress and
-    events stay None (stub / process-memory fallback).
+    events stay None (stub / process-memory fallback). The default hook
+    stays inert unless an operator injects a hook or opts in the lab
+    adapter via PANORAMIX_RUNTIME_ROOT.
     """
 
     def admit(
@@ -99,3 +102,19 @@ class InertRuntimeHandoffHook:
         self, job_id: str, runtime_ref: dict[str, Any] | None
     ) -> dict[str, Any] | list[Any] | None:
         return None
+
+
+def resolve_runtime_hook(
+    env: Mapping[str, str] | None = None,
+) -> RuntimeHandoffHook:
+    """Inert unless PANORAMIX_RUNTIME_ROOT is a usable runtime checkout.
+
+    Fail closed when the env is unset or the root is missing. Does not
+    close #70 / #78. Does not unlock cloud.
+    """
+    from sos.lab_ctl import lab_hook_from_env
+
+    hook = lab_hook_from_env(env)
+    if hook is None:
+        return InertRuntimeHandoffHook()
+    return hook

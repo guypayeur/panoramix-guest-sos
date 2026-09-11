@@ -135,10 +135,11 @@ curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
 
 Transport today is **operator/ctl-mediated only**. This guest does **not** open guest→ctl HTTP for compute-work, does **not** call `runtime.apply compute-work`, and does **not** invent `PLATFORM_RAY_*`, engine URLs, guest-callable ctl HTTP, or env that adds mesh destinations. Mesh on [`local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml) is **from `compute-job` → to `sos`** (the worker calls this Unit). Example binding: [`local-reserve.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve.example.yaml) (Unit sos @18280, pin 0.5; engine in the binding only).
 
-Two paths:
+Two paths (plus an opt-in lab adapter below):
 
 1. **Stub fallback (default):** `POST /v0/jobs` runs in-process. `local.backed` is `stub`. Submit/status/cancel stay on this Unit. Pause/resume is **refused** (`409 stub_only`).
 2. **Operator binding path:** operator/ctl reads the exported WorkHandoff and admits that tuple on the runtime compute plane via the binding. This Unit only **emits** the JSON.
+3. **Opt-in lab loopback:** `PANORAMIX_RUNTIME_ROOT` injects the existing hook and subprocesses `reserve-temporal` locally. Fail closed if unset. Not guest→ctl HTTP. Not #70 Done.
 
 ```bash
 # Guest UX (unchanged):
@@ -167,9 +168,15 @@ python3 -m runtime.apply reserve-temporal resume --id cw_…
 python3 -m runtime.apply reserve-temporal cancel --id cw_…
 ```
 
-Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume on the guest HTTP/UI is durable-path only (injected hook); stub jobs return `409 stub_only` and point here. Cancel is not pause. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
+Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume on the guest HTTP/UI is durable-path only (injected hook or opt-in lab adapter); stub jobs return `409 stub_only` and point here. Cancel is not pause. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
 
-`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume/progress/events return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`. `GET /v0/jobs/{id}/progress` prefers `hook.progress()` counters when the job is durable-backed; otherwise stub metadata. `GET /v0/jobs/{id}/events` prefers `hook.events()` JSONL when the job is durable-backed; otherwise process-memory.
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume/progress/events return none/false, so the in-process stub still runs. The default hook stays inert. Do **not** invent guest→ctl HTTP, `PLATFORM_RAY_*`, or mesh destinations. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`. `GET /v0/jobs/{id}/progress` prefers `hook.progress()` counters when the job is durable-backed; otherwise stub metadata. `GET /v0/jobs/{id}/events` prefers `hook.events()` JSONL when the job is durable-backed; otherwise process-memory.
+
+#### Opt-in lab loopback (local subprocess)
+
+Local lab only. Set `PANORAMIX_RUNTIME_ROOT` to a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout that contains `runtime/apply.py`. `SosApp` then injects `sos.lab_ctl.LabReserveTemporalHook` on the **existing** hook seam. That adapter runs `python3 -m runtime.apply reserve-temporal` (`admit|status|progress|events|pause|resume|cancel`) as a **local subprocess** against that checkout, using the WorkHandoff the guest already emits. Optional `PANORAMIX_RESERVE_TEMPORAL_BINDING` passes `--binding`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` passes `--live`. Unset or missing root **fails closed** (inert stub). CI without the env is unchanged.
+
+This is not guest-callable ctl HTTP, not a second control plane, and not `runtime.apply compute-work`. Stub-only pause/resume still **409** `stub_only`. Does **not** close runtime #70 / #78, does **not** unlock cloud, does **not** stamp `north_star_done`.
 
 **Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live (running or paused). Terminal cancel is still **409**. Cancel is not pause. Pause/resume require the durable path.
 

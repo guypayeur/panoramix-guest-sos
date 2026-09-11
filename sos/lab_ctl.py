@@ -1,0 +1,319 @@
+"""Opt-in lab adapter: local subprocess to reserve-temporal ctl.
+
+Uses the existing ``RuntimeHandoffHook`` injection point. Not a second
+control plane. Not guest-callable ctl HTTP over the mesh. Not
+``PLATFORM_RAY_*``. Not engine URLs. Pin stays 0.5.
+
+Opt-in via ``PANORAMIX_RUNTIME_ROOT`` pointing at a panoramix-runtime
+checkout that contains ``runtime/apply.py``. Unset or missing root
+fails closed (caller keeps the inert stub). Optional
+``PANORAMIX_RESERVE_TEMPORAL_BINDING`` passes ``--binding``; optional
+``PANORAMIX_RESERVE_TEMPORAL_LIVE=1`` passes ``--live``.
+
+Invokes ``python3 -m runtime.apply reserve-temporal`` only — never
+``runtime.apply compute-work``. Does not import the runtime package.
+
+Does not close runtime #70. Does not close #78. Does not unlock
+#61 / #29. Does not stamp north_star_done. Cloud stays locked.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from sos.handoff_vocab import WORK_STATUSES
+
+ENV_RUNTIME_ROOT = "PANORAMIX_RUNTIME_ROOT"
+ENV_BINDING = "PANORAMIX_RESERVE_TEMPORAL_BINDING"
+ENV_LIVE = "PANORAMIX_RESERVE_TEMPORAL_LIVE"
+APPLY_REL = Path("runtime") / "apply.py"
+CTL_PREFIX = ("python3", "-m", "runtime.apply", "reserve-temporal")
+WORK_ID_RE = re.compile(r"^cw_[0-9a-f]{16}$")
+CTL_TIMEOUT_SEC = 120.0
+
+CtlRunner = Callable[..., tuple[int, str, str]]
+
+
+def _truthy(raw: str | None) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def runtime_root_from_env(
+    env: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Return a usable runtime checkout, or None (fail closed)."""
+    source = os.environ if env is None else env
+    raw = str(source.get(ENV_RUNTIME_ROOT) or "").strip()
+    if not raw:
+        return None
+    root = Path(raw).expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        return None
+    if not root.is_dir():
+        return None
+    if not (root / APPLY_REL).is_file():
+        return None
+    return root
+
+
+def binding_from_env(env: Mapping[str, str] | None = None) -> Path | None:
+    source = os.environ if env is None else env
+    raw = str(source.get(ENV_BINDING) or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    try:
+        path = path.resolve()
+    except OSError:
+        return None
+    if not path.is_file():
+        return None
+    return path
+
+
+def subprocess_run_ctl(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout: float = CTL_TIMEOUT_SEC,
+) -> tuple[int, str, str]:
+    """Local subprocess only. Not HTTP. Not a mesh destination."""
+    merged = dict(os.environ)
+    merged.update(env)
+    pythonpath = str(cwd)
+    existing = merged.get("PYTHONPATH", "")
+    if existing:
+        pythonpath = pythonpath + os.pathsep + existing
+    merged["PYTHONPATH"] = pythonpath
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=merged,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, "", "ctl subprocess failed"
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _parse_json(stdout: str) -> dict[str, Any] | None:
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or not payload:
+        return None
+    if payload.get("ok") is False:
+        return None
+    return payload
+
+
+def _ctl_id(job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
+    if runtime_ref:
+        raw = str(runtime_ref.get("id") or "").strip()
+        if WORK_ID_RE.fullmatch(raw):
+            return raw
+    guest = str(job_id or "").strip()
+    if WORK_ID_RE.fullmatch(guest):
+        return guest
+    return None
+
+
+def _lifecycle_status(payload: dict[str, Any]) -> str | None:
+    handoff = payload.get("handoff")
+    if isinstance(handoff, dict):
+        reported = str(handoff.get("status") or "").strip()
+        if reported in WORK_STATUSES:
+            return reported
+    reported = payload.get("status")
+    if isinstance(reported, str) and reported in WORK_STATUSES:
+        return reported
+    return None
+
+
+def _extract_work_id(payload: dict[str, Any], fallback: str | None) -> str | None:
+    for candidate in (
+        payload.get("id"),
+        (payload.get("handoff") or {}).get("id")
+        if isinstance(payload.get("handoff"), dict)
+        else None,
+        fallback,
+    ):
+        raw = str(candidate or "").strip()
+        if WORK_ID_RE.fullmatch(raw):
+            return raw
+    return None
+
+
+def _admit_handoff(handoff: dict[str, str]) -> dict[str, str]:
+    """WorkHandoff guest shape only. Drop ids runtime parse_work would refuse."""
+    out: dict[str, str] = {}
+    for key in ("kind", "class", "payload_digest", "status"):
+        value = handoff.get(key)
+        if value is not None and str(value).strip():
+            out[key] = str(value)
+    raw_id = str(handoff.get("id") or "").strip()
+    if WORK_ID_RE.fullmatch(raw_id):
+        out["id"] = raw_id
+    return out
+
+
+class LabReserveTemporalHook:
+    """Existing hook seam → local ``reserve-temporal`` subprocess.
+
+    Honesty: lab opt-in only. Does not close #70 / #78. Cloud locked.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        runner: CtlRunner | None = None,
+        binding: Path | None = None,
+        live: bool = False,
+    ) -> None:
+        self.root = Path(root)
+        self.runner = runner or subprocess_run_ctl
+        self.binding = Path(binding) if binding is not None else None
+        self.live = bool(live)
+
+    def _invoke(
+        self,
+        action: str,
+        *,
+        work_id: str | None = None,
+        handoff: dict[str, str] | None = None,
+        resource_class: str | None = None,
+    ) -> dict[str, Any] | None:
+        argv = list(CTL_PREFIX) + [action]
+        if self.binding is not None:
+            argv.extend(["--binding", str(self.binding)])
+        if self.live:
+            argv.append("--live")
+        tmp_path: Path | None = None
+        try:
+            if action == "admit":
+                if not handoff:
+                    return None
+                handle = tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    suffix=".json",
+                    prefix="sos-handoff-",
+                    delete=False,
+                )
+                with handle:
+                    json.dump(_admit_handoff(handoff), handle)
+                    handle.write("\n")
+                    tmp_path = Path(handle.name)
+                argv.extend(["--handoff", str(tmp_path)])
+                cls = str(resource_class or handoff.get("class") or "").strip()
+                if cls:
+                    argv.extend(["--class", cls])
+            else:
+                if not work_id:
+                    return None
+                argv.extend(["--id", work_id])
+            code, stdout, _stderr = self.runner(argv, cwd=self.root, env={})
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+        if code != 0:
+            return None
+        return _parse_json(stdout)
+
+    def admit(
+        self, handoff: dict[str, str], payload_bytes: bytes | None
+    ) -> dict[str, Any] | None:
+        del payload_bytes
+        payload = self._invoke(
+            "admit",
+            handoff=handoff,
+            resource_class=handoff.get("class"),
+        )
+        if payload is None:
+            return None
+        work_id = _extract_work_id(payload, handoff.get("id"))
+        if work_id is None:
+            return None
+        return {"id": work_id, "ctl": "reserve-temporal"}
+
+    def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return False
+        return self._invoke("cancel", work_id=work_id) is not None
+
+    def status(self, job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return None
+        payload = self._invoke("status", work_id=work_id)
+        if payload is None:
+            return None
+        return _lifecycle_status(payload)
+
+    def pause(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return False
+        return self._invoke("pause", work_id=work_id) is not None
+
+    def resume(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return False
+        return self._invoke("resume", work_id=work_id) is not None
+
+    def progress(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return None
+        return self._invoke("progress", work_id=work_id)
+
+    def events(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | list[Any] | None:
+        work_id = _ctl_id(job_id, runtime_ref)
+        if work_id is None:
+            return None
+        return self._invoke("events", work_id=work_id)
+
+
+def lab_hook_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    runner: CtlRunner | None = None,
+) -> LabReserveTemporalHook | None:
+    """Build the lab hook when opted in. None → fail closed (inert)."""
+    source = os.environ if env is None else env
+    root = runtime_root_from_env(source)
+    if root is None:
+        return None
+    return LabReserveTemporalHook(
+        root,
+        runner=runner,
+        binding=binding_from_env(source),
+        live=_truthy(source.get(ENV_LIVE)),
+    )
