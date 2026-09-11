@@ -111,6 +111,14 @@ INFO_PAYLOAD = {
             "not iec /v1/audit/events product; not a regulatory audit. "
             f"Operator/ctl: {CTL_EVENTS}"
         ),
+        "investigate_honesty": (
+            "catalog identity already on the job (name + short digest) "
+            "for cross-check; not a data-catalog product. "
+            "Static day-one path-slice ownership tags when durable-hooked "
+            "(admit / project / fold / complete); not Slack; "
+            "not a live team directory. "
+            "Event trail stays on the same panel; not a SIEM."
+        ),
         "pause": "POST /v0/jobs/{id}/pause",
         "resume": "POST /v0/jobs/{id}/resume",
         "pause_resume": True,

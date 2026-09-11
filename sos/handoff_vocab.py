@@ -147,3 +147,30 @@ def reserve_stage_names(stages: int) -> tuple[str, ...]:
     """Stub labels for the reserve-shaped UX seed. Not iec grammar stages."""
     n = max(1, int(stages))
     return RESERVE_STAGE_NAMES[:n]
+
+
+# Day-one static owners for durable reserve-temporal path-slices (four kernel
+# stages). Documented strings only — not Slack, not a live team directory.
+PATH_SLICE_OWNERS: tuple[tuple[str, str], ...] = (
+    ("admit", "ctl / admit"),
+    ("project", "kernel / project"),
+    ("fold", "kernel / fold"),
+    ("complete", "ctl / complete"),
+)
+CATALOG_CROSSCHECK_NOTE = (
+    "Catalog identity already on the job — cross-check only; "
+    "not a data-catalog product"
+)
+OWNERSHIP_NOTE = (
+    "Static day-one path-slice owners — not Slack; "
+    "not a live team directory"
+)
+
+
+def short_digest(digest: str | None) -> str:
+    """Operator-facing digest prefix (sha256:<8 hex>…)."""
+    raw = str(digest or "").strip()
+    if not raw:
+        return ""
+    hex_part = raw[7:] if raw.startswith("sha256:") else raw
+    return "sha256:" + hex_part[:8] + "…"

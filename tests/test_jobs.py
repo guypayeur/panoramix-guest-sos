@@ -22,13 +22,17 @@ from sos.errors import (
 from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for, recorded_params
 from sos.handoff_vocab import (
     BACKED_STUB,
+    CATALOG_CROSSCHECK_NOTE,
     LIVE_PAYLOAD_DIGEST,
+    OWNERSHIP_NOTE,
     PARITY_CANONICAL_JSON,
     PARITY_PAYLOAD_DIGEST,
+    PATH_SLICE_OWNERS,
     RECORDED_CANONICAL_JSON,
     RECORDED_PAYLOAD_DIGEST,
     STATUS_CANCELED,
     STATUS_QUEUED,
+    short_digest,
 )
 from sos.jobs import (
     JobStore,
@@ -55,6 +59,17 @@ def _digest(hex_byte: str = "ab") -> str:
 
 
 class HandoffParseTests(unittest.TestCase):
+    def test_short_digest_and_path_slice_owners(self) -> None:
+        self.assertEqual(short_digest(RECORDED_PAYLOAD_DIGEST), "sha256:77e9299f…")
+        self.assertEqual(short_digest(""), "")
+        self.assertEqual(
+            [name for name, _owner in PATH_SLICE_OWNERS],
+            ["admit", "project", "fold", "complete"],
+        )
+        self.assertEqual(PATH_SLICE_OWNERS[0][1], "ctl / admit")
+        self.assertIn("not a data-catalog product", CATALOG_CROSSCHECK_NOTE)
+        self.assertIn("not Slack", OWNERSHIP_NOTE)
+
     def test_valid_opaque_handoff(self) -> None:
         parsed = parse_submit(
             {"kind": "job", "class": "cpu", "payload_digest": _digest()}
@@ -553,6 +568,16 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("parallelism claimed", progress["note"])
         self.assertNotIn("stages_completed", progress)
         self.assertNotIn("fraction", progress)
+        catalog = progress["investigate"]["catalog"]
+        self.assertEqual(catalog["name"], "recorded")
+        self.assertEqual(catalog["digest"], RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(catalog["digest_short"], short_digest(RECORDED_PAYLOAD_DIGEST))
+        self.assertEqual(catalog["digest_short"], "sha256:77e9299f…")
+        self.assertEqual(catalog["note"], CATALOG_CROSSCHECK_NOTE)
+        self.assertIn("not a data-catalog product", catalog["note"])
+        self.assertNotIn("ownership", progress["investigate"])
+        self.assertEqual(job.to_dict()["investigate"]["catalog"]["name"], "recorded")
+        self.assertNotIn("ownership", job.to_dict()["investigate"])
 
         events = self.store.events(job.id)
         self.assertEqual(events["id"], job.id)
@@ -593,6 +618,9 @@ class JobStoreTests(unittest.TestCase):
         handoff = self.store.handoff(job.id)
         self.assertNotIn("events", handoff)
         self.assertNotIn("progress", handoff)
+        self.assertNotIn("investigate", handoff)
+        self.assertNotIn("catalog", handoff)
+        self.assertNotIn("ownership", handoff)
 
     def test_progress_echo_has_no_fake_chunks(self) -> None:
         job = self.store.submit({"demo": "echo", "message": "hi"})
@@ -606,6 +634,8 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("fraction", progress)
         self.assertEqual(progress["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("not iec chunk progress", progress["note"])
+        self.assertNotIn("investigate", progress)
+        self.assertNotIn("investigate", self.store.get(job.id).to_dict())
         events = [item["event"] for item in self.store.events(job.id)["events"]]
         self.assertEqual(self.store.events(job.id)["source"], EVENTS_SOURCE_MEMORY)
         self.assertIn("submitted", events)
@@ -874,6 +904,26 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("not iec planner", body["note"].lower())
         self.assertIn("not iec chunk progress", body["note"])
         self.assertNotIn("parallelism claimed", body["note"])
+        catalog = body["investigate"]["catalog"]
+        self.assertEqual(catalog["name"], "recorded")
+        self.assertEqual(catalog["digest_short"], "sha256:77e9299f…")
+        self.assertIn("not a data-catalog product", catalog["note"])
+        tags = body["investigate"]["ownership"]["tags"]
+        self.assertEqual(
+            [(item["slice"], item["owner"]) for item in tags],
+            list(PATH_SLICE_OWNERS),
+        )
+        self.assertEqual(
+            [item["slice"] for item in tags],
+            ["admit", "project", "fold", "complete"],
+        )
+        self.assertEqual(body["investigate"]["ownership"]["note"], OWNERSHIP_NOTE)
+        self.assertIn("not slack", body["investigate"]["ownership"]["note"].lower())
+        resource = store.get(job.id).to_dict()
+        self.assertEqual(
+            [item["slice"] for item in resource["investigate"]["ownership"]["tags"]],
+            ["admit", "project", "fold", "complete"],
+        )
         self.assertEqual(len(hook.calls), 1)
         self.assertEqual(hook.calls[0][0], job.id)
         handoff = store.handoff(job.id)
@@ -1151,6 +1201,19 @@ class JobStoreTests(unittest.TestCase):
             "| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) |",
             ux,
         )
+        self.assertIn(
+            "| 2.2 Investigate | SPA progress + catalog + Slack | **match** (thinner) |",
+            ux,
+        )
+        self.assertNotIn(
+            "| 2.2 Investigate | SPA progress + catalog + Slack | **partial** |",
+            ux,
+        )
+        self.assertIn("data-catalog product", ux.lower())
+        self.assertIn("**not** a data-catalog product", ux)
+        self.assertIn("**not** Slack", ux)
+        self.assertIn("ctl / admit", ux)
+        self.assertIn("kernel / project", ux)
         self.assertIn(
             "| 4.1 Audit trail | `GET /v1/audit/events?job_id=…` | **match** (thinner) |",
             ux,

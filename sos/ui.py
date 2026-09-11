@@ -158,6 +158,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
     }
     .step.done { color: var(--ok); }
     .step.current { color: var(--run); border-color: var(--run); }
+    .step .owner { display: block; font-size: 0.64rem; font-weight: 500; letter-spacing: 0; }
+    .investigate {
+      margin-top: 0.65rem;
+      padding-top: 0.55rem;
+      border-top: 1px solid var(--line);
+    }
+    .investigate h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .investigate p { margin: 0.25rem 0; font-size: 0.82rem; }
+    .owners { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.4rem 0 0.15rem; }
     .trail { font-size: 0.8rem; padding-left: 1.1rem; }
     .trail li { margin: 0.2rem 0; }
     .trail .ts { font-family: var(--mono); color: var(--muted); font-size: 0.74rem; }
@@ -216,6 +231,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Event trail prefers durable reserve-temporal JSONL when a hook
     provides it; otherwise process-memory (not a SIEM / not a
     regulatory audit).
+    Investigate is thinner: catalog identity already on the job
+    (name + short digest) for cross-check — not a data-catalog product.
+    Static path-slice ownership tags when hooked (not Slack, not a
+    live team directory). Event trail stays on this panel (not a SIEM).
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -295,7 +314,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code></p>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
       <h2 style="margin-top:1.1rem">Event trail</h2>
-      <p class="hint" style="margin-top:0">Durable reserve-temporal JSONL when a hook provides it;
+      <p class="hint" style="margin-top:0">On this same panel. Durable reserve-temporal JSONL when a hook provides it;
         otherwise process-memory. Not a SIEM, not a regulatory audit product.
         Operator/ctl: <code>python3 -m runtime.apply reserve-temporal events --id cw_…</code></p>
       <div id="events"><p class="empty">No events.</p></div>
@@ -557,6 +576,24 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return [dt, dd];
     }
 
+    function ownershipTags(job) {
+      const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
+      const fromProg = prog && prog.investigate && prog.investigate.ownership;
+      const fromJob = job.investigate && job.investigate.ownership;
+      const block = fromProg || fromJob;
+      return (block && block.tags) || [];
+    }
+
+    function catalogIdentity(job) {
+      const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
+      const fromProg = prog && prog.investigate && prog.investigate.catalog;
+      const fromJob = job.investigate && job.investigate.catalog;
+      if (fromProg || fromJob) return fromProg || fromJob;
+      const name = job.local && job.local.catalog;
+      if (!name) return null;
+      return { name: name, digest_short: shortDigest(job.payload_digest) };
+    }
+
     function renderProgress(job) {
       const wrap = document.createElement("div");
       const local = job.local || {};
@@ -569,6 +606,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const source = prog && prog.source;
       const durable = source === "durable" ||
         (source !== "stub" && (completed != null || fraction != null));
+      const owners = durable ? ownershipTags(job) : [];
       if (durable && (completed != null || fraction != null)) {
         const total = Number(prog.stages_total);
         const done = Number(completed);
@@ -585,7 +623,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
             if (i <= done) cls += " done";
             else if (Number.isFinite(current) && i === current) cls += " current";
             step.className = cls;
-            step.textContent = String(i);
+            const tag = owners[i - 1];
+            step.textContent = tag ? (i + " " + tag.slice) : String(i);
+            if (tag && tag.owner) {
+              const own = document.createElement("span");
+              own.className = "owner";
+              own.textContent = tag.owner;
+              step.appendChild(own);
+            }
             bar.appendChild(step);
           }
           wrap.appendChild(bar);
@@ -618,6 +663,57 @@ OPERATOR_HTML = """<!DOCTYPE html>
         line.textContent = "No named stub stages (status only). Not iec chunk progress.";
       }
       wrap.appendChild(line);
+      return wrap;
+    }
+
+    function renderInvestigate(job) {
+      const wrap = document.createElement("div");
+      wrap.className = "investigate";
+      const title = document.createElement("h3");
+      title.textContent = "Investigate (thinner)";
+      wrap.appendChild(title);
+      const catalog = catalogIdentity(job);
+      const cat = document.createElement("p");
+      if (catalog) {
+        cat.textContent = "Catalog cross-check: " + catalog.name + " · " +
+          (catalog.digest_short || shortDigest(job.payload_digest)) +
+          " — identity already on this job. Not a data-catalog product.";
+      } else {
+        cat.textContent = "No catalog name on this job (digest only). Not a data-catalog product.";
+      }
+      wrap.appendChild(cat);
+      const owners = ownershipTags(job);
+      const hooked = !!(job.investigate && job.investigate.ownership) ||
+        !!(lastProgress && lastProgress.id === job.id &&
+          lastProgress.investigate && lastProgress.investigate.ownership);
+      if (hooked && owners.length) {
+        const bar = document.createElement("div");
+        bar.className = "owners";
+        for (const tag of owners) {
+          const step = document.createElement("span");
+          step.className = "step";
+          step.textContent = tag.slice;
+          const own = document.createElement("span");
+          own.className = "owner";
+          own.textContent = tag.owner;
+          step.appendChild(own);
+          bar.appendChild(step);
+        }
+        wrap.appendChild(bar);
+        const ownNote = document.createElement("p");
+        ownNote.className = "hint";
+        ownNote.textContent = "Static day-one path-slice owners when hooked. Not Slack, not a live team directory.";
+        wrap.appendChild(ownNote);
+      } else {
+        const ownNote = document.createElement("p");
+        ownNote.className = "hint";
+        ownNote.textContent = "Path-slice ownership tags appear when durable-hooked (admit / project / fold / complete). Not Slack.";
+        wrap.appendChild(ownNote);
+      }
+      const trail = document.createElement("p");
+      trail.className = "hint";
+      trail.textContent = "Event trail is on this panel (scroll). Not a SIEM.";
+      wrap.appendChild(trail);
       return wrap;
     }
 
@@ -701,6 +797,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         return;
       }
       const local = job.local || {};
+      const catalog = catalogIdentity(job);
       const dl = document.createElement("dl");
       dl.className = "meta";
       const rows = [
@@ -708,6 +805,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         ...dlRow("status", pill(job.status)),
         ...dlRow("kind / class", (job.kind || "—") + " / " + (job.class || "—")),
         ...dlRow("digest", shortDigest(job.payload_digest), true),
+        ...dlRow("catalog", catalog ? catalog.name : "—"),
         ...dlRow("created", fmtTs(job.created_at), true),
         ...dlRow("updated", fmtTs(job.updated_at), true),
         ...dlRow("elapsed", elapsed(job)),
@@ -739,6 +837,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
       host.appendChild(renderProgress(job));
+      host.appendChild(renderInvestigate(job));
       $("detail").textContent = JSON.stringify(job, null, 2);
       $("handoff-btn").disabled = false;
       $("payload-btn").disabled = false;
