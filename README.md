@@ -155,7 +155,7 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 
 #### Durable temporal-local reserve (operator/ctl)
 
-Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` (`admit|status|progress|cancel|pause|resume`; lifecycle status `paused`) and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main** (verified @ `63c4d8e69f85cb7be1b6e878c576d8334b1f76c1`).
+Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` (`admit|status|progress|cancel|pause|resume`; lifecycle status `paused`) and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main**. Ctl `python3 -m runtime.apply reserve-temporal progress --id cw_…` exposes durable `stage` / `stages_total` / `stages_completed` / `fraction` / nested `progress` (verified @ `63c4d8e`).
 
 ```bash
 python3 -m runtime.apply reserve-temporal admit --catalog recorded   # or live|parity; or --handoff JSON

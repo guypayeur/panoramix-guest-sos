@@ -929,11 +929,10 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("python3 -m runtime.apply reserve-temporal progress", text, name)
             self.assertIn("reserve-temporal progress --id", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
-            self.assertIn(
-                "verified @ `63c4d8e69f85cb7be1b6e878c576d8334b1f76c1`",
-                text,
-                name,
-            )
+            self.assertIn("verified @ `63c4d8e`", text, name)
+            self.assertIn("stages_completed", text, name)
+            self.assertIn("stages_total", text, name)
+            self.assertIn("nested `progress`", text, name)
             self.assertIn("pause|resume", text, name)
             self.assertIn("`paused`", text, name)
             self.assertNotIn("3a164cd", text, name)
@@ -1025,10 +1024,10 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)
         self.assertIn("local-reserve-temporal.example.yaml", ux)
-        self.assertIn(
-            "verified @ `63c4d8e69f85cb7be1b6e878c576d8334b1f76c1`",
-            ux,
-        )
+        self.assertIn("verified @ `63c4d8e`", ux)
+        self.assertIn("stages_completed", ux)
+        self.assertIn("stages_total", ux)
+        self.assertIn("nested `progress`", ux)
         self.assertIn("pause|resume", ux)
         self.assertIn("`paused`", ux)
         self.assertNotIn("3a164cd", ux)
