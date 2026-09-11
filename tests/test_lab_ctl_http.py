@@ -306,9 +306,17 @@ class OptInFakeHttpTests(unittest.TestCase):
         resumed = self.store.resume(job.id)
         self.assertEqual(resumed.status, "running")
 
+        self.http.status = "paused"
+        followed = self.store.get(job.id)
+        self.assertEqual(followed.status, "paused")
+        self.assertEqual(followed.message, "status via runtime hook")
+        self.http.status = "running"
+        self.assertEqual(self.store.get(job.id).status, "running")
+
         canceled = self.store.cancel(job.id)
         self.assertEqual(canceled.status, "canceled")
         self.assertTrue(self.http.canceled)
+        self.assertEqual(canceled.message, "status via runtime hook")
         paths = [urlsplit(call[1]).path for call in self.http.calls]
         self.assertIn("/reserve-temporal/pause", paths)
         self.assertIn("/reserve-temporal/resume", paths)
@@ -316,6 +324,11 @@ class OptInFakeHttpTests(unittest.TestCase):
         self.assertIn("/reserve-temporal/progress", paths)
         self.assertIn("/reserve-temporal/events", paths)
         self.assertIn("/reserve-temporal/status", paths)
+        cancel_idx = paths.index("/reserve-temporal/cancel")
+        status_after = [
+            i for i, path in enumerate(paths) if path == "/reserve-temporal/status" and i > cancel_idx
+        ]
+        self.assertTrue(status_after, "cancel must refresh hook.status() after ctl cancel")
 
     def test_http_opt_in_fake_ctl(self) -> None:
         app = SosApp(self.store)

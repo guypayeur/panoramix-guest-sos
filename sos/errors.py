@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from sos.handoff_vocab import (
+    CTL_CANCEL,
     CTL_PAUSE_RESUME,
     LOCAL_DEMOS,
     RESOURCE_CLASSES,
@@ -100,10 +101,13 @@ class AlreadyTerminal(SosError):
             status=status,
             note=(
                 "Cancel ends a live run (status canceled), including paused. "
-                "Cancel is not pause. Pause/resume is durable-path only "
+                "Cancel is not pause. Durable cancel is ctl-mediated. "
+                "Pause/resume is durable-path only "
                 f"({CTL_PAUSE_RESUME}). Stub-backed cancel is local; "
-                "runtime-backed cancel signals the injected hook, then marks "
-                "the guest job canceled if it was still live."
+                "runtime-backed cancel signals the hook first "
+                f"({CTL_CANCEL}), then marks the guest job canceled if "
+                "it was still live or follows hook.status() when ctl "
+                "already reports terminal. Fail-closed without hook."
             ),
         )
 

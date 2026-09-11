@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from sos.errors import SosError
 from sos.handoff_vocab import (
     CTL_ADMIT,
+    CTL_CANCEL,
     CTL_EVENTS,
     CTL_PAUSE_RESUME,
     CTL_PROGRESS,
@@ -158,11 +159,15 @@ INFO_PAYLOAD = {
         ),
         "cancel_note": (
             "Cancel ends a live run (canceled), including paused. "
-            "Cancel is not pause. Pause/resume is durable-path only. "
+            "Cancel is not pause. Durable cancel is ctl-mediated "
+            "(PANORAMIX_CTL_HTTP preferred or PANORAMIX_RUNTIME_ROOT). "
+            "Pause/resume is durable-path only. "
             "Stub-backed cancel is local; runtime-backed cancel signals "
-            "the injected hook, then marks the guest job canceled if still live. "
+            "the hook first (same honesty as pause), then marks the guest "
+            "job canceled if still live or follows hook.status() when ctl "
+            "already reports terminal. Fail-closed without hook (inert default). "
             "Cancel/fail does not auto-retry. "
-            f"Operator/ctl: {CTL_PAUSE_RESUME}"
+            f"Operator/ctl: {CTL_CANCEL}"
         ),
         "terminal": (
             "Failed/canceled job resources expose a terminal summary "

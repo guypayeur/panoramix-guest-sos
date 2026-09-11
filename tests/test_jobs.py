@@ -841,6 +841,12 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(canceled.status, "canceled")
         self.assertEqual(canceled.message, "canceled by operator")
 
+        hook.cancel_ok = True
+        signaled = store.submit({"demo": "reserve", "seconds": 8})
+        hooked = store.cancel(signaled.id)
+        self.assertEqual(hooked.status, "canceled")
+        self.assertEqual(hooked.message, "canceled via runtime hook")
+
     def test_pause_resume_stub_only_refused(self) -> None:
         job = self.store.submit({"demo": "sleep", "seconds": 8})
         self.assertEqual(job.local["backed"], BACKED_STUB)
@@ -943,6 +949,70 @@ class JobStoreTests(unittest.TestCase):
         paused_store.pause(live.id)
         canceled_paused = paused_store.cancel(live.id)
         self.assertEqual(canceled_paused.status, "canceled")
+
+    def test_hooked_cancel_and_status_follow(self) -> None:
+        """Durable cancel signals ctl first; get/list follow hook.status()."""
+
+        class FollowHook:
+            def __init__(self) -> None:
+                self.reported: str | None = "running"
+                self.cancels: list[str] = []
+                self.status_calls = 0
+
+            def admit(self, handoff, payload_bytes):
+                return {"id": "cw_deadbeefdeadbeef", "ctl": "reserve-temporal"}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                self.cancels.append(job_id)
+                self.reported = "canceled"
+                return True
+
+            def status(self, job_id, runtime_ref):
+                self.status_calls += 1
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+        hook = FollowHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        self.assertIsNotNone(job.runtime_ref)
+        self.assertEqual(job.status, "running")
+
+        hook.reported = "paused"
+        self.assertEqual(store.get(job.id).status, "paused")
+        listed = store.list()
+        self.assertEqual(listed[0].id, job.id)
+        self.assertEqual(listed[0].status, "paused")
+        self.assertEqual(listed[0].message, "status via runtime hook")
+
+        hook.reported = "running"
+        self.assertEqual(store.get(job.id).status, "running")
+
+        canceled = store.cancel(job.id)
+        self.assertEqual(hook.cancels, [job.id])
+        self.assertEqual(canceled.status, "canceled")
+        self.assertEqual(canceled.message, "status via runtime hook")
+        self.assertEqual(store.get(job.id).status, "canceled")
+        self.assertGreaterEqual(hook.status_calls, 1)
+
+        hook.reported = "running"
+        again = store.submit({"demo": "echo", "message": "x"})
+        hook.reported = "succeeded"
+        done = store.get(again.id)
+        self.assertEqual(done.status, "succeeded")
+        self.assertEqual(done.message, "status via runtime hook")
+        self.assertNotIn("terminal", store.handoff(again.id))
+
+        stub = self.store.submit({"demo": "sleep", "seconds": 8})
+        local = self.store.cancel(stub.id)
+        self.assertEqual(local.status, "canceled")
+        self.assertEqual(local.message, "canceled by operator")
 
     def test_inert_hook_has_noop_pause_resume(self) -> None:
         from sos.runtime_hook import InertRuntimeHandoffHook
@@ -1297,6 +1367,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("/events", text, name)
             self.assertIn("/compare", text, name)
             self.assertIn("does **not** auto-retry", text, name)
+            self.assertIn("ctl-mediated", text, name)
+            self.assertIn("stale stub clock", text, name)
             self.assertIn("admit --handoff JSON", text, name)
             self.assertIn("not a forecast", text.lower(), name)
             self.assertIn("iec spa historical widget", text.lower(), name)
@@ -1440,6 +1512,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("after #89", ux.lower())
         self.assertIn("- [ ] Temporal-backed UX", ux)
         self.assertNotIn("- [x] Temporal-backed UX", ux)
+        self.assertIn(
+            "| 3.1b Cancel | `POST /v1/jobs/{id}/cancel` | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn("durable cancel is ctl-mediated", ux.lower())
+        self.assertIn("stale stub clock", ux.lower())
+        self.assertIn("- [x] Hooked cancel + live status follow", ux)
         self.assertIn("PANORAMIX_RUNTIME_ROOT", ux)
         self.assertIn("PANORAMIX_CTL_HTTP", ux)
         self.assertIn("lab_compose_reserve_temporal", ux)
