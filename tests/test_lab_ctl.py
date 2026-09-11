@@ -261,15 +261,25 @@ class OptInFakeCtlTests(unittest.TestCase):
         resumed = self.store.resume(job.id)
         self.assertEqual(resumed.status, "running")
 
+        self.ctl.status = "paused"
+        followed = self.store.get(job.id)
+        self.assertEqual(followed.status, "paused")
+        self.assertEqual(followed.message, "status via runtime hook")
+        self.ctl.status = "running"
+        self.assertEqual(self.store.get(job.id).status, "running")
+
         canceled = self.store.cancel(job.id)
         self.assertEqual(canceled.status, "canceled")
         self.assertTrue(self.ctl.canceled)
+        self.assertEqual(canceled.message, "status via runtime hook")
         actions = [call[4] for call in self.ctl.calls]
         self.assertIn("pause", actions)
         self.assertIn("resume", actions)
         self.assertIn("cancel", actions)
         self.assertIn("progress", actions)
         self.assertIn("events", actions)
+        cancel_idx = actions.index("cancel")
+        self.assertIn("status", actions[cancel_idx + 1 :])
 
     def test_http_opt_in_fake_ctl(self) -> None:
         app = SosApp(self.store)

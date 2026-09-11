@@ -282,6 +282,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Stub-only jobs refuse pause/resume (<code>409 stub_only</code>) —
     this page does not pretend otherwise. Cancel ends the run
     (<code>canceled</code>) from running or paused; cancel is not pause.
+    Durable cancel is ctl-mediated. Fail-closed without hook.
     Progress prefers durable path-slice counters when a runtime hook
     provides them; otherwise stub stage metadata (not iec planner
     parallelism / iec chunk progress).
@@ -404,13 +405,18 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <h3 id="cancel-title">Cancel this run?</h3>
       <p>Cancel ends the run (status <code>canceled</code>).
         <strong>Cancel is not pause.</strong>
+        Durable cancel is ctl-mediated.
         Cancel/fail does not auto-retry.</p>
       <p class="hint" style="margin-top:0">Pause/Resume exist on the durable/ctl
         path only
         (<code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
-        Stub-backed jobs cancel locally. Runtime-backed jobs (injected hook)
-        signal the hook, then the guest job is marked <code>canceled</code>
-        if it was still live (running or paused).
+        Stub-backed jobs cancel locally. Runtime-backed jobs
+        (opt-in <code>PANORAMIX_CTL_HTTP</code> preferred, or
+        <code>PANORAMIX_RUNTIME_ROOT</code>) signal ctl cancel first,
+        then the guest job is marked <code>canceled</code>
+        if it was still live (running or paused) — or follows hook
+        <code>status()</code> when ctl already reports terminal.
+        Fail-closed without hook (inert default — no pretend).
         Re-admit is operator/ctl
         <code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>
         (handoff + payload export) — not resume-from-failed.</p>

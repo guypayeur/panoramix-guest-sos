@@ -171,8 +171,11 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("Not #70 Done", persist["note"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn("does not auto-retry", body["jobs"]["cancel_note"])
+        self.assertIn("ctl-mediated", body["jobs"]["cancel_note"])
+        self.assertIn("Fail-closed without hook", body["jobs"]["cancel_note"])
+        self.assertIn("PANORAMIX_CTL_HTTP", body["jobs"]["cancel_note"])
         self.assertIn(
-            "python3 -m runtime.apply reserve-temporal pause|resume",
+            "python3 -m runtime.apply reserve-temporal cancel",
             body["jobs"]["cancel_note"],
         )
         self.assertIn("SIEM", body["jobs"]["terminal"])
@@ -248,6 +251,8 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("docs/ux-side-by-side.md", html)
             self.assertIn("End run (canceled)", html)
             self.assertIn("Stub-backed jobs cancel locally", html)
+            self.assertIn("Durable cancel is ctl-mediated", html)
+            self.assertIn("Fail-closed without hook", html)
             self.assertIn("id=\"pause-btn\"", html)
             self.assertIn("id=\"resume-btn\"", html)
             self.assertIn("durable path", html)
@@ -879,6 +884,64 @@ class HttpAppTests(unittest.TestCase):
         term_resume = done_app.handle("POST", f"/v0/jobs/{did}/resume")
         self.assertEqual(term_resume.status, 409)
         self.assertEqual(_json(term_resume)["error"], "already_terminal")
+
+    def test_hooked_cancel_and_status_follow_http(self) -> None:
+        class FollowHook:
+            def __init__(self) -> None:
+                self.reported = "running"
+                self.cancels: list[str] = []
+
+            def admit(self, handoff, payload_bytes):
+                return {"id": "cw_deadbeefdeadbeef"}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                self.cancels.append(job_id)
+                self.reported = "canceled"
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+        hook = FollowHook()
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=hook))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        job = _json(created)
+        job_id = job["id"]
+        self.assertEqual(job["status"], "running")
+        self.assertEqual(job["local"]["backed"], "runtime")
+
+        hook.reported = "paused"
+        listed = _json(app.handle("GET", "/v0/jobs"))
+        self.assertEqual(listed["jobs"][0]["id"], job_id)
+        self.assertEqual(listed["jobs"][0]["status"], "paused")
+        got = _json(app.handle("GET", f"/v0/jobs/{job_id}"))
+        self.assertEqual(got["status"], "paused")
+        self.assertEqual(got["message"], "status via runtime hook")
+
+        hook.reported = "running"
+        self.assertEqual(_json(app.handle("GET", f"/v0/jobs/{job_id}"))["status"], "running")
+
+        canceled = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(canceled.status, 200)
+        body = _json(canceled)
+        self.assertEqual(body["status"], "canceled")
+        self.assertEqual(body["message"], "status via runtime hook")
+        self.assertEqual(hook.cancels, [job_id])
+        self.assertIs(body["recoverability"]["auto_retry"], False)
+        conflict = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(conflict.status, 409)
+        self.assertEqual(_json(conflict)["error"], "already_terminal")
+        self.assertIn("ctl-mediated", _json(conflict)["note"])
 
     def test_progress_durable_http(self) -> None:
         class FakeHook:

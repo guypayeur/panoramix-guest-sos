@@ -6,10 +6,13 @@ not call runtime.apply compute-work. Mesh is compute-job → sos
 admits the exported handoff. Pause/resume is durable-path only
 (injected hook or opt-in lab adapter); stub jobs are refused.
 Progress prefers hook.progress() path-slices when durable-backed.
-Events prefer hook.events() JSONL when durable-backed. Historical
-comparison uses list/get identity (in-process plus local lab files
-when persisted). Default hook stays inert. Does not close #70.
-Does not close #78.
+Events prefer hook.events() JSONL when durable-backed. Cancel on the
+durable path signals hook.cancel() first (same honesty as pause),
+then prefers hook.status() so Temporal-backed runs show ctl
+lifecycle — not a stale stub clock. Stub-only stays local cancel.
+Historical comparison uses list/get identity (in-process plus local
+lab files when persisted). Default hook stays inert. Does not close
+#70. Does not close #78.
 """
 
 from __future__ import annotations
@@ -548,6 +551,7 @@ class JobStore:
             return None
 
     def get(self, job_id: str) -> Job:
+        """Snapshot plus hook.status() follow when ``runtime_ref`` exists."""
         self._refresh_runtime_status(job_id)
         with self._lock:
             job = self._jobs.get(job_id)
@@ -606,6 +610,14 @@ class JobStore:
         return jobs
 
     def cancel(self, job_id: str) -> Job:
+        """Signal runtime cancel first when hooked; stub stays local.
+
+        Same honesty as pause: durable jobs call the hook before the
+        guest store changes. Then ``status()`` is preferred when
+        ``runtime_ref`` exists so ctl terminal wins over a local mark.
+        Stub-only (no runtime ref) stays ``canceled by operator``.
+        Inert hook cancel returns False and does not pretend.
+        """
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -613,18 +625,25 @@ class JobStore:
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
             runtime_ref = job.runtime_ref
-        self._try_runtime_cancel(job_id, runtime_ref)
+            follow = runtime_ref is not None
+        signaled = self._try_runtime_cancel(job_id, runtime_ref)
+        if follow:
+            self._refresh_runtime_status(job_id)
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 raise JobNotFound(job_id)
             if job.status in TERMINAL:
-                raise AlreadyTerminal(job_id, job.status)
+                # Ctl already reported canceled/failed/succeeded.
+                return self._snapshot(job)
             now = self._clock()
             job.status = STATUS_CANCELED
             job.updated_at = now
-            job.message = "canceled by operator"
-            self._append_event_locked(job, "canceled", "canceled by operator")
+            detail = (
+                "canceled via runtime hook" if signaled else "canceled by operator"
+            )
+            job.message = detail
+            self._append_event_locked(job, "canceled", detail)
             self._persist_locked(job)
             event = self._cancel.get(job_id)
             if event is not None:
@@ -732,6 +751,12 @@ class JobStore:
         return reported
 
     def _refresh_runtime_status(self, job_id: str) -> None:
+        """Prefer hook.status() on get/list when a runtime ref exists.
+
+        Temporal-backed runs show paused/running/terminal from ctl,
+        not a stale stub clock. No-op without runtime_ref (stub /
+        inert). Terminal guest jobs are left alone.
+        """
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job.runtime_ref is None or job.status in TERMINAL:
@@ -743,8 +768,10 @@ class JobStore:
             return
         if not reported or reported not in WORK_STATUSES:
             return
-        if reported == job.status:
-            return
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None or live.status in TERMINAL or live.status == reported:
+                return
         self._advance(
             job_id,
             reported,
