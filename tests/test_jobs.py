@@ -1209,7 +1209,8 @@ class JobStoreTests(unittest.TestCase):
             "| 2.2 Investigate | SPA progress + catalog + Slack | **partial** |",
             ux,
         )
-        self.assertIn("not a data-catalog product", ux.lower())
+        self.assertIn("data-catalog product", ux.lower())
+        self.assertIn("**not** a data-catalog product", ux)
         self.assertIn("**not** Slack", ux)
         self.assertIn("ctl / admit", ux)
         self.assertIn("kernel / project", ux)

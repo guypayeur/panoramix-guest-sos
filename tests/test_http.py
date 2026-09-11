@@ -223,6 +223,7 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Investigate (thinner)", html)
             self.assertIn("Catalog cross-check", html)
             self.assertIn("not a data-catalog product", html)
+            self.assertIn("Not a data-catalog product", html)
             self.assertIn("Path-slice ownership tags", html)
             self.assertIn("admit / project / fold / complete", html)
             self.assertIn("Not Slack", html)

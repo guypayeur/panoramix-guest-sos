@@ -232,10 +232,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     provides it; otherwise process-memory (not a SIEM / not a
     regulatory audit).
     Investigate is thinner: catalog identity already on the job
-    (name + short digest) for cross-check — <strong>not</strong> a
-    data-catalog product. Static path-slice ownership tags when
-    hooked (not Slack, not a live team directory). Event trail
-    stays on this panel (not a SIEM).
+    (name + short digest) for cross-check — not a data-catalog product.
+    Static path-slice ownership tags when hooked (not Slack, not a
+    live team directory). Event trail stays on this panel (not a SIEM).
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
