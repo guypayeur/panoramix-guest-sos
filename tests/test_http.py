@@ -9,7 +9,8 @@ import unittest
 from pathlib import Path
 
 from platform_run import parse_listen
-from sos.handoff import digest_canonical, digest_bytes, reserve_work_request
+from sos.handoff import digest_canonical, digest_bytes
+from sos.handoff_vocab import RECORDED_CANONICAL_JSON, RECORDED_PAYLOAD_DIGEST
 from sos.http import INFO_PAYLOAD, SosApp
 from sos.jobs import JobStore
 
@@ -66,6 +67,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["jobs"]["local_demo"], ["echo", "reserve", "sleep"])
         self.assertIn("stub", body["jobs"]["ux_seed"])
         self.assertEqual(body["jobs"]["iec_named_baseline"], "grammar/examples/reserve_ifrs17")
+        self.assertEqual(body["jobs"]["reserve_digest_recorded"], RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(body["jobs"]["runtime_reserve"], "docs/reserve.md")
+        self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live"])
+        self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
         ctl = body["jobs"]["ctl_handoff"]
         self.assertEqual(ctl["mode"], "operator-ctl")
         self.assertIs(ctl["awaiting_runtime_stamp"], True)
@@ -74,6 +79,8 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(ctl["mesh"], "compute-job -> sos")
         self.assertNotIn("PLATFORM_COMPUTE", json.dumps(ctl))
         self.assertNotIn("PLATFORM_RAY", json.dumps(ctl))
+        self.assertIn("runtime.apply", ctl["note"])
+        self.assertIn("never calls", ctl["note"])
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -106,6 +113,11 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("/v0/jobs/{id}/handoff", html)
             self.assertIn("/payload", html)
             self.assertIn("compute-job", html)
+            self.assertIn("docs/reserve.md", html)
+            self.assertIn("digest_for", html)
+            self.assertIn("runtime.apply", html)
+            self.assertIn('value="recorded"', html)
+            self.assertNotIn("north-star Done", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -162,17 +174,8 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(job["kind"], "job")
         self.assertEqual(job["class"], "cpu")
         self.assertEqual(job["local"]["demo"], "reserve")
-        self.assertEqual(
-            job["payload_digest"],
-            digest_canonical(
-                reserve_work_request(
-                    label="reserve-shaped",
-                    stages=3,
-                    seconds=8,
-                    resource_class="cpu",
-                )
-            ),
-        )
+        self.assertEqual(job["local"]["catalog"], "recorded")
+        self.assertEqual(job["payload_digest"], RECORDED_PAYLOAD_DIGEST)
         handoff = self.app.handle("GET", f"/v0/jobs/{job['id']}/handoff")
         self.assertEqual(handoff.status, 200)
         exported = _json(handoff)
@@ -192,8 +195,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(digest_bytes(bytes.fromhex(body["hex"])), job["payload_digest"])
         self.assertEqual(body["utf8"].encode("utf-8"), bytes.fromhex(body["hex"]))
         self.assertNotIn("payload", body)
-        self.assertIn('"work":"reserve"', body["utf8"])
+        self.assertEqual(body["utf8"], RECORDED_CANONICAL_JSON)
+        self.assertIn('"workload":"reserve"', body["utf8"])
         self.assertNotIn("reserve_ifrs17", body["utf8"])
+        self.assertNotIn('"work":', body["utf8"])
         canceled = self.app.handle("POST", f"/v0/jobs/{job['id']}/cancel")
         self.assertEqual(canceled.status, 200)
         self.assertEqual(_json(canceled)["status"], "canceled")

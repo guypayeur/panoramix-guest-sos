@@ -3,8 +3,8 @@
 Process-local only. Opaque handoff is kind/class/payload_digest
 (runtime/compute_work.py on panoramix-runtime main, #70 Slice B). Local
 echo/sleep/reserve is a demo shortcut that synthesizes that shape.
-Reserve stores stable canonical-JSON payload bytes (parameters only) for
-ctl export — not IFRS17 math and not a perf baseline.
+Reserve payload bytes match runtime.reserve.payload_for / digest_for
+(PR #84 catalogs). Guest emits handoff JSON only — never runtime.apply.
 
 When no runtime admit is configured (the default inert hook), the
 in-process stub remains the fallback. Operator/ctl GETs /handoff +
@@ -236,7 +236,7 @@ class JobStore:
         self._advance(
             job_id,
             reported,
-            message="status from runtime hook",
+            message="status via runtime hook",
         )
 
     def _snapshot(self, job: Job) -> Job:

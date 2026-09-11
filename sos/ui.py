@@ -161,7 +161,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     no pause / resume / progress endpoints — cancel only. Operator/ctl admits
     opaque work via <code>GET /v0/jobs/{id}/handoff</code> and
     <code>/payload</code> (mesh is compute-job → sos; awaiting a platform-stamped
-    guest submit path).</p>
+    guest submit path). Reserve digest keys match runtime
+    <code>docs/reserve.md</code> / PR #84 (<code>runtime.reserve.digest_for</code>).
+    Guest never calls <code>runtime.apply</code>.</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -181,9 +183,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <input id="seconds" type="number" min="0" max="30" step="0.1" value="8">
         </div>
         <div id="reserve-fields" hidden>
-          <label for="label">Label</label>
+          <label for="catalog">Catalog (digest)</label>
+          <select id="catalog">
+            <option value="recorded" selected>recorded (CI)</option>
+            <option value="live">live</option>
+          </select>
+          <label for="label">Label (local UX)</label>
           <input id="label" value="reserve-shaped" autocomplete="off">
-          <label for="stages">Stages</label>
+          <label for="stages">Stages (local UX)</label>
           <input id="stages" type="number" min="2" max="8" step="1" value="3">
           <label for="resource-class">Class (UX label)</label>
           <select id="resource-class">
@@ -197,12 +204,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <button type="button" class="secondary" id="fill-reserve">Reserve template</button>
         </div>
       </form>
-      <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical demo params.
+      <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical catalog JSON
+        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — same as runtime.reserve.digest_for).
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
-        Reserve (shaped) walks a few named stub stages (admit → project → fold, …) so cancel mid-flight is visible —
-        still an in-memory thread, not engines, not IFRS17 math.
+        Reserve (shaped) defaults to the <strong>recorded</strong> catalog. Stages/seconds are local stub UX only
+        (admit → project → fold, …) so cancel mid-flight is visible — still an in-memory thread, not engines, not IFRS17 math.
         Ctl: GET /v0/jobs/{id}/handoff (kind/class/payload_digest/status) and /payload (canonical bytes).
-        The seam kind is job — never a demo label.</p>
+        Guest never calls runtime.apply. The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>
     <section>
@@ -240,6 +248,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     });
     $("fill-reserve").addEventListener("click", () => {
       $("demo").value = "reserve";
+      $("catalog").value = "recorded";
       $("label").value = "reserve-shaped";
       $("stages").value = "3";
       $("seconds").value = "8";
@@ -263,6 +272,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if (!Number.isInteger(stages)) { flash("Stages must be an integer."); return; }
         body = {
           demo: "reserve",
+          catalog: $("catalog").value,
           label: $("label").value,
           stages,
           seconds,

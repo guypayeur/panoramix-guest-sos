@@ -16,7 +16,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sos.errors import SosError
-from sos.handoff_vocab import LOCAL_DEMOS, RESOURCE_CLASSES, WORK_KINDS, WORK_STATUSES
+from sos.handoff_vocab import (
+    LOCAL_DEMOS,
+    RECORDED_PAYLOAD_DIGEST,
+    RESOURCE_CLASSES,
+    WORK_KINDS,
+    WORK_STATUSES,
+)
 from sos.jobs import JobStore
 from sos.ui import OPERATOR_HTML
 
@@ -38,6 +44,18 @@ INFO_PAYLOAD = {
         "local_demo": sorted(LOCAL_DEMOS),
         "ux_seed": "reserve is a stub lifecycle for operator UX; not a perf baseline",
         "iec_named_baseline": "grammar/examples/reserve_ifrs17",
+        "reserve_payload_keys": [
+            "accounts",
+            "discount_bps",
+            "horizon",
+            "lapse_bps",
+            "paths",
+            "seed",
+            "workload",
+        ],
+        "reserve_catalogs": ["recorded", "live"],
+        "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
+        "runtime_reserve": "docs/reserve.md",
         "ctl_handoff": {
             "mode": "operator-ctl",
             "awaiting_runtime_stamp": True,
@@ -46,8 +64,9 @@ INFO_PAYLOAD = {
             "mesh": "compute-job -> sos",
             "note": (
                 "Guest UX stays submit/status/cancel. Operator/ctl admits the "
-                "opaque handoff to runtime compute. Awaiting a platform-stamped "
-                "guest submit path; hook is inert until then."
+                "opaque handoff to runtime compute (docs/reserve.md / PR #84). "
+                "Guest emits handoff JSON only — it never calls runtime.apply. "
+                "Digest must match runtime.reserve.digest_for."
             ),
         },
     },

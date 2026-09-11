@@ -27,7 +27,7 @@ Day-one **is thinner** than iec-proto-c. The Done-when north star — owned with
 
 Those boxes live on [panoramix-runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70). Slice B alignment here is the opaque seam only — **not** #70 Done.
 
-The named iec comparison path (runtime [method.yaml](https://github.com/guypayeur/panoramix-runtime/blob/main/proofs/fixtures/iec-parity/method.yaml) after [#82](https://github.com/guypayeur/panoramix-runtime/pull/82)) is **`grammar/examples/reserve_ifrs17`**, with UX journey [`docs/ux/journeys/run_lifecycle_monitoring.md`](https://github.com/guypayeur/iec-proto-c/blob/main/docs/ux/journeys/run_lifecycle_monitoring.md). This guest’s `demo: "reserve"` is a **thinner stub / UX seed** so operators can walk submit → status pills → cancel beside that named baseline. It stores **stable reserve-shaped payload bytes** (canonical JSON parameters only — not iec math). Comparable **perf** waits on a runtime engine actually running that digest ([runtime#83](https://github.com/guypayeur/panoramix-runtime/issues/83) / #70). This path does **not** claim UX/perf parity and does **not** close #70.
+The named iec comparison path (runtime [method.yaml](https://github.com/guypayeur/panoramix-runtime/blob/main/proofs/fixtures/iec-parity/method.yaml) after [#82](https://github.com/guypayeur/panoramix-runtime/pull/82)) is **`grammar/examples/reserve_ifrs17`**, with UX journey [`docs/ux/journeys/run_lifecycle_monitoring.md`](https://github.com/guypayeur/iec-proto-c/blob/main/docs/ux/journeys/run_lifecycle_monitoring.md). This guest’s `demo: "reserve"` is a **thinner stub / UX seed** so operators can walk submit → status pills → cancel beside that named baseline. Payload bytes are the **recorded** (default) or **live** catalog from runtime [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) / [PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84); `payload_digest` must equal `runtime.reserve.digest_for`. Comparable **perf** waits on a runtime engine actually running that digest ([runtime#83](https://github.com/guypayeur/panoramix-runtime/issues/83) / #70). This path does **not** claim UX/perf parity and does **not** close #70.
 
 ## Contract
 
@@ -68,7 +68,13 @@ Operator UI: open http://127.0.0.1:18280/ (or `/ui`).
    - `kind`: `job` | `stage` | `chunk`
    - `class`: `cpu` | `gpu`
    - `payload_digest`: `sha256:` + 64 lowercase hex
-2. **Local demo shortcut** (operator UX only): `{"demo":"echo","message":"..."}`, `{"demo":"sleep","seconds":8}`, or `{"demo":"reserve", ...}` (optional `label`, `stages`, `seconds`, `class`). The server synthesizes `{kind:"job", class:"cpu"|"gpu", payload_digest}` from canonical JSON of the stored payload bytes (`json.dumps(..., sort_keys=True, separators=(",", ":"))` then sha256). For **reserve**, those bytes are a minimal work request (`work`, `label`, `stages`, `seconds`, `class`) — parameters only, not IFRS17 math. `class: "gpu"` on reserve is a **UX label only** (still in-process unless ctl has admitted the digest to a runtime engine). It never stores engine URLs. The seam `kind` is always `job` for this shortcut — demo labels are not seam kinds. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline; named iec baseline remains `reserve_ifrs17`. Not #70 Done until a runtime engine runs the digest.
+2. **Local demo shortcut** (operator UX only): `{"demo":"echo","message":"..."}`, `{"demo":"sleep","seconds":8}`, or `{"demo":"reserve", ...}`. The server synthesizes `{kind:"job", class:"cpu"|"gpu", payload_digest}` from canonical JSON of the stored payload bytes (`json.dumps(..., sort_keys=True, separators=(",", ":"))` then sha256). For **reserve**, those bytes **must match** runtime [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) / [PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84) `runtime.reserve.digest_for`:
+
+```json
+{"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,"paths":96,"seed":17070,"workload":"reserve"}
+```
+
+Default catalog is **recorded** (CI). `{"demo":"reserve","catalog":"live"}` uses the heavier live catalog. Explicit ints (`accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) override catalog fields. Optional `label` / `stages` / `seconds` are **local stub UX only** and are not in the digest. `class: "gpu"` is a **UX label only** on the stub. The seam `kind` is always `job`. Guest **emits handoff JSON only** — it never calls `runtime.apply`. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline; named iec baseline remains `reserve_ifrs17`. Not #70 Done until a runtime engine runs the digest.
 
 Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if a future stamped hook admits the job).
 
@@ -104,7 +110,7 @@ Reserve-shaped UX seed (stub stages in `message` / `local.stage`; cancel while q
 ```bash
 ID=$(curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
   -H 'Content-Type: application/json' \
-  -d '{"demo":"reserve","label":"ux-seed","stages":3,"seconds":8}' \
+  -d '{"demo":"reserve","catalog":"recorded"}' \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 
 curl -sS "http://127.0.0.1:18280/v0/jobs/${ID}"
@@ -118,7 +124,7 @@ curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
 
 ### Operator / ctl handoff (awaiting runtime stamp)
 
-Compute-plane mesh is **from `compute-job` → to `sos`** (the engine calls the guest). This guest does **not** call Ray / Temporal / AWS, and it does **not** invent `PLATFORM_RAY_*` or `PLATFORM_COMPUTE_*`. Runtime **main** documents no guest-callable submit env for this seam (searched; none found). Until the platform stamps one, **operator/ctl** takes the guest job’s opaque handoff and admits it to runtime compute (`submit_work` / `parse_work` in [`runtime/compute_work.py`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/compute_work.py)). Example binding pin: [`bindings/local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml) (Unit sos @18280, pin 0.5; engine in the binding only).
+Compute-plane mesh is **from `compute-job` → to `sos`** (the engine calls the guest). This guest does **not** call Ray / Temporal / AWS, and it does **not** invent `PLATFORM_RAY_*` or `PLATFORM_COMPUTE_*`. Runtime **main** documents no guest-callable submit env for this seam (searched; none found). Until the platform stamps one, **operator/ctl** takes the guest job’s opaque handoff and admits it to runtime compute (`python3 -m runtime.apply reserve` / `submit_work` / `parse_work` — guest never invokes apply). Digests must match [`runtime.reserve.digest_for`](https://github.com/guypayeur/panoramix-runtime/blob/main/runtime/reserve.py) ([PR #84](https://github.com/guypayeur/panoramix-runtime/pull/84), [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md)). Example bindings: [`local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml) and [`local-reserve.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve.example.yaml) (Unit sos @18280, pin 0.5; engine in the binding only).
 
 ```bash
 # Guest UX (unchanged):

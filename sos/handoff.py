@@ -2,12 +2,11 @@
 
 Hard reference: runtime/compute_work.py on panoramix-runtime main (not a PR
 number). Guest-facing submit shape is ``kind`` / ``class`` /
-``payload_digest`` — not engine brands. Local demo echo/sleep/reserve is a
-guest-only shortcut that synthesizes that shape before storage. Reserve
-produces stable canonical-JSON payload bytes (parameters only — not IFRS17
-math, not iec-proto-c). Ctl exports handoff without a nested ``payload``
-field (runtime submit rejects that key). Does not close #70. Does not
-unlock #61 / #29.
+``payload_digest`` — not engine brands. Reserve payload keys match
+runtime.reserve.payload_for / digest_for (docs/reserve.md, PR #84).
+Ctl exports handoff without a nested ``payload`` field (runtime submit
+rejects that key). Guest never calls runtime.apply. Does not close #70.
+Does not unlock #61 / #29.
 """
 
 from __future__ import annotations
@@ -28,12 +27,17 @@ from sos.handoff_vocab import (
     DEMO_ECHO,
     DEMO_RESERVE,
     DEMO_SLEEP,
+    LIVE_PARAMS,
     LOCAL_DEMOS,
     MAX_RESERVE_SECONDS,
     MAX_RESERVE_STAGES,
     MAX_SLEEP_SECONDS,
     MIN_RESERVE_STAGES,
-    RESERVE_WORK,
+    RECORDED_PARAMS,
+    RESERVE_CATALOG_ALIASES,
+    RESERVE_CATALOG_RECORDED,
+    RESERVE_PARAM_KEYS,
+    RESERVE_WORKLOAD,
     RESOURCE_CLASSES,
     WORK_KINDS,
 )
@@ -42,7 +46,17 @@ DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SEAM_KEYS = frozenset({"kind", "class", "payload_digest"})
 ECHO_DEMO_KEYS = frozenset({"demo", "message"})
 SLEEP_DEMO_KEYS = frozenset({"demo", "seconds"})
-RESERVE_DEMO_KEYS = frozenset({"demo", "label", "stages", "seconds", "class"})
+RESERVE_DEMO_KEYS = frozenset(
+    {
+        "demo",
+        "catalog",
+        "class",
+        "label",
+        "stages",
+        "seconds",
+        *RESERVE_PARAM_KEYS,
+    }
+)
 MAX_RESERVE_LABEL = 80
 
 # Schemes / prefixes that would smuggle an engine URL into the seam.
@@ -182,26 +196,48 @@ def payload_export(digest: str, blob: bytes) -> dict[str, Any]:
     }
 
 
-def reserve_work_request(
-    *,
-    label: str,
-    stages: int,
-    seconds: int | float,
-    resource_class: str,
-) -> dict[str, Any]:
-    """Minimal reserve-class work request (parameters only).
+def recorded_params() -> dict[str, Any]:
+    """Recorded/CI catalog. Mirrors runtime.reserve.recorded_params (PR #84)."""
+    return dict(RECORDED_PARAMS)
 
-    Not IFRS17 math. Not a copy of iec-proto-c. Not the named baseline
-    ``grammar/examples/reserve_ifrs17``. Digest is sha256 of these canonical
-    JSON bytes.
+
+def live_params() -> dict[str, Any]:
+    """Live/lab catalog. Mirrors runtime.reserve.live_params (PR #84)."""
+    return dict(LIVE_PARAMS)
+
+
+def params_for_catalog(catalog: str) -> dict[str, Any]:
+    name = str(catalog or RESERVE_CATALOG_RECORDED).strip().lower()
+    resolved = RESERVE_CATALOG_ALIASES.get(name)
+    if resolved == "recorded":
+        return recorded_params()
+    if resolved == "live":
+        return live_params()
+    raise InvalidDemo(
+        f"reserve catalog must be recorded|live (got {catalog!r})"
+    )
+
+
+def payload_for(params: dict[str, Any]) -> dict[str, Any]:
+    """Canonical reserve bytes. Same keys/types as runtime.reserve.payload_for.
+
+    Not IFRS17 math. Not a copy of iec-proto-c. Digest is sha256 of these
+    canonical JSON bytes (sort_keys, separators=(',', ':')).
     """
     return {
-        "class": resource_class,
-        "label": label,
-        "seconds": seconds,
-        "stages": stages,
-        "work": RESERVE_WORK,
+        "workload": str(params.get("workload") or RESERVE_WORKLOAD),
+        "accounts": int(params["accounts"]),
+        "horizon": int(params["horizon"]),
+        "paths": int(params["paths"]),
+        "seed": int(params["seed"]),
+        "lapse_bps": int(params["lapse_bps"]),
+        "discount_bps": int(params["discount_bps"]),
     }
+
+
+def digest_for(params: dict[str, Any]) -> str:
+    """Must match runtime.reserve.digest_for for the same catalog/ints."""
+    return digest_canonical(payload_for(params))
 
 
 def _canon_seconds(seconds: float) -> int | float:
@@ -228,12 +264,35 @@ def _parse_nonneg_seconds(seconds: Any, *, name: str, maximum: float) -> int | f
     return _canon_seconds(float(seconds))
 
 
-def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
-    """UX-seed reserve shortcut → synthesized job + stable payload bytes.
+def _parse_reserve_int(raw: Any, *, name: str, minimum: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise InvalidDemo(f"reserve {name} must be an integer")
+    if raw < minimum:
+        raise InvalidDemo(f"reserve {name} must be >= {minimum}")
+    return raw
 
-    Optional ``class: gpu`` is a seam label only (still in-process; no GPU
-    kernels). Not IFRS17 math. Not the named iec baseline ``reserve_ifrs17``.
+
+def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
+    """UX-seed reserve shortcut → synthesized job + runtime-matching digest.
+
+    Payload bytes are the PR #84 catalog (``workload`` / ``accounts`` /
+    ``horizon`` / ``paths`` / ``seed`` / ``lapse_bps`` / ``discount_bps``).
+    Optional ``class: gpu`` is a seam label only. Local ``label`` /
+    ``stages`` / ``seconds`` are stub UX and are **not** in the digest.
+    Guest emits handoff JSON only — it never calls ``runtime.apply``.
     """
+    catalog_raw = body.get("catalog", RESERVE_CATALOG_RECORDED)
+    if not isinstance(catalog_raw, str):
+        raise InvalidDemo("reserve catalog must be a string")
+    params = params_for_catalog(catalog_raw)
+    catalog = RESERVE_CATALOG_ALIASES[catalog_raw.strip().lower()]
+
+    for key in RESERVE_PARAM_KEYS:
+        if key not in body:
+            continue
+        minimum = 0 if key in {"seed", "lapse_bps", "discount_bps"} else 1
+        params[key] = _parse_reserve_int(body.get(key), name=key, minimum=minimum)
+
     label = body.get("label", DEFAULT_RESERVE_LABEL)
     if not isinstance(label, str):
         raise InvalidDemo("reserve label must be a string")
@@ -265,19 +324,21 @@ def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
         if cls not in RESOURCE_CLASSES:
             raise InvalidClass(class_raw if isinstance(class_raw, str) else type(class_raw).__name__)
 
-    work = reserve_work_request(
-        label=label,
-        stages=stages,
-        seconds=seconds,
-        resource_class=cls,
-    )
+    work = payload_for(params)
     blob = canonical_json_bytes(work)
     local = {
         "demo": DEMO_RESERVE,
+        "catalog": catalog,
         "class": cls,
         "label": label,
         "seconds": seconds,
         "stages": stages,
+        "accounts": work["accounts"],
+        "horizon": work["horizon"],
+        "paths": work["paths"],
+        "seed": work["seed"],
+        "lapse_bps": work["lapse_bps"],
+        "discount_bps": work["discount_bps"],
     }
     return ParsedSubmit(
         kind="job",
@@ -299,7 +360,7 @@ def parse_demo(body: dict[str, Any]) -> ParsedSubmit:
         raise InvalidHandoff(
             f"local demo refuses extra fields {extra} "
             "(echo: demo/message; sleep: demo/seconds; "
-            "reserve: demo/label/stages/seconds/class)"
+            "reserve: demo/catalog/class + catalog ints + optional label/stages/seconds)"
         )
     if demo == DEMO_ECHO:
         message = body.get("message", DEFAULT_ECHO_MESSAGE)
