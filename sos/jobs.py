@@ -4,7 +4,8 @@ Process-local only. Emits WorkHandoff JSON (kind/class/payload_digest +
 status/id). Does not call runtime.apply compute-work. Mesh is
 compute-job → sos (worker calls Unit). In-process stub is the fallback;
 operator/ctl admits the exported handoff. Pause/resume is durable-path
-only (injected hook); stub jobs are refused. Does not close #70.
+only (injected hook); stub jobs are refused. Progress prefers
+hook.progress() path-slices when durable-backed. Does not close #70.
 """
 
 from __future__ import annotations
@@ -37,6 +38,24 @@ from sos.handoff_vocab import (
 from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 
 DEFAULT_STEP_SECONDS = 0.15
+PROGRESS_SOURCE_STUB = "stub"
+PROGRESS_SOURCE_DURABLE = "durable"
+_PROGRESS_COUNTER_KEYS = (
+    "stage",
+    "stages_total",
+    "stages_completed",
+    "fraction",
+    "inner_steps",
+    "inner_steps_expected",
+)
+STUB_PROGRESS_NOTE = (
+    "Stub stage metadata derived from job fields — "
+    "not iec chunk progress or parallelism"
+)
+DURABLE_PROGRESS_NOTE = (
+    "Durable reserve-temporal path-slices — "
+    "not iec planner parallelism; not iec chunk progress"
+)
 
 
 def utcnow() -> str:
@@ -101,10 +120,8 @@ class Job:
             "message": self.message,
             "backed": local.get("backed"),
             "pause_resume": _pause_resume_honest(self),
-            "note": (
-                "Stub stage metadata derived from job fields — "
-                "not iec chunk progress or parallelism"
-            ),
+            "source": PROGRESS_SOURCE_STUB,
+            "note": STUB_PROGRESS_NOTE,
         }
         stages_total = local.get("stages")
         if stages_total is not None:
@@ -135,6 +152,50 @@ def _pause_resume_honest(job: Job) -> bool:
     """True only when a runtime ref / runtime-backed path exists."""
     backed = (job.local or {}).get("backed")
     return backed == BACKED_RUNTIME or job.runtime_ref is not None
+
+
+def _copy_progress_counters(src: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in _PROGRESS_COUNTER_KEYS:
+        if key in src and src[key] is not None:
+            out[key] = src[key]
+    return out
+
+
+def _has_progress_counters(data: dict[str, Any]) -> bool:
+    nested = data.get("progress")
+    blobs = [data]
+    if isinstance(nested, dict):
+        blobs.append(nested)
+    return any(key in blob for blob in blobs for key in _PROGRESS_COUNTER_KEYS)
+
+
+def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
+    """Prefer hook counters. Honesty: path-slices, not iec planner parallelism."""
+    nested_raw = durable.get("progress")
+    nested = (
+        _copy_progress_counters(nested_raw) if isinstance(nested_raw, dict) else {}
+    )
+    top = _copy_progress_counters(durable)
+    payload: dict[str, Any] = {
+        "id": job.id,
+        "status": job.status,
+        "message": job.message,
+        "backed": (job.local or {}).get("backed"),
+        "pause_resume": _pause_resume_honest(job),
+        "source": PROGRESS_SOURCE_DURABLE,
+        "note": DURABLE_PROGRESS_NOTE,
+    }
+    for key in _PROGRESS_COUNTER_KEYS:
+        if key in top:
+            payload[key] = top[key]
+        elif key in nested:
+            payload[key] = nested[key]
+    if nested:
+        payload["progress"] = nested
+    elif isinstance(nested_raw, dict):
+        payload["progress"] = {}
+    return payload
 
 
 @dataclass
@@ -227,7 +288,17 @@ class JobStore:
         return self.get(job_id).to_payload()
 
     def progress(self, job_id: str) -> dict[str, Any]:
-        return self.get(job_id).to_progress()
+        """Prefer dedicated hook.progress(); stub fields are fallback only.
+
+        ``get()`` already refreshes lifecycle via ``status()``. Stage
+        counters are not scraped from status strings.
+        """
+        job = self.get(job_id)
+        if self._is_durable(job):
+            durable = self._try_runtime_progress(job_id, job.runtime_ref)
+            if durable is not None:
+                return _progress_from_durable(job, durable)
+        return job.to_progress()
 
     def events(self, job_id: str) -> dict[str, Any]:
         return self.get(job_id).to_events()
@@ -332,6 +403,22 @@ class JobStore:
             return bool(method(job_id, runtime_ref))
         except Exception:
             return False
+
+    def _try_runtime_progress(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        method = getattr(self.runtime_hook, "progress", None)
+        if not callable(method):
+            return None
+        try:
+            reported = method(job_id, runtime_ref)
+        except Exception:
+            return None
+        if not isinstance(reported, dict) or not reported:
+            return None
+        if not _has_progress_counters(reported):
+            return None
+        return reported
 
     def _refresh_runtime_status(self, job_id: str) -> None:
         with self._lock:

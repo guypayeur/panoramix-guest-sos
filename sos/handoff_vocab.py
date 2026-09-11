@@ -23,6 +23,9 @@ STATUS_CANCELED = "canceled"
 CTL_PAUSE_RESUME = (
     "python3 -m runtime.apply reserve-temporal pause|resume --id cw_…"
 )
+CTL_PROGRESS = (
+    "python3 -m runtime.apply reserve-temporal progress --id cw_…"
+)
 
 DEMO_ECHO = "echo"
 DEMO_SLEEP = "sleep"

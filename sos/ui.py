@@ -208,7 +208,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Stub-only jobs refuse pause/resume (<code>409 stub_only</code>) —
     this page does not pretend otherwise. Cancel ends the run
     (<code>canceled</code>) from running or paused; cancel is not pause.
-    Progress is stub stage metadata only (not iec chunk progress).
+    Progress prefers durable path-slice counters when a runtime hook
+    provides them; otherwise stub stage metadata (not iec planner
+    parallelism / iec chunk progress).
     Local event trail is not a regulatory audit.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
@@ -315,6 +317,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     let jobs = [];
     let pendingCancelId = null;
     let lastSeamText = "";
+    let lastProgress = null;
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -547,12 +550,47 @@ OPERATOR_HTML = """<!DOCTYPE html>
     function renderProgress(job) {
       const wrap = document.createElement("div");
       const local = job.local || {};
-      const total = Number(local.stages);
-      const index = Number(local.stage_index);
-      const stage = local.stage;
+      const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
       const line = document.createElement("p");
       line.className = "hint";
       line.style.marginTop = "0.35rem";
+      const completed = prog && prog.stages_completed;
+      const fraction = prog && prog.fraction;
+      const source = prog && prog.source;
+      const durable = source === "durable" ||
+        (source !== "stub" && (completed != null || fraction != null));
+      if (durable && (completed != null || fraction != null)) {
+        const total = Number(prog.stages_total);
+        const done = Number(completed);
+        const frac = Number(fraction);
+        let text = "";
+        if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+          text = "Path-slices " + done + " / " + total;
+          const bar = document.createElement("div");
+          bar.className = "timeline";
+          const current = Number(prog.stage);
+          for (let i = 1; i <= total; i++) {
+            const step = document.createElement("span");
+            let cls = "step";
+            if (i <= done) cls += " done";
+            else if (Number.isFinite(current) && i === current) cls += " current";
+            step.className = cls;
+            step.textContent = String(i);
+            bar.appendChild(step);
+          }
+          wrap.appendChild(bar);
+        }
+        if (Number.isFinite(frac)) {
+          text += (text ? " · " : "") + "fraction " + frac;
+        }
+        text += " — durable reserve-temporal path-slices, not iec planner parallelism.";
+        line.textContent = text;
+        wrap.appendChild(line);
+        return wrap;
+      }
+      const total = Number((prog && prog.stages_total != null) ? prog.stages_total : local.stages);
+      const index = Number((prog && prog.stage_index != null) ? prog.stage_index : local.stage_index);
+      const stage = (prog && prog.stage != null) ? prog.stage : local.stage;
       if (Number.isInteger(total) && total > 0 && Number.isInteger(index)) {
         line.textContent = "Stage " + index + " of " + total +
           (stage ? (": " + stage) : "") +
@@ -630,9 +668,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
         ...dlRow("updated", fmtTs(job.updated_at), true),
         ...dlRow("elapsed", elapsed(job)),
         ...dlRow("message", job.message),
-        ...dlRow("stage", local.stage || "—"),
+        ...dlRow("stage", (lastProgress && lastProgress.id === job.id && lastProgress.stage != null)
+          ? lastProgress.stage : (local.stage || "—")),
         ...dlRow("backed", local.backed || "—")
       ];
+      const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
+      if (prog && prog.source) {
+        rows.push(...dlRow("progress source", prog.source));
+      }
+      if (prog && prog.stages_completed != null) {
+        const tot = prog.stages_total != null ? (" / " + prog.stages_total) : "";
+        rows.push(...dlRow("stages completed", String(prog.stages_completed) + tot));
+      }
+      if (prog && prog.fraction != null) {
+        rows.push(...dlRow("fraction", String(prog.fraction)));
+      }
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
       host.appendChild(renderProgress(job));
@@ -666,7 +716,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
       for (const job of jobs) {
         const tr = document.createElement("tr");
         tr.className = "job" + (job.id === selectedId ? " selected" : "");
-        tr.addEventListener("click", () => { selectedId = job.id; render(); });
+        tr.addEventListener("click", () => {
+          selectedId = job.id;
+          loadProgress(job.id).then(() => render());
+        });
         const tdS = document.createElement("td"); tdS.appendChild(pill(job.status));
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
         const tdC = document.createElement("td"); tdC.textContent = job.class || "";
@@ -702,11 +755,32 @@ OPERATOR_HTML = """<!DOCTYPE html>
       syncLifecycleButtons(selected);
     }
 
+    async function loadProgress(id) {
+      if (!id) {
+        lastProgress = null;
+        return;
+      }
+      try {
+        const res = await fetch("/v0/jobs/" + id + "/progress");
+        const body = await res.json();
+        lastProgress = res.ok ? body : null;
+      } catch (e) {
+        lastProgress = null;
+      }
+    }
+
     async function refresh() {
       try {
         const res = await fetch("/v0/jobs");
         const body = await res.json();
         jobs = body.jobs || [];
+        const selected = jobs.find(j => j.id === selectedId) || jobs[0];
+        if (selected) {
+          selectedId = selected.id;
+          await loadProgress(selectedId);
+        } else {
+          lastProgress = null;
+        }
         render();
       } catch (e) {
         flash("poll failed: " + e.message);

@@ -1,4 +1,4 @@
-"""Inert runtime admit/cancel/pause/resume hook.
+"""Inert runtime admit/cancel/pause/resume/progress hook.
 
 Transport today is **operator/ctl-mediated only**. This guest emits
 WorkHandoff JSON (kind/class/payload_digest + status/id). It does not
@@ -8,11 +8,11 @@ destinations. Mesh on local-sos-compute is ``from: compute-job`` →
 ``to: sos`` (worker calls Unit).
 
 Do not invent PLATFORM_RAY_* / engine URLs / guest-callable ctl HTTP.
-``admit`` / ``cancel`` / ``status`` / ``pause`` / ``resume`` stay no-ops;
-JobStore falls back to the in-process stub. Temporal-local
-admit/status/cancel/pause/resume is operator/ctl via reserve-temporal;
-this hook stays inert. Optional guest→ctl loopback is deferred until a
-documented safe loopback admit exists.
+``admit`` / ``cancel`` / ``status`` / ``pause`` / ``resume`` / ``progress``
+stay no-ops; JobStore falls back to the in-process stub. Temporal-local
+admit/status/progress/cancel/pause/resume is operator/ctl via
+reserve-temporal; this hook stays inert. Optional guest→ctl loopback is
+deferred until a documented safe loopback admit exists.
 
 Does not close #70. Does not close #78. Does not unlock #61 / #29.
 """
@@ -23,7 +23,7 @@ from typing import Any, Protocol
 
 
 class RuntimeHandoffHook(Protocol):
-    """Admit/cancel/status/pause/resume when an operator injects a live hook."""
+    """Admit/cancel/status/pause/resume/progress when an operator injects a live hook."""
 
     def admit(
         self, handoff: dict[str, str], payload_bytes: bytes | None
@@ -44,13 +44,23 @@ class RuntimeHandoffHook(Protocol):
         """True if runtime resume was signaled. Default: not durable."""
         return False
 
+    def progress(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Durable stage/chunk counters, or None if unknown / not backed.
+
+        Prefer this over scraping counters from ``status()``. Inert returns None.
+        """
+        return None
+
 
 class InertRuntimeHandoffHook:
     """Default hook: always fall back to the local stub.
 
     Transport is operator/ctl-mediated. Do not add guest→ctl HTTP,
     PLATFORM_MESH_* destinations, PLATFORM_RAY_*, engine URLs, or a call
-    to runtime.apply compute-work. pause/resume stay False.
+    to runtime.apply compute-work. pause/resume stay False; progress
+    stays None (stub fallback).
     """
 
     def admit(
@@ -69,3 +79,8 @@ class InertRuntimeHandoffHook:
 
     def resume(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         return False
+
+    def progress(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return None

@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from sos.errors import SosError
 from sos.handoff_vocab import (
     CTL_PAUSE_RESUME,
+    CTL_PROGRESS,
     LOCAL_DEMOS,
     PARITY_PAYLOAD_DIGEST,
     RECORDED_PAYLOAD_DIGEST,
@@ -92,7 +93,12 @@ INFO_PAYLOAD = {
         },
         "progress": "GET /v0/jobs/{id}/progress",
         "events": "GET /v0/jobs/{id}/events",
-        "progress_honesty": "stub stage metadata; not iec chunk progress",
+        "progress_honesty": (
+            "durable reserve-temporal path-slices when a hook provides them; "
+            "else stub stage metadata; not iec planner parallelism; "
+            "not iec chunk progress. "
+            f"Operator/ctl: {CTL_PROGRESS}"
+        ),
         "events_honesty": "local event trail; not a regulatory audit",
         "pause": "POST /v0/jobs/{id}/pause",
         "resume": "POST /v0/jobs/{id}/resume",

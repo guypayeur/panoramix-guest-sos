@@ -30,7 +30,7 @@ from sos.handoff_vocab import (
     STATUS_CANCELED,
     STATUS_QUEUED,
 )
-from sos.jobs import JobStore
+from sos.jobs import JobStore, PROGRESS_SOURCE_DURABLE, PROGRESS_SOURCE_STUB
 
 
 def wait_status(store: JobStore, job_id: str, wanted: set[str], timeout: float = 2.0) -> str:
@@ -540,10 +540,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(progress["status"], STATUS_QUEUED)
         self.assertIsNone(progress["stage"])
         self.assertEqual(progress["backed"], BACKED_STUB)
+        self.assertEqual(progress["source"], PROGRESS_SOURCE_STUB)
         self.assertEqual(progress["stages_total"], 3)
         self.assertIs(progress["pause_resume"], False)
         self.assertIn("not iec chunk progress", progress["note"])
         self.assertNotIn("parallelism claimed", progress["note"])
+        self.assertNotIn("stages_completed", progress)
+        self.assertNotIn("fraction", progress)
 
         events = self.store.events(job.id)
         self.assertEqual(events["id"], job.id)
@@ -567,6 +570,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn(mid["stage"], {"admit", "project", "fold"})
         self.assertEqual(mid["stages_total"], 3)
         self.assertIn(mid["stage_index"], {1, 2, 3})
+        self.assertEqual(mid["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("stub stage metadata", mid["note"].lower())
 
         canceled = self.store.cancel(job.id)
@@ -589,6 +593,9 @@ class JobStoreTests(unittest.TestCase):
         self.assertIsNone(progress["stage"])
         self.assertNotIn("stages_total", progress)
         self.assertNotIn("stage_index", progress)
+        self.assertNotIn("stages_completed", progress)
+        self.assertNotIn("fraction", progress)
+        self.assertEqual(progress["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("not iec chunk progress", progress["note"])
         events = [item["event"] for item in self.store.events(job.id)["events"]]
         self.assertIn("submitted", events)
@@ -797,6 +804,83 @@ class JobStoreTests(unittest.TestCase):
         self.assertIs(hook.cancel("id", None), False)
         self.assertIsNone(hook.admit({}, None))
         self.assertIsNone(hook.status("id", None))
+        self.assertIsNone(hook.progress("id", None))
+
+    def test_progress_durable_hook_counters(self) -> None:
+        class DurableProgressHook:
+            def __init__(self) -> None:
+                self.reported = "running"
+                self.calls: list[tuple[str, dict | None]] = []
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def progress(self, job_id, runtime_ref):
+                self.calls.append((job_id, runtime_ref))
+                return {
+                    "stage": 2,
+                    "stages_total": 4,
+                    "stages_completed": 2,
+                    "fraction": 0.5,
+                    "inner_steps": 96,
+                    "progress": {
+                        "stage": 2,
+                        "stages_total": 4,
+                        "stages_completed": 2,
+                        "fraction": 0.5,
+                        "inner_steps": 96,
+                    },
+                }
+
+        hook = DurableProgressHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        body = store.progress(job.id)
+        self.assertEqual(body["id"], job.id)
+        self.assertEqual(body["status"], "running")
+        self.assertEqual(body["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertEqual(body["backed"], "runtime")
+        self.assertEqual(body["stage"], 2)
+        self.assertEqual(body["stages_total"], 4)
+        self.assertEqual(body["stages_completed"], 2)
+        self.assertEqual(body["fraction"], 0.5)
+        self.assertEqual(body["inner_steps"], 96)
+        self.assertEqual(body["progress"]["stages_completed"], 2)
+        self.assertIn("path-slices", body["note"].lower())
+        self.assertIn("not iec planner", body["note"].lower())
+        self.assertIn("not iec chunk progress", body["note"])
+        self.assertNotIn("parallelism claimed", body["note"])
+        self.assertEqual(len(hook.calls), 1)
+        self.assertEqual(hook.calls[0][0], job.id)
+        handoff = store.handoff(job.id)
+        self.assertNotIn("progress", handoff)
+        self.assertNotIn("source", handoff)
+        store.cancel(job.id)
+
+        class SilentDurableHook(DurableProgressHook):
+            def progress(self, job_id, runtime_ref):
+                return None
+
+        silent = SilentDurableHook()
+        fallback = JobStore(step_seconds=0.02, runtime_hook=silent)
+        backed = fallback.submit({"demo": "reserve", "seconds": 8})
+        stubby = fallback.progress(backed.id)
+        self.assertEqual(stubby["source"], PROGRESS_SOURCE_STUB)
+        self.assertNotIn("stages_completed", stubby)
+        fallback.cancel(backed.id)
 
     def test_guest_never_imports_runtime(self) -> None:
         from pathlib import Path
@@ -842,10 +926,16 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("python3 -m runtime.apply reserve-temporal", text, name)
             self.assertIn("python3 -m runtime.apply reserve-temporal pause", text, name)
             self.assertIn("python3 -m runtime.apply reserve-temporal resume", text, name)
+            self.assertIn("python3 -m runtime.apply reserve-temporal progress", text, name)
+            self.assertIn("reserve-temporal progress --id", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
-            self.assertIn("verified @ `3a164cd`", text, name)
+            self.assertIn("verified @ `63c4d8e`", text, name)
+            self.assertIn("stages_completed", text, name)
+            self.assertIn("stages_total", text, name)
+            self.assertIn("nested `progress`", text, name)
             self.assertIn("pause|resume", text, name)
             self.assertIn("`paused`", text, name)
+            self.assertNotIn("3a164cd", text, name)
             self.assertNotIn("73c311c", text, name)
             self.assertNotIn("28437ea", text, name)
             self.assertNotIn("landing pr", text.lower(), name)
@@ -900,6 +990,16 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("**match** (thinner)", ux)
         self.assertIn("python3 -m runtime.apply reserve-temporal pause", ux)
         self.assertIn("python3 -m runtime.apply reserve-temporal resume", ux)
+        self.assertIn("python3 -m runtime.apply reserve-temporal progress", ux)
+        self.assertIn("reserve-temporal progress --id", ux)
+        self.assertIn(
+            "| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn("path-slices", ux.lower())
+        self.assertIn("not iec planner", ux.lower())
+        self.assertIn("- [ ] Real chunk / step progress", ux)
+        self.assertNotIn("- [x] Real chunk / step progress", ux)
         self.assertIn("stub_only", ux)
         self.assertIn("409", ux)
         self.assertIn("| 2.1 Pause |", ux)
@@ -924,9 +1024,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)
         self.assertIn("local-reserve-temporal.example.yaml", ux)
-        self.assertIn("verified @ `3a164cd`", ux)
+        self.assertIn("verified @ `63c4d8e`", ux)
+        self.assertIn("stages_completed", ux)
+        self.assertIn("stages_total", ux)
+        self.assertIn("nested `progress`", ux)
         self.assertIn("pause|resume", ux)
         self.assertIn("`paused`", ux)
+        self.assertNotIn("3a164cd", ux)
         self.assertNotIn("73c311c", ux)
         self.assertNotIn("28437ea", ux)
         self.assertNotIn("landing pr", ux.lower())

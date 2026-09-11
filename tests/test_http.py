@@ -123,6 +123,13 @@ class HttpAppTests(unittest.TestCase):
             body["jobs"]["pause_resume_honesty"],
         )
         self.assertIn("not iec chunk progress", body["jobs"]["progress_honesty"])
+        self.assertIn("durable", body["jobs"]["progress_honesty"])
+        self.assertIn("path-slices", body["jobs"]["progress_honesty"])
+        self.assertIn("not iec planner", body["jobs"]["progress_honesty"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal progress",
+            body["jobs"]["progress_honesty"],
+        )
         self.assertIn("not a regulatory audit", body["jobs"]["events_honesty"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn(
@@ -183,6 +190,10 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Fetch payload", html)
             self.assertNotIn("no pause / resume", html)
             self.assertIn("not iec chunk progress", html)
+            self.assertIn("stages_completed", html)
+            self.assertIn("fraction", html)
+            self.assertIn("/progress", html)
+            self.assertIn("path-slices", html)
             self.assertIn("not a regulatory audit", html)
             self.assertIn("docs/ux-side-by-side.md", html)
             self.assertIn("End run (canceled)", html)
@@ -400,11 +411,14 @@ class HttpAppTests(unittest.TestCase):
         body = _json(progress)
         self.assertEqual(body["id"], job_id)
         self.assertEqual(body["backed"], "stub")
+        self.assertEqual(body["source"], "stub")
         self.assertEqual(body["stages_total"], 3)
         self.assertIs(body["pause_resume"], False)
         self.assertIn("not iec chunk progress", body["note"])
         self.assertNotIn("chunks_done", body)
         self.assertNotIn("parallelism", body)
+        self.assertNotIn("stages_completed", body)
+        self.assertNotIn("fraction", body)
 
         events = self.app.handle("GET", f"/v0/jobs/{job_id}/events")
         self.assertEqual(events.status, 200)
@@ -616,6 +630,58 @@ class HttpAppTests(unittest.TestCase):
         term_resume = done_app.handle("POST", f"/v0/jobs/{did}/resume")
         self.assertEqual(term_resume.status, 409)
         self.assertEqual(_json(term_resume)["error"], "already_terminal")
+
+    def test_progress_durable_http(self) -> None:
+        class FakeHook:
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return "running"
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def progress(self, job_id, runtime_ref):
+                return {
+                    "stage": 3,
+                    "stages_total": 4,
+                    "stages_completed": 3,
+                    "fraction": 0.75,
+                    "progress": {
+                        "stage": 3,
+                        "stages_total": 4,
+                        "stages_completed": 3,
+                        "fraction": 0.75,
+                    },
+                }
+
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=FakeHook()))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        job_id = _json(created)["id"]
+        progress = app.handle("GET", f"/v0/jobs/{job_id}/progress")
+        self.assertEqual(progress.status, 200)
+        body = _json(progress)
+        self.assertEqual(body["source"], "durable")
+        self.assertEqual(body["stages_completed"], 3)
+        self.assertEqual(body["stages_total"], 4)
+        self.assertEqual(body["fraction"], 0.75)
+        self.assertEqual(body["progress"]["stages_completed"], 3)
+        self.assertIn("path-slices", body["note"].lower())
+        self.assertIn("not iec planner", body["note"].lower())
+        self.assertNotIn("temporal_product", body)
+        self.assertNotIn("workflow_id", body)
+        app.handle("POST", f"/v0/jobs/{job_id}/cancel")
 
     def test_invalid_json(self) -> None:
         resp = self.app.handle("POST", "/v0/jobs", b"{")
