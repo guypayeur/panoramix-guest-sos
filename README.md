@@ -154,7 +154,7 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 
 #### Durable temporal-local reserve (operator/ctl)
 
-Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`). Same command and binding path on runtime main ([runtime#89](https://github.com/guypayeur/panoramix-runtime/pull/89) is the landing PR).
+Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main**.
 
 ```bash
 python3 -m runtime.apply reserve-temporal admit --catalog recorded   # or live|parity; or --handoff JSON
