@@ -139,6 +139,11 @@ class HttpAppTests(unittest.TestCase):
             "python3 -m runtime.apply reserve-temporal events",
             body["jobs"]["events_honesty"],
         )
+        self.assertIn("not a data-catalog product", body["jobs"]["investigate_honesty"])
+        self.assertIn("not Slack", body["jobs"]["investigate_honesty"])
+        self.assertIn("admit / project / fold / complete", body["jobs"]["investigate_honesty"])
+        self.assertIn("same panel", body["jobs"]["investigate_honesty"])
+        self.assertIn("not a SIEM", body["jobs"]["investigate_honesty"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal pause|resume",
@@ -215,6 +220,14 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("409 stub_only", html)
             self.assertIn("python3 -m runtime.apply reserve-temporal pause|resume", html)
             self.assertIn("Cancel is not pause", html)
+            self.assertIn("Investigate (thinner)", html)
+            self.assertIn("Catalog cross-check", html)
+            self.assertIn("not a data-catalog product", html)
+            self.assertIn("Path-slice ownership tags", html)
+            self.assertIn("admit / project / fold / complete", html)
+            self.assertIn("Not Slack", html)
+            self.assertIn("Event trail is on this panel", html)
+            self.assertIn("not a SIEM", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -430,6 +443,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn("parallelism", body)
         self.assertNotIn("stages_completed", body)
         self.assertNotIn("fraction", body)
+        self.assertEqual(body["investigate"]["catalog"]["name"], "recorded")
+        self.assertEqual(body["investigate"]["catalog"]["digest_short"], "sha256:77e9299f…")
+        self.assertIn("not a data-catalog product", body["investigate"]["catalog"]["note"])
+        self.assertNotIn("ownership", body["investigate"])
 
         events = self.app.handle("GET", f"/v0/jobs/{job_id}/events")
         self.assertEqual(events.status, 200)
@@ -693,6 +710,19 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("not iec planner", body["note"].lower())
         self.assertNotIn("temporal_product", body)
         self.assertNotIn("workflow_id", body)
+        self.assertEqual(body["investigate"]["catalog"]["name"], "recorded")
+        self.assertEqual(
+            [item["slice"] for item in body["investigate"]["ownership"]["tags"]],
+            ["admit", "project", "fold", "complete"],
+        )
+        self.assertIn("not Slack", body["investigate"]["ownership"]["note"])
+        job = _json(app.handle("GET", f"/v0/jobs/{job_id}"))
+        self.assertEqual(
+            [item["owner"] for item in job["investigate"]["ownership"]["tags"]],
+            ["ctl / admit", "kernel / project", "kernel / fold", "ctl / complete"],
+        )
+        handoff = _json(app.handle("GET", f"/v0/jobs/{job_id}/handoff"))
+        self.assertNotIn("investigate", handoff)
         app.handle("POST", f"/v0/jobs/{job_id}/cancel")
 
     def test_events_durable_http(self) -> None:

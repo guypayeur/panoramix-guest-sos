@@ -23,10 +23,13 @@ from sos.handoff import ParsedSubmit, parse_submit, payload_export, HANDOFF_EXPO
 from sos.handoff_vocab import (
     BACKED_RUNTIME,
     BACKED_STUB,
+    CATALOG_CROSSCHECK_NOTE,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
     DEMO_RESERVE,
     DEMO_SLEEP,
+    OWNERSHIP_NOTE,
+    PATH_SLICE_OWNERS,
     STATUS_CANCELED,
     STATUS_FAILED,
     STATUS_PAUSED,
@@ -36,6 +39,7 @@ from sos.handoff_vocab import (
     TERMINAL,
     WORK_STATUSES,
     reserve_stage_names,
+    short_digest,
 )
 from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 
@@ -66,6 +70,10 @@ MEMORY_EVENTS_NOTE = (
 DURABLE_EVENTS_NOTE = (
     "Durable reserve-temporal JSONL trail — not a SIEM; "
     "not iec /v1/audit/events product"
+)
+INVESTIGATE_NOTE = (
+    "Thinner investigate — catalog identity + static path-slice owners "
+    "when hooked; not Slack; not a data-catalog product; not a SIEM"
 )
 
 
@@ -129,6 +137,9 @@ class Job:
             payload["events_durable"] = self.events_durable
         if self.events_n is not None:
             payload["events_n"] = self.events_n
+        investigate = _investigate_payload(self, hooked=_pause_resume_honest(self))
+        if investigate:
+            payload["investigate"] = investigate
         return payload
 
     def to_progress(self) -> dict[str, Any]:
@@ -150,6 +161,7 @@ class Job:
         stage_index = local.get("stage_index")
         if stage_index is not None:
             payload["stage_index"] = stage_index
+        _attach_investigate(payload, self, hooked=False)
         return payload
 
     def to_events(self) -> dict[str, Any]:
@@ -173,6 +185,49 @@ class Job:
             "source": EVENTS_SOURCE_MEMORY,
             "note": MEMORY_EVENTS_NOTE,
         }
+
+
+def _catalog_identity(job: Job) -> dict[str, Any] | None:
+    """Name + short digest already on the job. Not a data-catalog product."""
+    name = (job.local or {}).get("catalog")
+    if not name:
+        return None
+    digest = job.payload_digest
+    return {
+        "name": name,
+        "digest": digest,
+        "digest_short": short_digest(digest),
+        "note": CATALOG_CROSSCHECK_NOTE,
+    }
+
+
+def _ownership_tags() -> dict[str, Any]:
+    """Static day-one labels for durable path-slices. Not Slack."""
+    return {
+        "tags": [
+            {"slice": slice_name, "owner": owner}
+            for slice_name, owner in PATH_SLICE_OWNERS
+        ],
+        "note": OWNERSHIP_NOTE,
+    }
+
+
+def _investigate_payload(job: Job, *, hooked: bool) -> dict[str, Any] | None:
+    catalog = _catalog_identity(job)
+    if catalog is None and not hooked:
+        return None
+    payload: dict[str, Any] = {"note": INVESTIGATE_NOTE}
+    if catalog is not None:
+        payload["catalog"] = catalog
+    if hooked:
+        payload["ownership"] = _ownership_tags()
+    return payload
+
+
+def _attach_investigate(payload: dict[str, Any], job: Job, *, hooked: bool) -> None:
+    investigate = _investigate_payload(job, hooked=hooked)
+    if investigate:
+        payload["investigate"] = investigate
 
 
 def _copy_local(local: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -230,6 +285,7 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
         payload["progress"] = nested
     elif isinstance(nested_raw, dict):
         payload["progress"] = {}
+    _attach_investigate(payload, job, hooked=True)
     return payload
 
 
