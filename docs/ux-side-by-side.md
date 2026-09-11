@@ -14,7 +14,7 @@ Walk of [iec-proto-c `docs/ux/journeys/run_lifecycle_monitoring.md`](https://git
 | Progress (thinner) | `GET /v0/jobs/{id}/progress` |
 | Local event trail | `GET /v0/jobs/{id}/events` (also `events` on the job resource) |
 | Ctl handoff | `GET /v0/jobs/{id}/handoff`, `GET /v0/jobs/{id}/payload` |
-| Durable ctl (temporal-local) | operator/ctl `runtime.apply reserve-temporal` admit\|status\|cancel\|pause\|resume (status `paused`) + runtime [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (pin 0.5) on panoramix-runtime **main** (verified @ `3a164cd`) |
+| Durable ctl (temporal-local) | operator/ctl `runtime.apply reserve-temporal` admit\|status\|progress\|cancel\|pause\|resume (status `paused`) + runtime [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (pin 0.5) on panoramix-runtime **main** (verified @ `3a164cd`) |
 | Catalogs | recorded / live / parity (parity-scale) — guest mirrors panoramix-runtime **main** `runtime.reserve.parity_params` / `digest_for` / [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) |
 
 ## Journey walk
@@ -22,7 +22,7 @@ Walk of [iec-proto-c `docs/ux/journeys/run_lifecycle_monitoring.md`](https://git
 | Journey step | iec touchpoint | Guest support | Notes |
 |---|---|---|---|
 | 1.1 Job detail + status | SPA → `GET /v1/jobs/{job_id}` | **match** (thinner) | `GET /v0/jobs/{id}` + job detail panel: id, status pill, kind/class/digest (short), created/updated/elapsed, `message`, `local.stage`, `local.backed` |
-| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **partial** | `GET /v0/jobs/{id}/progress` returns `{id,status,stage,stages_total?,message,backed}` derived from stub fields. UI shows “stage i of n”. This is not iec chunk progress / parallelism |
+| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) | `GET /v0/jobs/{id}/progress` prefers durable reserve-temporal path-slice counters (`stage`, `stages_total`, `stages_completed`, `fraction`, nested `progress`) when a hook provides them (`source: durable`). Stub fallback (`source: stub`) still shows “stage i of n”. UI shows `stages_completed` / `fraction` when present. Operator/ctl: `python3 -m runtime.apply reserve-temporal progress --id cw_…`. This is not iec chunk progress and not iec planner parallelism or SPA progress |
 | 2.1 Pause | `POST /v1/jobs/{id}/pause` | **match** (thinner) | Guest `POST /v0/jobs/{id}/pause` on durable-backed jobs (status `paused` on WorkHandoff). Stub-only → **409** `stub_only` (no pretend). Operator/ctl: `python3 -m runtime.apply reserve-temporal pause --id cw_…`. Cancel is not pause |
 | 2.2 Investigate | SPA progress + catalog + Slack | **partial** | Current `message` / `local.stage` / local event trail. No data catalog, no step-ownership tags |
 | 3.1a Resume | `POST /v1/jobs/{id}/resume` | **match** (thinner) | Guest `POST /v0/jobs/{id}/resume` on paused durable-backed jobs (status back to `running`). Stub-only → **409** `stub_only`. Operator/ctl: `python3 -m runtime.apply reserve-temporal resume --id cw_…` |
@@ -34,7 +34,7 @@ Support key: **match** = same operator intent, thinner surface; **partial** = ho
 ## What matches today
 
 - Submit → list → get → status pills (`queued` → `running` ⇄ `paused` → `succeeded` \| `failed` \| `canceled`). `paused` is non-terminal.
-- Job detail for a selected run (identity, timestamps, current message/stage, stub vs runtime `backed`).
+- Job detail for a selected run (identity, timestamps, current message/stage, stub vs runtime `backed`). Progress prefers durable path-slice counters when a hook provides them; otherwise stub “stage i of n”.
 - Cancel of a live run with clear framing and `canceled` (one L). Stub-backed cancel is **guest local**. Durable temporal-local cancel/status/pause/resume is **operator/ctl** (`runtime.apply reserve-temporal`), not a guest→ctl loopback. An injected hook (if present) is signaled first, then the guest job is marked `canceled` if still live (running or paused). Terminal cancel is **409**. The default hook stays inert. Cancel is not pause.
 - Pause/Resume on the **durable path** (injected hook): guest `POST .../pause` → `paused`, `POST .../resume` → `running`, `pause_resume: true` on those responses. Stub-only jobs **409** `stub_only`; UI controls stay disabled with an explanation. Operator/ctl: `python3 -m runtime.apply reserve-temporal pause --id cw_…` and `python3 -m runtime.apply reserve-temporal resume --id cw_…`.
 - Opaque WorkHandoff emit (`kind` / `class` / `payload_digest` + `id` / `status`) and payload export for the ctl path. Guest does **not** call `runtime.apply`.
@@ -44,7 +44,7 @@ Support key: **match** = same operator intent, thinner surface; **partial** = ho
 
 - **Pause / resume full Temporal-backed UX.** Guest HTTP/UI pause/resume is thinner: durable-backed only (injected hook), stub refused honestly. Default hook stays inert — no guest→ctl loopback. Operators still use `python3 -m runtime.apply reserve-temporal pause|resume --id cw_…` for the ctl path. This does **not** stamp the #70 UX box.
 - **Temporal-backed guest UX.** Durable admit/status/cancel/pause/resume is operator/ctl (`reserve-temporal`). Guest UI cancel remains local stub cancel unless an injected hook admits. Loopback hook wiring is deferred.
-- **Real chunk progress** / planner observations / parallelism visualization.
+- **Real chunk progress** / planner observations / parallelism visualization. Guest progress is reserve-temporal **path-slices** (four kernel stages when hooked) — **not** iec planner parallelism or iec SPA progress.
 - **Regulatory audit** product (job-scoped `/v1/audit/events`, six-month defensibility). Local trail is process-memory and dies on restart.
 - **SPA polish**: no historical-run comparison, no ETA vs prior quarter, no step-ownership, no cross-tool investigation.
 - **IFRS17 / `reserve_ifrs17` math** and comparable **perf**. Guest now mirrors the third **parity** catalog from panoramix-runtime **main** (`runtime.reserve.parity_params` / `digest_for`); the stub still does not run that kernel. Faster stub wall time is not evidence. #70/#78 stay open.
@@ -65,7 +65,7 @@ These are the [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues
 - [ ] Side-by-side recorded against the named iec baseline **and** the #70 UX box stamped
 - [ ] Pause / resume only when a real compute-plane durable path exists (not a guest stub) — guest HTTP is thinner/durable-only; default hook still inert; ctl `reserve-temporal pause|resume` is the operator path
 - [ ] Temporal-backed UX (guest UI status/cancel/pause/resume follows durable temporal-local runs without an injected hook) — operator/ctl `reserve-temporal` exists; guest UI is still local cancel + disabled stub pause
-- [ ] Real chunk / step progress (not stub stage metadata)
+- [ ] Real chunk / step progress (not stub stage metadata) — guest now prefers durable path-slices when hooked; still not iec planner / SPA progress
 - [ ] Regulatory audit trail (not the local in-memory event list)
 - [ ] `north_star_done: true` (UX **and** perf). Perf is out of scope here
 - [ ] Cloud unlock (#61 / #29) — **locked**; not this box
@@ -73,7 +73,7 @@ These are the [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues
 Guest-side progress that is **not** the #70 stamp:
 
 - [x] Honest job detail panel on the operator UI
-- [x] Honest thinner progress endpoint + stage timeline
+- [x] Honest thinner progress endpoint + stage timeline (durable path-slices when hooked, else stub)
 - [x] Cancel confirm framing (cancel is not pause; pause on durable/ctl path only)
 - [x] Pause/Resume HTTP + UI (durable path only; stub `409 stub_only`; no pretend)
 - [x] Local event trail (labeled as such)

@@ -82,7 +82,7 @@ Ctl export (no engine fields; nested `payload` is omitted because runtime `parse
 
 - `GET /v0/jobs/{id}/handoff` — exactly `id` / `kind` / `class` / `payload_digest` / `status` (WorkHandoff projection).
 - `GET /v0/jobs/{id}/payload` — canonical JSON bytes as `utf8` + `hex` plus `payload_digest`. Demo shortcuts store bytes; opaque digest-only submit returns **404** `payload_unknown`.
-- `GET /v0/jobs/{id}/progress` — `{id, status, stage, stages_total?, message, backed, pause_resume}` derived from existing stub fields. **Not** iec chunk progress.
+- `GET /v0/jobs/{id}/progress` — prefers durable reserve-temporal path-slice counters (`stage`, `stages_total`, `stages_completed`, `fraction`, nested `progress`) when a runtime hook provides them (`source: "durable"`). Otherwise stub fallback (`source: "stub"`) from local stage fields (`stage_index` / “stage i of n”). **Not** iec planner parallelism or iec chunk progress. Operator/ctl: `python3 -m runtime.apply reserve-temporal progress --id cw_…`.
 - `GET /v0/jobs/{id}/events` — local event trail `[{ts, event, detail}]` (also on the job resource). **Not** a regulatory audit.
 - `POST /v0/jobs/{id}/pause` / `POST /v0/jobs/{id}/resume` — durable path only. Stub-only (`local.backed == "stub"` or no runtime ref) returns **409** `stub_only`. Illegal transitions (pause when not `running`, resume when not `paused`, terminal) return **409**. Cancel is not pause.
 
@@ -155,11 +155,12 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 
 #### Durable temporal-local reserve (operator/ctl)
 
-Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` (`admit|status|cancel|pause|resume`; lifecycle status `paused`) and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main** (verified @ `3a164cd`).
+Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` (`admit|status|progress|cancel|pause|resume`; lifecycle status `paused`) and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`) on panoramix-runtime **main** (verified @ `3a164cd`).
 
 ```bash
 python3 -m runtime.apply reserve-temporal admit --catalog recorded   # or live|parity; or --handoff JSON
 python3 -m runtime.apply reserve-temporal status --id cw_…
+python3 -m runtime.apply reserve-temporal progress --id cw_…
 python3 -m runtime.apply reserve-temporal pause --id cw_…
 python3 -m runtime.apply reserve-temporal resume --id cw_…
 python3 -m runtime.apply reserve-temporal cancel --id cw_…
@@ -167,7 +168,7 @@ python3 -m runtime.apply reserve-temporal cancel --id cw_…
 
 Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume on the guest HTTP/UI is durable-path only (injected hook); stub jobs return `409 stub_only` and point here. Cancel is not pause. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
 
-`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`.
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume/progress return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`. `GET /v0/jobs/{id}/progress` prefers `hook.progress()` counters when the job is durable-backed; otherwise stub metadata.
 
 **Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live (running or paused). Terminal cancel is still **409**. Cancel is not pause. Pause/resume require the durable path.
 
