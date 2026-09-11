@@ -187,7 +187,7 @@ export PANORAMIX_CTL_HTTP=http://127.0.0.1:19215
 # export PANORAMIX_CTL_HTTP_BEARER=…
 ```
 
-Verbs match runtime **main** @ `fb901542` (PR #100): `POST /reserve-temporal/admit` (WorkHandoff triple JSON or `?catalog=recorded`), `GET /reserve-temporal/status|progress|events?id=cw_…`, `POST /reserve-temporal/pause|resume|cancel?id=cw_…`. Unset, non-loopback, or an unusable origin **fails closed** (inert stub). Optional `PANORAMIX_CTL_HTTP_BEARER` sends `Authorization: Bearer …`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` adds `live=1` on admit. This is **operator loopback ctl HTTP**, not guest→mesh ctl, not a Unit Git scheme, and not `runtime.apply compute-work`. Pin stays **0.5**.
+Verbs match runtime **main** @ `fb901542` (PR #100) / [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) § Loopback ctl HTTP: `POST /reserve-temporal/admit` (WorkHandoff triple JSON or `?catalog=recorded`), `GET /reserve-temporal/status|progress|events?id=cw_…`, `POST /reserve-temporal/pause|resume|cancel?id=cw_…`. Unset, non-loopback, or an unusable origin **fails closed** (inert stub). Optional `PANORAMIX_CTL_HTTP_BEARER` sends `Authorization: Bearer …`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` adds `live=1` on admit. This is **operator loopback ctl HTTP**, not guest→mesh ctl, not a Unit Git scheme, and not `runtime.apply compute-work`. Pin stays **0.5**.
 
 When `PANORAMIX_CTL_HTTP` is unset, the subprocess path below still works. When both are set, HTTP wins. CI without either env is unchanged.
 

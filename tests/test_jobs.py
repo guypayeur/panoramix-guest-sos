@@ -1258,6 +1258,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("PANORAMIX_CTL_HTTP", text, name)
             self.assertIn("/reserve-temporal/", text, name)
             self.assertIn("fb901542", text, name)
+            self.assertIn("Loopback ctl HTTP", text, name)
             self.assertTrue(
                 "fail closed" in text.lower() or "fails closed" in text.lower(),
                 name,
