@@ -152,7 +152,19 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 # Guest never POSTs to ctl and never calls runtime.apply compute-work.
 ```
 
-`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel.
+#### Durable temporal-local reserve (operator/ctl)
+
+Same guest emit. Operator/ctl admits on the temporal-local binding with `runtime.apply reserve-temporal` and [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (`engine.kind: temporal-local`, guest-sos pin 0.5; mesh `temporal-worker` → `sos`). Same command and binding path on runtime main ([runtime#89](https://github.com/guypayeur/panoramix-runtime/pull/89) is the landing PR).
+
+```bash
+python3 -m runtime.apply reserve-temporal admit --catalog recorded   # or live|parity; or --handoff JSON
+python3 -m runtime.apply reserve-temporal status --id cw_…
+python3 -m runtime.apply reserve-temporal cancel --id cw_…
+```
+
+Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume is not claimed. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
+
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. The hook stays inert. Do **not** wire the hook to ctl. Optional guest→ctl loopback admit is **deferred** until a documented safe loopback admit exists. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel.
 
 **Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**. This guest has no pause/resume — Cancel ends the run.
 

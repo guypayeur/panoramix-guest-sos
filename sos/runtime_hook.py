@@ -9,9 +9,11 @@ destinations. Mesh on local-sos-compute is ``from: compute-job`` →
 
 Do not invent PLATFORM_RAY_* / engine URLs / guest-callable ctl HTTP.
 ``admit`` / ``cancel`` / ``status`` stay no-ops; JobStore falls back to
-the in-process stub.
+the in-process stub. Temporal-local admit/status/cancel is operator/ctl
+via reserve-temporal; this hook stays inert. Optional guest→ctl loopback
+is deferred until a documented safe loopback admit exists.
 
-Does not close #70. Does not unlock #61 / #29.
+Does not close #70. Does not close #78. Does not unlock #61 / #29.
 """
 
 from __future__ import annotations
