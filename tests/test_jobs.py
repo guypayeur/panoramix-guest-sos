@@ -927,10 +927,16 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("python3 -m runtime.apply reserve-temporal pause", text, name)
             self.assertIn("python3 -m runtime.apply reserve-temporal resume", text, name)
             self.assertIn("python3 -m runtime.apply reserve-temporal progress", text, name)
+            self.assertIn("reserve-temporal progress --id", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
-            self.assertIn("verified @ `3a164cd`", text, name)
+            self.assertIn(
+                "verified @ `63c4d8e69f85cb7be1b6e878c576d8334b1f76c1`",
+                text,
+                name,
+            )
             self.assertIn("pause|resume", text, name)
             self.assertIn("`paused`", text, name)
+            self.assertNotIn("3a164cd", text, name)
             self.assertNotIn("73c311c", text, name)
             self.assertNotIn("28437ea", text, name)
             self.assertNotIn("landing pr", text.lower(), name)
@@ -986,6 +992,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("python3 -m runtime.apply reserve-temporal pause", ux)
         self.assertIn("python3 -m runtime.apply reserve-temporal resume", ux)
         self.assertIn("python3 -m runtime.apply reserve-temporal progress", ux)
+        self.assertIn("reserve-temporal progress --id", ux)
         self.assertIn(
             "| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) |",
             ux,
@@ -1018,9 +1025,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)
         self.assertIn("local-reserve-temporal.example.yaml", ux)
-        self.assertIn("verified @ `3a164cd`", ux)
+        self.assertIn(
+            "verified @ `63c4d8e69f85cb7be1b6e878c576d8334b1f76c1`",
+            ux,
+        )
         self.assertIn("pause|resume", ux)
         self.assertIn("`paused`", ux)
+        self.assertNotIn("3a164cd", ux)
         self.assertNotIn("73c311c", ux)
         self.assertNotIn("28437ea", ux)
         self.assertNotIn("landing pr", ux.lower())
