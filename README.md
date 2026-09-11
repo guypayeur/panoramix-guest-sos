@@ -76,12 +76,16 @@ Operator UI: open http://127.0.0.1:18280/ (or `/ui`).
 
 Default catalog is **recorded** (CI). Recorded digest is `sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e` (`runtime.reserve.digest_for(recorded_params())` on main). `{"demo":"reserve","catalog":"live"}` uses the heavier live catalog. Explicit ints (`accounts`, `horizon`, `paths`, `seed`, `lapse_bps`, `discount_bps`) override catalog fields. Optional `label` / `stages` / `seconds` are **local stub UX only** and are not in the digest. `class: "gpu"` is a **UX / opaque label only** on the stub. The seam `kind` is always `job`. Guest **emits WorkHandoff JSON only** — it never calls `runtime.apply compute-work`. **Reserve is a stub / UX seed only** — not IFRS17 math, not a perf baseline until #83 + remeasure; named iec baseline remains `reserve_ifrs17`. Not #70 Done.
 
-Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if an operator-injected hook admits the job).
+Resources expose at least `id`, `kind`, `class`, `payload_digest`, `status`. Status is `queued` → `running` → `succeeded` | `failed` | `canceled` (one L). Guest-local stub metadata may appear under `local` (not a runtime handoff field). `local.backed` is `stub` (in-process fallback) or `runtime` (only if an operator-injected hook admits the job). Selected-job UI shows id, status pill, kind/class/digest, created/updated/elapsed, `message` / `local.stage`, and `local.backed`.
 
 Ctl export (no engine fields; nested `payload` is omitted because runtime `parse_work` rejects that key on submit):
 
 - `GET /v0/jobs/{id}/handoff` — exactly `id` / `kind` / `class` / `payload_digest` / `status` (WorkHandoff projection).
 - `GET /v0/jobs/{id}/payload` — canonical JSON bytes as `utf8` + `hex` plus `payload_digest`. Demo shortcuts store bytes; opaque digest-only submit returns **404** `payload_unknown`.
+- `GET /v0/jobs/{id}/progress` — `{id, status, stage, stages_total?, message, backed}` derived from existing stub fields. **Not** iec chunk progress.
+- `GET /v0/jobs/{id}/events` — local event trail `[{ts, event, detail}]` (also on the job resource). **Not** a regulatory audit.
+
+Operator UI cancel uses a confirm dialog: this guest has **no pause/resume**; Cancel ends the run (`canceled`); stub-backed cancel is local, runtime-backed cancel signals the injected hook then marks the guest job `canceled` if still live. See [docs/ux-side-by-side.md](docs/ux-side-by-side.md). This does **not** close #70.
 
 Engine brand keys/schemes on the body (`engine`, `engine_kind`, `payload`, `url` / `uri` / `endpoint` / `address`, `ray:` / `temporal:` / `s3:` / `image:` / …) return **400** `engine_smuggle`.
 
@@ -146,7 +150,7 @@ curl -sS http://127.0.0.1:18280/v0/jobs/<id>/payload
 
 `sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status return none/false, so the in-process stub still runs. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel.
 
-**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**.
+**Cancel contract:** stub-backed (today) → cancel is local (`canceled`, one L). Runtime-backed (injected hook) → cancel signals the hook, then still marks the guest job `canceled` if it was live. Terminal cancel is still **409**. This guest has no pause/resume — Cancel ends the run.
 
 Jobs are process-local and disappear on restart. The stub records opaque work locally; it does not start an engine.
 

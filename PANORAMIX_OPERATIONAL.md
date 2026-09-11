@@ -21,12 +21,12 @@ Transport today is **operator/ctl-mediated only**. Compute mesh is **`from: comp
 Do not invent `PLATFORM_RAY_*`, engine URLs, guest-callable ctl HTTP, or env that adds mesh destinations (`PLATFORM_MESH_*`). Operator/ctl:
 
 1. **Stub fallback (default):** Guest UX `POST /v0/jobs` runs in-process.
-2. **Export:** `GET /v0/jobs/{id}/handoff` (exactly `id`/`kind`/`class`/`payload_digest`/`status` — WorkHandoff projection, **no** nested `payload` key) and `GET /v0/jobs/{id}/payload` (`utf8`/`hex` of canonical JSON bytes).
+2. **Export:** `GET /v0/jobs/{id}/handoff` (exactly `id`/`kind`/`class`/`payload_digest`/`status` — WorkHandoff projection, **no** nested `payload` key) and `GET /v0/jobs/{id}/payload` (`utf8`/`hex` of canonical JSON bytes). Operator UX also exposes `GET /v0/jobs/{id}/progress` (stub stage metadata, not iec chunk progress) and `GET /v0/jobs/{id}/events` (local event trail, not a regulatory audit). See [docs/ux-side-by-side.md](docs/ux-side-by-side.md).
 3. **Operator binding path:** operator/ctl admits that tuple on the runtime compute plane via the binding. Guest **never** POSTs to ctl and **never** calls `runtime.apply compute-work`. Binding examples: [`local-sos-compute.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-sos-compute.example.yaml), [`local-reserve.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve.example.yaml) (Unit sos, port 18280, pin 0.5; engine kind in the binding only).
 
 `sos.runtime_hook.InertRuntimeHandoffHook` is inert: admit/cancel/status no-op and the in-process stub is the fallback. Cancel always attempts the hook first, then local cancel.
 
-**Cancel:** stub-backed → local only. Runtime-backed (injected hook) → signal the hook, then mark the guest job `canceled` if it was still live.
+**Cancel:** stub-backed → local only. Runtime-backed (injected hook) → signal the hook, then mark the guest job `canceled` if it was still live. No pause/resume — Cancel ends the run.
 
 Runtime bindings will select engines later (slices C/D/E). Request bodies that smuggle engine brand keys or URL schemes are **400**. How bindings attach compute is documented on [runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70), not in `.platform/contract.yaml`. This alignment does **not** close #70 and does **not** unlock #61 / #29.
 
@@ -49,7 +49,11 @@ Runtime bindings will select engines later (slices C/D/E). Request bodies that s
 | Pin Flask/FastAPI/Ray on the Unit | **Rejected** — `build` is admission shape; this guest is stdlib; emulate does not execute `build.command` |
 | Claim `demo: reserve` is IFRS17 math, iec `grammar/examples/reserve_ifrs17`, or a perf baseline | **Rejected** — UX seed stub only; named iec baseline stays on runtime `proofs/fixtures/iec-parity/method.yaml`; no perf baseline until runtime #83 + remeasure |
 | Mark runtime #70 Done from this guest | **Rejected** — Slice B alignment is the opaque seam only |
+| Claim `GET /v0/jobs/{id}/progress` is iec chunk progress | **Rejected** — derived stub `stage` / `stages_total` only; not planner/chunk parallelism |
+| Ship pause/resume that pretends Temporal exists | **Rejected** — no pause/resume; Cancel ends the run (`canceled`) |
+| Call the in-memory event list a regulatory audit | **Rejected** — labeled local event trail; process-local; dies on restart |
 | Claim day-one feature/UX/perf parity with iec-proto-c | **Rejected** — north star is UX/perf on agreed workflows ([runtime#70](https://github.com/guypayeur/panoramix-runtime/issues/70)); day-one is thinner |
+| Mark the #70 UX box Done / `north_star_done` from this guest | **Rejected** — [docs/ux-side-by-side.md](docs/ux-side-by-side.md) walks the journey honestly; #70/#78 stay open |
 | Unlock AWS/GKE/ECS from this guest | **Rejected** — local lab before AWS; cloud spend issues stay locked on the runtime |
 
 ## Digest gotcha

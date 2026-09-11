@@ -361,7 +361,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(job.kind, "chunk")
         self.assertEqual(job.resource_class, "gpu")
         self.assertEqual(job.status, STATUS_QUEUED)
-        self.assertIsNone(job.local)
+        self.assertEqual(job.local, {"backed": BACKED_STUB})
         wait_status(self.store, job.id, {"succeeded"})
         done = self.store.get(job.id)
         self.assertIn("opaque", done.message or "")
@@ -488,7 +488,73 @@ class JobStoreTests(unittest.TestCase):
         with self.assertRaises(AlreadyTerminal) as ctx:
             self.store.cancel(job.id)
         self.assertEqual(ctx.exception.http_status, 409)
-        self.assertEqual(ctx.exception.to_dict()["status"], "succeeded")
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["status"], "succeeded")
+        self.assertIn("no pause/resume", body["note"])
+
+    def test_progress_and_events_reserve(self) -> None:
+        job = self.store.submit(
+            {"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 8}
+        )
+        progress = self.store.progress(job.id)
+        self.assertEqual(progress["id"], job.id)
+        self.assertEqual(progress["status"], STATUS_QUEUED)
+        self.assertIsNone(progress["stage"])
+        self.assertEqual(progress["backed"], BACKED_STUB)
+        self.assertEqual(progress["stages_total"], 3)
+        self.assertIn("not iec chunk progress", progress["note"])
+        self.assertNotIn("parallelism claimed", progress["note"])
+
+        events = self.store.events(job.id)
+        self.assertEqual(events["id"], job.id)
+        self.assertIn("not a regulatory audit", events["note"])
+        names = [item["event"] for item in events["events"]]
+        self.assertIn("submitted", names)
+        self.assertIn("backed", names)
+        self.assertTrue(any(item["detail"] == BACKED_STUB for item in events["events"]))
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snap = self.store.get(job.id)
+            if snap.status == "running" and (snap.local or {}).get("stage"):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("reserve job never reached a named running stage")
+
+        mid = self.store.progress(job.id)
+        self.assertEqual(mid["status"], "running")
+        self.assertIn(mid["stage"], {"admit", "project", "fold"})
+        self.assertEqual(mid["stages_total"], 3)
+        self.assertIn(mid["stage_index"], {1, 2, 3})
+        self.assertIn("stub stage metadata", mid["note"].lower())
+
+        canceled = self.store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+        trail = [item["event"] for item in canceled.events]
+        self.assertIn("canceled", trail)
+        self.assertIn("stage", trail)
+        body = self.store.events(job.id)
+        self.assertEqual(body["events"][-1]["event"], "canceled")
+        self.assertEqual(body["events"][-1]["detail"], "canceled by operator")
+        handoff = self.store.handoff(job.id)
+        self.assertNotIn("events", handoff)
+        self.assertNotIn("progress", handoff)
+
+    def test_progress_echo_has_no_fake_chunks(self) -> None:
+        job = self.store.submit({"demo": "echo", "message": "hi"})
+        wait_status(self.store, job.id, {"succeeded"})
+        progress = self.store.progress(job.id)
+        self.assertEqual(progress["status"], "succeeded")
+        self.assertIsNone(progress["stage"])
+        self.assertNotIn("stages_total", progress)
+        self.assertNotIn("stage_index", progress)
+        self.assertIn("not iec chunk progress", progress["note"])
+        events = [item["event"] for item in self.store.events(job.id)["events"]]
+        self.assertIn("submitted", events)
+        self.assertIn("succeeded", events)
+        self.assertNotIn("pause", events)
+        self.assertNotIn("resume", events)
 
     def test_handoff_export_and_payload_bytes(self) -> None:
         job = self.store.submit({"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 0})
@@ -629,11 +695,30 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("#83 + remeasure", text, name)
             self.assertNotIn("awaiting runtime stamp", text.lower(), name)
             self.assertIn("not #70 done", text.lower(), name)
+            self.assertIn("/progress", text, name)
+            self.assertIn("/events", text, name)
             self.assertIn(
                 "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
                 text,
                 name,
             )
+
+        ux = root.joinpath("docs/ux-side-by-side.md").read_text(encoding="utf-8")
+        self.assertIn("run_lifecycle_monitoring.md", ux)
+        self.assertIn("GET /v0/jobs/{id}/progress", ux)
+        self.assertIn("GET /v0/jobs/{id}/events", ux)
+        self.assertIn("local event trail", ux.lower())
+        self.assertIn("not iec chunk progress", ux.lower())
+        self.assertIn("no pause", ux.lower())
+        self.assertIn("parity TBD", ux)
+        self.assertIn("#86", ux)
+        self.assertIn("recorded / live / **(parity TBD)**", ux)
+        self.assertIn("- [ ] `north_star_done: true`", ux)
+        self.assertNotIn("- [x] `north_star_done: true`", ux)
+        self.assertIn("- [ ] Operator/actuary path", ux)
+        self.assertIn("does **not** mark #70 Done", ux)
+        self.assertNotIn("ray:", ux)
+        self.assertNotIn("temporal:", ux)
 
 
 if __name__ == "__main__":

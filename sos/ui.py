@@ -64,7 +64,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       padding: 0.4rem 0.55rem;
       width: 100%;
     }
-    .row { display: flex; gap: 0.5rem; margin-top: 0.85rem; }
+    .row { display: flex; gap: 0.5rem; margin-top: 0.85rem; flex-wrap: wrap; align-items: center; }
     button {
       width: auto;
       cursor: pointer;
@@ -115,7 +115,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .st-failed { color: var(--bad); }
     .st-canceled { color: var(--muted); }
     #flash { min-height: 1.2rem; font-size: 0.82rem; color: var(--bad); margin: 0.4rem 0 0; }
-    #detail {
+    #detail, #seam-view {
       font-family: var(--mono);
       font-size: 0.8rem;
       white-space: pre-wrap;
@@ -137,6 +137,43 @@ OPERATOR_HTML = """<!DOCTYPE html>
       max-width: 72rem;
     }
     .banner strong { color: #ffd27a; }
+    .meta { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.28rem 0.7rem; font-size: 0.86rem; }
+    .meta dt { color: var(--muted); }
+    .meta dd { margin: 0; word-break: break-all; }
+    .meta .id { font-size: 0.8rem; }
+    .timeline { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.45rem 0 0.15rem; }
+    .step {
+      font-size: 0.72rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .step.done { color: var(--ok); }
+    .step.current { color: var(--run); border-color: var(--run); }
+    .trail { font-size: 0.8rem; }
+    .trail li { margin: 0.2rem 0; }
+    .trail .ts { font-family: var(--mono); color: var(--muted); font-size: 0.74rem; }
+    #cancel-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(6, 8, 12, 0.72);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.2rem;
+      z-index: 20;
+    }
+    #cancel-modal[hidden] { display: none; }
+    .modal-card {
+      background: var(--panel);
+      border: 1px solid var(--bad);
+      border-radius: 8px;
+      padding: 1rem 1.1rem 1.15rem;
+      max-width: 32rem;
+    }
+    .modal-card h3 { margin: 0 0 0.55rem; font-size: 1rem; }
+    .modal-card p { margin: 0 0 0.55rem; font-size: 0.88rem; }
   </style>
 </head>
 <body>
@@ -158,7 +195,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Named iec baseline remains
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
     <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
-    no pause / resume / progress endpoints — cancel only.
+    <strong>no pause / resume</strong> — Cancel ends the run (<code>canceled</code>).
+    Progress is stub stage metadata only (not iec chunk progress).
+    Local event trail is not a regulatory audit.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -167,7 +206,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>runtime.apply compute-work</code> from the guest, no env that adds
     mesh destinations. Recorded digest matches
     <code>runtime.reserve.digest_for(recorded_params())</code> on
-    panoramix-runtime main (<code>docs/reserve.md</code>).</p>
+    panoramix-runtime main (<code>docs/reserve.md</code>).
+    Side-by-side: <code>docs/ux-side-by-side.md</code>.</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -220,16 +260,40 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <section>
       <h2>Jobs (newest first)</h2>
       <div id="list"><p class="empty">No jobs yet.</p></div>
-      <h2 style="margin-top:1.1rem">Detail</h2>
+      <h2 style="margin-top:1.1rem">Job detail</h2>
       <div class="row" style="margin:0 0 0.55rem">
         <button type="button" class="danger" id="cancel-btn" disabled>Cancel selected job</button>
+        <button type="button" class="secondary" id="handoff-btn" disabled>View/copy handoff</button>
+        <button type="button" class="secondary" id="payload-btn" disabled>Fetch payload</button>
       </div>
-      <pre id="detail">Select a job.</pre>
+      <div id="detail-panel"><p class="empty">Select a job.</p></div>
+      <h2 style="margin-top:1.1rem">Local event trail</h2>
+      <p class="hint" style="margin-top:0">Process-local interventions on this guest — not a regulatory audit product.</p>
+      <div id="events"><p class="empty">No events.</p></div>
+      <h2 style="margin-top:1.1rem">Handoff / payload</h2>
+      <pre id="seam-view">Use View/copy handoff or Fetch payload for the ctl path. WorkHandoff emit only — no runtime.apply from this guest.</pre>
+      <pre id="detail" hidden>Select a job.</pre>
     </section>
   </main>
+  <div id="cancel-modal" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="cancel-title">
+      <h3 id="cancel-title">Cancel this run?</h3>
+      <p>This guest has <strong>no pause/resume</strong> yet. Cancel ends the run
+        (status <code>canceled</code>).</p>
+      <p class="hint" style="margin-top:0">Stub-backed jobs cancel locally.
+        Runtime-backed jobs (injected hook) signal the hook, then the guest job
+        is marked <code>canceled</code> if it was still live.</p>
+      <div class="row" style="margin-top:0.85rem">
+        <button type="button" class="danger" id="cancel-confirm">End run (canceled)</button>
+        <button type="button" class="secondary" id="cancel-dismiss">Keep running</button>
+      </div>
+    </div>
+  </div>
   <script>
     let selectedId = null;
     let jobs = [];
+    let pendingCancelId = null;
+    let lastSeamText = "";
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -299,10 +363,26 @@ OPERATOR_HTML = """<!DOCTYPE html>
       await refresh();
     });
 
-    $("cancel-btn").addEventListener("click", async () => {
+    function openCancelDialog(id) {
+      pendingCancelId = id;
+      $("cancel-modal").hidden = false;
+    }
+    function closeCancelDialog() {
+      pendingCancelId = null;
+      $("cancel-modal").hidden = true;
+    }
+    $("cancel-btn").addEventListener("click", () => {
       if (!selectedId) return;
-      await cancelJob(selectedId);
+      openCancelDialog(selectedId);
     });
+    $("cancel-dismiss").addEventListener("click", closeCancelDialog);
+    $("cancel-confirm").addEventListener("click", async () => {
+      const id = pendingCancelId;
+      closeCancelDialog();
+      if (id) await cancelJob(id);
+    });
+    $("handoff-btn").addEventListener("click", () => fetchSeam("handoff"));
+    $("payload-btn").addEventListener("click", () => fetchSeam("payload"));
 
     function live(status) {
       return status !== "succeeded" && status !== "failed" && status !== "canceled";
@@ -319,6 +399,36 @@ OPERATOR_HTML = """<!DOCTYPE html>
       await refresh();
     }
 
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* fall through */ }
+      return false;
+    }
+
+    async function fetchSeam(kind) {
+      if (!selectedId) return;
+      flash("");
+      const res = await fetch("/v0/jobs/" + selectedId + "/" + kind);
+      const body = await res.json();
+      const text = JSON.stringify(body, null, 2);
+      lastSeamText = text;
+      if (!res.ok) {
+        $("seam-view").textContent = text;
+        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        return;
+      }
+      let note = kind === "handoff"
+        ? "WorkHandoff JSON (id/kind/class/payload_digest/status). Copied when clipboard is available. Guest does not call runtime.apply."
+        : "Payload export for the ctl path (canonical bytes). Guest does not call runtime.apply.";
+      const copied = await copyText(text);
+      if (kind === "handoff" && copied) note += " Copied to clipboard.";
+      $("seam-view").textContent = note + "\\n\\n" + text;
+    }
+
     function pill(status) {
       const span = document.createElement("span");
       span.className = "pill st-" + status;
@@ -332,6 +442,128 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return "sha256:" + hex.slice(0, 8) + "…";
     }
 
+    function fmtTs(raw) {
+      return (raw || "").replace("T", " ").replace("Z", "");
+    }
+
+    function elapsed(job) {
+      const start = Date.parse(job.created_at);
+      const end = live(job.status) ? Date.now() : Date.parse(job.updated_at);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
+      const s = Math.max(0, (end - start) / 1000);
+      if (s < 60) return s.toFixed(1) + "s";
+      return Math.floor(s / 60) + "m " + Math.floor(s % 60) + "s";
+    }
+
+    function dlRow(term, value, mono) {
+      const dt = document.createElement("dt");
+      dt.textContent = term;
+      const dd = document.createElement("dd");
+      if (value instanceof Node) {
+        dd.appendChild(value);
+      } else {
+        dd.textContent = value == null || value === "" ? "—" : String(value);
+        if (mono) dd.className = "id";
+      }
+      return [dt, dd];
+    }
+
+    function renderProgress(job) {
+      const wrap = document.createElement("div");
+      const local = job.local || {};
+      const total = Number(local.stages);
+      const index = Number(local.stage_index);
+      const stage = local.stage;
+      const line = document.createElement("p");
+      line.className = "hint";
+      line.style.marginTop = "0.35rem";
+      if (Number.isInteger(total) && total > 0 && Number.isInteger(index)) {
+        line.textContent = "Stage " + index + " of " + total +
+          (stage ? (": " + stage) : "") +
+          " — stub timeline only, not iec chunk progress.";
+        const bar = document.createElement("div");
+        bar.className = "timeline";
+        for (let i = 1; i <= total; i++) {
+          const step = document.createElement("span");
+          step.className = "step" + (i < index ? " done" : (i === index ? " current" : ""));
+          step.textContent = String(i);
+          bar.appendChild(step);
+        }
+        wrap.appendChild(bar);
+      } else {
+        line.textContent = "No named stub stages (status only). Not iec chunk progress.";
+      }
+      wrap.appendChild(line);
+      return wrap;
+    }
+
+    function renderEvents(job) {
+      const host = $("events");
+      host.replaceChildren();
+      const events = (job && job.events) || [];
+      if (!events.length) {
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "No events.";
+        host.appendChild(p);
+        return;
+      }
+      const ul = document.createElement("ul");
+      ul.className = "trail";
+      for (const ev of events) {
+        const li = document.createElement("li");
+        const ts = document.createElement("span");
+        ts.className = "ts";
+        ts.textContent = fmtTs(ev.ts);
+        li.appendChild(ts);
+        li.appendChild(document.createTextNode(" · " + ev.event + " — " + (ev.detail || "")));
+        ul.appendChild(li);
+      }
+      host.appendChild(ul);
+    }
+
+    function renderDetail(job) {
+      const host = $("detail-panel");
+      host.replaceChildren();
+      if (!job) {
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "Select a job.";
+        host.appendChild(p);
+        $("detail").textContent = "Select a job.";
+        $("events").replaceChildren();
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No events.";
+        $("events").appendChild(empty);
+        $("handoff-btn").disabled = true;
+        $("payload-btn").disabled = true;
+        return;
+      }
+      const local = job.local || {};
+      const dl = document.createElement("dl");
+      dl.className = "meta";
+      const rows = [
+        ...dlRow("id", job.id, true),
+        ...dlRow("status", pill(job.status)),
+        ...dlRow("kind / class", (job.kind || "—") + " / " + (job.class || "—")),
+        ...dlRow("digest", shortDigest(job.payload_digest), true),
+        ...dlRow("created", fmtTs(job.created_at), true),
+        ...dlRow("updated", fmtTs(job.updated_at), true),
+        ...dlRow("elapsed", elapsed(job)),
+        ...dlRow("message", job.message),
+        ...dlRow("stage", local.stage || "—"),
+        ...dlRow("backed", local.backed || "—")
+      ];
+      for (const node of rows) dl.appendChild(node);
+      host.appendChild(dl);
+      host.appendChild(renderProgress(job));
+      $("detail").textContent = JSON.stringify(job, null, 2);
+      $("handoff-btn").disabled = false;
+      $("payload-btn").disabled = false;
+      renderEvents(job);
+    }
+
     function render() {
       const host = $("list");
       host.replaceChildren();
@@ -340,7 +572,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         p.className = "empty";
         p.textContent = "No jobs yet.";
         host.appendChild(p);
-        $("detail").textContent = "Select a job.";
+        renderDetail(null);
         $("cancel-btn").disabled = true;
         $("cancel-btn").textContent = "Cancel selected job";
         return;
@@ -362,7 +594,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tdSt.textContent = (job.local && job.local.stage) || "—";
         const tdG = document.createElement("td"); tdG.className = "id"; tdG.textContent = shortDigest(job.payload_digest);
         const tdI = document.createElement("td"); tdI.className = "id"; tdI.textContent = job.id.slice(0, 8);
-        const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = (job.updated_at || "").replace("T", " ").replace("Z", "");
+        const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = fmtTs(job.updated_at);
         const tdA = document.createElement("td");
         if (live(job.status)) {
           const btn = document.createElement("button");
@@ -371,7 +603,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
           btn.textContent = "Cancel";
           btn.addEventListener("click", (ev) => {
             ev.stopPropagation();
-            cancelJob(job.id);
+            openCancelDialog(job.id);
           });
           tdA.appendChild(btn);
         } else {
@@ -385,7 +617,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
 
       const selected = jobs.find(j => j.id === selectedId) || jobs[0];
       selectedId = selected.id;
-      $("detail").textContent = JSON.stringify(selected, null, 2);
+      renderDetail(selected);
       const can = live(selected.status);
       $("cancel-btn").disabled = !can;
       $("cancel-btn").textContent = can ? "Cancel selected job" : "Cannot cancel (terminal)";

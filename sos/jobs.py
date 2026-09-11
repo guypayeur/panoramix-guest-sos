@@ -55,6 +55,7 @@ class Job:
     local: dict[str, Any] | None = None
     payload_bytes: bytes | None = field(default=None, repr=False)
     runtime_ref: dict[str, Any] | None = field(default=None, repr=False)
+    events: list[dict[str, str]] = field(default_factory=list)
 
     def to_seam(self) -> dict[str, str]:
         """Runtime-aligned projection: id/kind/class/payload_digest/status."""
@@ -84,11 +85,46 @@ class Job:
             "message": self.message,
             "error": self.error,
             "local": dict(self.local) if self.local else None,
+            "events": _copy_events(self.events),
+        }
+
+    def to_progress(self) -> dict[str, Any]:
+        """Stub stage metadata only — not iec chunk progress / parallelism."""
+        local = self.local or {}
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "status": self.status,
+            "stage": local.get("stage"),
+            "message": self.message,
+            "backed": local.get("backed"),
+            "note": (
+                "Stub stage metadata derived from job fields — "
+                "not iec chunk progress or parallelism"
+            ),
+        }
+        stages_total = local.get("stages")
+        if stages_total is not None:
+            payload["stages_total"] = stages_total
+        stage_index = local.get("stage_index")
+        if stage_index is not None:
+            payload["stage_index"] = stage_index
+        return payload
+
+    def to_events(self) -> dict[str, Any]:
+        """Local intervention log — not a regulatory audit product."""
+        return {
+            "id": self.id,
+            "events": _copy_events(self.events),
+            "note": "Local event trail — not a regulatory audit product",
         }
 
 
 def _copy_local(local: dict[str, Any] | None) -> dict[str, Any] | None:
     return dict(local) if local else None
+
+
+def _copy_events(events: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    return [dict(item) for item in events] if events else []
 
 
 @dataclass
@@ -119,9 +155,14 @@ class JobStore:
             payload_bytes=parsed.payload_bytes,
         )
         cancel = threading.Event()
+        demo = (local or {}).get("demo")
+        submit_detail = f"kind={parsed.kind} class={parsed.resource_class}"
+        if demo:
+            submit_detail += f" demo={demo}"
         with self._lock:
             self._jobs[job_id] = job
             self._cancel[job_id] = cancel
+            self._append_event_locked(job, "submitted", submit_detail)
 
         runtime_ref = self._try_admit(job)
         if runtime_ref is not None:
@@ -136,15 +177,16 @@ class JobStore:
                     merged = dict(live.local) if live.local else {}
                     merged["backed"] = BACKED_RUNTIME
                     live.local = merged
+                    self._append_event_locked(live, "backed", BACKED_RUNTIME)
             return self.get(job_id)
 
-        if local is not None:
-            with self._lock:
-                live = self._jobs.get(job_id)
-                if live is not None:
-                    merged = dict(live.local) if live.local else {}
-                    merged["backed"] = BACKED_STUB
-                    live.local = merged
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is not None:
+                merged = dict(live.local) if live.local else {}
+                merged["backed"] = BACKED_STUB
+                live.local = merged
+                self._append_event_locked(live, "backed", BACKED_STUB)
         thread = threading.Thread(
             target=self._run,
             args=(job_id, cancel),
@@ -174,6 +216,12 @@ class JobStore:
     def payload(self, job_id: str) -> dict[str, Any]:
         return self.get(job_id).to_payload()
 
+    def progress(self, job_id: str) -> dict[str, Any]:
+        return self.get(job_id).to_progress()
+
+    def events(self, job_id: str) -> dict[str, Any]:
+        return self.get(job_id).to_events()
+
     def list(self) -> list[Job]:
         with self._lock:
             ids = list(self._jobs.keys())
@@ -196,13 +244,21 @@ class JobStore:
                 raise JobNotFound(job_id)
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
+            now = self._clock()
             job.status = STATUS_CANCELED
-            job.updated_at = self._clock()
+            job.updated_at = now
             job.message = "canceled by operator"
+            self._append_event_locked(job, "canceled", "canceled by operator")
             event = self._cancel.get(job_id)
             if event is not None:
                 event.set()
             return self._snapshot(job)
+
+    def _append_event_locked(self, job: Job, event: str, detail: str) -> None:
+        """Caller holds ``_lock``. Process-local trail only."""
+        trail = list(job.events)
+        trail.append({"ts": self._clock(), "event": event, "detail": detail})
+        job.events = trail
 
     def _try_runtime_cancel(
         self, job_id: str, runtime_ref: dict[str, Any] | None
@@ -246,6 +302,7 @@ class JobStore:
             local=_copy_local(job.local),
             payload_bytes=job.payload_bytes,
             runtime_ref=dict(job.runtime_ref) if job.runtime_ref else None,
+            events=_copy_events(job.events),
         )
 
     def _advance(
@@ -262,6 +319,8 @@ class JobStore:
             job = self._jobs.get(job_id)
             if job is None or job.status in TERMINAL:
                 return False
+            previous_status = job.status
+            previous_stage = (job.local or {}).get("stage")
             job.status = status
             job.updated_at = self._clock()
             if message is not None:
@@ -272,6 +331,19 @@ class JobStore:
                 merged = dict(job.local) if job.local else {}
                 merged.update(local_update)
                 job.local = merged
+            stage = (job.local or {}).get("stage")
+            if stage and stage != previous_stage:
+                index = (job.local or {}).get("stage_index")
+                total = (job.local or {}).get("stages")
+                detail = str(stage)
+                if index is not None and total is not None:
+                    detail = f"{detail} ({index}/{total})"
+                self._append_event_locked(job, "stage", detail)
+            if status != previous_status:
+                if status in TERMINAL:
+                    self._append_event_locked(job, status, message or status)
+                elif status == STATUS_RUNNING:
+                    self._append_event_locked(job, "running", message or "running")
             return True
 
     def _wait(self, job_id: str, cancel: threading.Event, seconds: float) -> bool:
