@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 import unittest
 
@@ -14,9 +15,17 @@ from sos.errors import (
     InvalidHandoff,
     InvalidKind,
     JobNotFound,
+    PayloadUnknown,
 )
-from sos.handoff import digest_canonical, parse_submit
-from sos.handoff_vocab import STATUS_CANCELED, STATUS_QUEUED
+from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for, recorded_params
+from sos.handoff_vocab import (
+    BACKED_STUB,
+    LIVE_PAYLOAD_DIGEST,
+    RECORDED_CANONICAL_JSON,
+    RECORDED_PAYLOAD_DIGEST,
+    STATUS_CANCELED,
+    STATUS_QUEUED,
+)
 from sos.jobs import JobStore
 
 
@@ -37,19 +46,23 @@ def _digest(hex_byte: str = "ab") -> str:
 
 class HandoffParseTests(unittest.TestCase):
     def test_valid_opaque_handoff(self) -> None:
-        kind, cls, digest, local = parse_submit(
+        parsed = parse_submit(
             {"kind": "job", "class": "cpu", "payload_digest": _digest()}
         )
-        self.assertEqual(kind, "job")
-        self.assertEqual(cls, "cpu")
-        self.assertEqual(digest, _digest())
-        self.assertIsNone(local)
+        self.assertEqual(parsed.kind, "job")
+        self.assertEqual(parsed.resource_class, "cpu")
+        self.assertEqual(parsed.payload_digest, _digest())
+        self.assertIsNone(parsed.local)
+        self.assertIsNone(parsed.payload_bytes)
 
     def test_stage_gpu_handoff(self) -> None:
-        kind, cls, digest, local = parse_submit(
+        parsed = parse_submit(
             {"kind": "stage", "class": "gpu", "payload_digest": _digest("cd")}
         )
-        self.assertEqual((kind, cls, digest, local), ("stage", "gpu", _digest("cd"), None))
+        self.assertEqual(parsed.kind, "stage")
+        self.assertEqual(parsed.resource_class, "gpu")
+        self.assertEqual(parsed.payload_digest, _digest("cd"))
+        self.assertIsNone(parsed.local)
 
     def test_bad_kind(self) -> None:
         with self.assertRaises(InvalidKind) as ctx:
@@ -75,42 +88,145 @@ class HandoffParseTests(unittest.TestCase):
             parse_submit({"kind": "job", "class": "cpu", "payload_digest": "md5:" + "ab" * 16})
 
     def test_demo_synthesizes_job_cpu_digest(self) -> None:
-        kind, cls, digest, local = parse_submit({"demo": "echo", "message": "ping"})
-        self.assertEqual(kind, "job")
-        self.assertEqual(cls, "cpu")
-        self.assertEqual(digest, digest_canonical({"demo": "echo", "message": "ping"}))
-        self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
-        self.assertEqual(local, {"demo": "echo", "message": "ping"})
+        parsed = parse_submit({"demo": "echo", "message": "ping"})
+        self.assertEqual(parsed.kind, "job")
+        self.assertEqual(parsed.resource_class, "cpu")
+        self.assertEqual(parsed.payload_digest, digest_canonical({"demo": "echo", "message": "ping"}))
+        self.assertRegex(parsed.payload_digest, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(parsed.local, {"demo": "echo", "message": "ping"})
+        self.assertEqual(
+            parsed.payload_bytes,
+            b'{"demo":"echo","message":"ping"}',
+        )
 
     def test_reserve_synthesizes_opaque_job(self) -> None:
-        kind, cls, digest, local = parse_submit(
+        parsed = parse_submit(
             {"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 6}
         )
-        self.assertEqual(kind, "job")
-        self.assertEqual(cls, "cpu")
-        expected = {
-            "class": "cpu",
-            "demo": "reserve",
-            "label": "ux-seed",
-            "seconds": 6,
-            "stages": 3,
-        }
-        self.assertEqual(digest, digest_canonical(expected))
-        self.assertEqual(local, expected)
-        self.assertNotEqual(local["demo"], "reserve_ifrs17")
+        self.assertEqual(parsed.kind, "job")
+        self.assertEqual(parsed.resource_class, "cpu")
+        expected = payload_for(recorded_params())
+        self.assertEqual(parsed.payload_digest, digest_for(expected))
+        self.assertEqual(parsed.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(parsed.local["demo"], "reserve")
+        self.assertEqual(parsed.local["catalog"], "recorded")
+        self.assertEqual(parsed.local["label"], "ux-seed")
+        self.assertNotEqual(parsed.local["demo"], "reserve_ifrs17")
+        self.assertEqual(expected["workload"], "reserve")
+        self.assertNotIn("demo", expected)
+        self.assertNotIn("label", expected)
+        self.assertNotIn("stages", expected)
+        self.assertNotIn("seconds", expected)
 
     def test_reserve_defaults_and_gpu_label(self) -> None:
-        kind, cls, digest, local = parse_submit({"demo": "reserve"})
-        self.assertEqual((kind, cls), ("job", "cpu"))
-        self.assertEqual(local["label"], "reserve-shaped")
-        self.assertEqual(local["stages"], 3)
-        self.assertEqual(local["seconds"], 6)
-        self.assertEqual(digest, digest_canonical(local))
+        parsed = parse_submit({"demo": "reserve"})
+        self.assertEqual((parsed.kind, parsed.resource_class), ("job", "cpu"))
+        self.assertEqual(parsed.local["catalog"], "recorded")
+        self.assertEqual(parsed.local["label"], "reserve-shaped")
+        self.assertEqual(parsed.local["stages"], 3)
+        self.assertEqual(parsed.local["seconds"], 6)
+        self.assertEqual(parsed.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(parsed.payload_bytes.decode("utf-8"), RECORDED_CANONICAL_JSON)
 
-        kind, cls, digest, local = parse_submit({"demo": "reserve", "class": "gpu"})
-        self.assertEqual((kind, cls), ("job", "gpu"))
-        self.assertEqual(local["class"], "gpu")
-        self.assertEqual(digest, digest_canonical(local))
+        parsed = parse_submit({"demo": "reserve", "class": "gpu"})
+        self.assertEqual((parsed.kind, parsed.resource_class), ("job", "gpu"))
+        self.assertEqual(parsed.local["class"], "gpu")
+        self.assertEqual(parsed.payload_digest, RECORDED_PAYLOAD_DIGEST)
+
+    def test_known_recorded_catalog_digest(self) -> None:
+        """Golden digest: independent of handoff_vocab constants.
+
+        Canonical JSON bytes:
+        {"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,
+         "paths":96,"seed":17070,"workload":"reserve"}
+        payload_digest =
+        sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e
+        """
+        canonical = (
+            '{"accounts":48,"discount_bps":300,"horizon":12,"lapse_bps":80,'
+            '"paths":96,"seed":17070,"workload":"reserve"}'
+        )
+        digest = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        self.assertEqual(
+            digest,
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+        )
+        self.assertEqual(RECORDED_CANONICAL_JSON, canonical)
+        self.assertEqual(RECORDED_PAYLOAD_DIGEST, digest)
+        self.assertEqual(
+            digest_canonical(
+                {
+                    "accounts": 48,
+                    "discount_bps": 300,
+                    "horizon": 12,
+                    "lapse_bps": 80,
+                    "paths": 96,
+                    "seed": 17070,
+                    "workload": "reserve",
+                }
+            ),
+            digest,
+        )
+
+        parsed = parse_submit({"demo": "reserve"})
+        self.assertEqual(parsed.kind, "job")
+        self.assertEqual(parsed.resource_class, "cpu")
+        self.assertEqual(parsed.local["catalog"], "recorded")
+        self.assertEqual(parsed.payload_digest, digest)
+        self.assertEqual(parsed.payload_bytes.decode("utf-8"), canonical)
+
+        live_canonical = (
+            '{"accounts":640,"discount_bps":300,"horizon":40,"lapse_bps":80,'
+            '"paths":2048,"seed":17070,"workload":"reserve"}'
+        )
+        live_digest = "sha256:" + hashlib.sha256(
+            live_canonical.encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(
+            live_digest,
+            "sha256:9207915bfa0c563ccc6d167ef79db47c5318219bd0269aae5c4b8313d2fceea6",
+        )
+        live = parse_submit({"demo": "reserve", "catalog": "live"})
+        self.assertEqual(live.kind, "job")
+        self.assertEqual(live.resource_class, "cpu")
+        self.assertEqual(live.local["catalog"], "live")
+        self.assertEqual(live.local["accounts"], 640)
+        self.assertEqual(live.local["horizon"], 40)
+        self.assertEqual(live.local["paths"], 2048)
+        self.assertEqual(live.local["seed"], 17070)
+        self.assertEqual(live.local["lapse_bps"], 80)
+        self.assertEqual(live.local["discount_bps"], 300)
+        self.assertEqual(live.payload_digest, live_digest)
+        self.assertEqual(live.payload_bytes.decode("utf-8"), live_canonical)
+        self.assertEqual(LIVE_PAYLOAD_DIGEST, live_digest)
+        self.assertNotEqual(live_digest, digest)
+
+    def test_reserve_payload_digest_is_stable(self) -> None:
+        a = parse_submit({"demo": "reserve", "stages": 3, "label": "ux-seed", "seconds": 6})
+        b = parse_submit({"seconds": 6, "demo": "reserve", "label": "ux-seed", "stages": 3})
+        c = parse_submit({"demo": "reserve"})
+        self.assertEqual(a.payload_digest, b.payload_digest)
+        self.assertEqual(a.payload_digest, c.payload_digest)
+        self.assertEqual(a.payload_bytes, b.payload_bytes)
+        self.assertEqual(a.payload_bytes.decode("utf-8"), RECORDED_CANONICAL_JSON)
+        self.assertEqual(a.payload_digest, digest_for(recorded_params()))
+        self.assertEqual(a.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        shuffled = {
+            "seed": 17070,
+            "workload": "reserve",
+            "paths": 96,
+            "lapse_bps": 80,
+            "accounts": 48,
+            "discount_bps": 300,
+            "horizon": 12,
+        }
+        self.assertEqual(digest_canonical(shuffled), RECORDED_PAYLOAD_DIGEST)
+        live = parse_submit({"demo": "reserve", "catalog": "live"})
+        self.assertEqual(live.payload_digest, LIVE_PAYLOAD_DIGEST)
+        self.assertNotEqual(live.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        custom = parse_submit({"demo": "reserve", "accounts": 49})
+        self.assertNotEqual(custom.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        self.assertEqual(custom.local["accounts"], 49)
 
     def test_reserve_rejects_bad_params_and_alias(self) -> None:
         with self.assertRaises(InvalidDemo):
@@ -127,6 +243,12 @@ class HandoffParseTests(unittest.TestCase):
             parse_submit({"demo": "reserve", "class": "tpu"})
         with self.assertRaises(InvalidHandoff):
             parse_submit({"demo": "echo", "label": "nope"})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "catalog": "ifrs17"})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "accounts": True})
+        with self.assertRaises(InvalidDemo):
+            parse_submit({"demo": "reserve", "accounts": 0})
         with self.assertRaises(InvalidHandoff):
             parse_submit({"demo": "reserve", "message": "nope"})
 
@@ -209,7 +331,9 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(job.status, STATUS_QUEUED)
         self.assertNotEqual(job.status, "accepted")
         self.assertEqual(job.payload_digest, digest_canonical({"demo": "echo", "message": "ping"}))
-        self.assertEqual(job.local, {"demo": "echo", "message": "ping"})
+        self.assertEqual(job.local["demo"], "echo")
+        self.assertEqual(job.local["message"], "ping")
+        self.assertEqual(job.local["backed"], BACKED_STUB)
         self.assertIsNone(job.error)
         seam = job.to_seam()
         for key in ("id", "kind", "class", "payload_digest", "status"):
@@ -301,18 +425,8 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(job.resource_class, "cpu")
         self.assertEqual(job.status, STATUS_QUEUED)
         self.assertEqual(job.local["demo"], "reserve")
-        self.assertEqual(
-            job.payload_digest,
-            digest_canonical(
-                {
-                    "class": "cpu",
-                    "demo": "reserve",
-                    "label": "ux-seed",
-                    "seconds": 0.3,
-                    "stages": 3,
-                }
-            ),
-        )
+        self.assertEqual(job.local["backed"], BACKED_STUB)
+        self.assertEqual(job.payload_digest, RECORDED_PAYLOAD_DIGEST)
         seen = set()
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
@@ -375,6 +489,151 @@ class JobStoreTests(unittest.TestCase):
             self.store.cancel(job.id)
         self.assertEqual(ctx.exception.http_status, 409)
         self.assertEqual(ctx.exception.to_dict()["status"], "succeeded")
+
+    def test_handoff_export_and_payload_bytes(self) -> None:
+        job = self.store.submit({"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 0})
+        handoff = self.store.handoff(job.id)
+        self.assertEqual(
+            list(handoff.keys()),
+            ["id", "kind", "class", "payload_digest", "status"],
+        )
+        self.assertEqual(handoff["id"], job.id)
+        self.assertEqual(handoff["kind"], "job")
+        self.assertEqual(handoff["class"], "cpu")
+        self.assertEqual(handoff["payload_digest"], job.payload_digest)
+        self.assertNotIn("payload", handoff)
+        self.assertNotIn("local", handoff)
+        blob = str(handoff)
+        self.assertNotIn("ray", blob)
+        self.assertNotIn("temporal", blob)
+        self.assertNotIn("aws", blob)
+
+        record = self.store.payload(job.id)
+        self.assertEqual(record["payload_digest"], job.payload_digest)
+        self.assertEqual(record["encoding"], "canonical-json")
+        self.assertNotIn("payload", record)
+        self.assertEqual(record["utf8"], RECORDED_CANONICAL_JSON)
+        self.assertEqual(bytes.fromhex(record["hex"]).decode("utf-8"), record["utf8"])
+        self.assertEqual(record["payload_digest"], RECORDED_PAYLOAD_DIGEST)
+        wait_status(self.store, job.id, {"succeeded"})
+
+    def test_opaque_submit_has_no_stored_payload(self) -> None:
+        job = self.store.submit(
+            {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+        )
+        with self.assertRaises(PayloadUnknown) as ctx:
+            self.store.payload(job.id)
+        self.assertEqual(ctx.exception.http_status, 404)
+        self.assertEqual(ctx.exception.to_dict()["error"], "payload_unknown")
+        handoff = self.store.handoff(job.id)
+        self.assertEqual(handoff["payload_digest"], _digest())
+        self.assertNotIn("payload", handoff)
+
+    def test_runtime_hook_admit_then_cancel_fallback(self) -> None:
+        class RecordingHook:
+            def __init__(self) -> None:
+                self.admits: list[tuple[dict[str, str], bytes | None]] = []
+                self.cancels: list[tuple[str, dict | None]] = []
+                self.admit_ok = True
+                self.cancel_ok = True
+
+            def admit(self, handoff: dict[str, str], payload_bytes: bytes | None):
+                self.admits.append((handoff, payload_bytes))
+                if not self.admit_ok:
+                    return None
+                return {"accepted": True}
+
+            def cancel(self, job_id: str, runtime_ref: dict | None) -> bool:
+                self.cancels.append((job_id, runtime_ref))
+                if not self.cancel_ok:
+                    raise RuntimeError("hook boom")
+                return True
+
+            def status(self, job_id: str, runtime_ref: dict | None):
+                return None
+
+        hook = RecordingHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        self.assertEqual(len(hook.admits), 1)
+        self.assertEqual(hook.admits[0][0]["kind"], "job")
+        self.assertNotIn("payload", hook.admits[0][0])
+        time.sleep(0.15)
+        still = store.get(job.id)
+        self.assertEqual(still.status, STATUS_QUEUED)
+        canceled = store.cancel(job.id)
+        self.assertEqual(canceled.status, STATUS_CANCELED)
+        self.assertEqual(len(hook.cancels), 1)
+        self.assertEqual(hook.cancels[0][0], job.id)
+
+        hook.admit_ok = False
+        stub = store.submit({"demo": "echo", "message": "fallback"})
+        self.assertEqual(stub.local["backed"], BACKED_STUB)
+        wait_status(store, stub.id, {"succeeded"})
+
+        hook.admit_ok = True
+        hook.cancel_ok = False
+        live = store.submit({"demo": "reserve", "seconds": 8})
+        canceled = store.cancel(live.id)
+        self.assertEqual(canceled.status, "canceled")
+        self.assertEqual(canceled.message, "canceled by operator")
+
+    def test_guest_never_imports_runtime(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        for path in [*root.joinpath("sos").glob("*.py"), root / "platform_run.py"]:
+            text = path.read_text(encoding="utf-8")
+            imports = [
+                line.strip()
+                for line in text.splitlines()
+                if line.strip().startswith(("import ", "from "))
+            ]
+            blob = "\n".join(imports)
+            self.assertNotIn("from runtime", blob, path)
+            self.assertNotIn("import runtime", blob, path)
+            self.assertNotIn("-m runtime.apply", text, path)
+            self.assertNotIn("runtime.apply reserve", text, path)
+
+    def test_docs_match_confirmed_ctl_contract(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        vocab = root.joinpath("sos/handoff_vocab.py").read_text(encoding="utf-8")
+        self.assertIn("runtime.reserve.recorded_params", vocab)
+        self.assertIn("live_params", vocab)
+        self.assertIn("digest_for", vocab)
+        self.assertIn("docs/reserve.md", vocab)
+        self.assertNotIn("TODO(#83)", vocab)
+        self.assertNotIn("PR #84", vocab)
+        self.assertIn(
+            "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+            vocab,
+        )
+        for name in ("README.md", "PANORAMIX_OPERATIONAL.md"):
+            text = root.joinpath(name).read_text(encoding="utf-8")
+            self.assertNotIn("python3 -m runtime.apply", text, name)
+            self.assertNotIn("runtime.apply reserve", text, name)
+            self.assertIn("runtime.apply compute-work", text, name)
+            self.assertIn("runtime.reserve.digest_for", text, name)
+            self.assertIn("recorded_params", text, name)
+            self.assertIn("live_params", text, name)
+            self.assertIn("docs/reserve.md", text, name)
+            self.assertIn("stub fallback", text.lower(), name)
+            self.assertIn("operator binding", text.lower(), name)
+            self.assertIn("guest→ctl HTTP", text, name)
+            self.assertNotIn("digests will be aligned when #83 lands", text, name)
+            self.assertNotIn("TODO(#83)", text, name)
+            self.assertNotIn("PR #84", text, name)
+            self.assertIn("#83 + remeasure", text, name)
+            self.assertNotIn("awaiting runtime stamp", text.lower(), name)
+            self.assertIn("not #70 done", text.lower(), name)
+            self.assertIn(
+                "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+                text,
+                name,
+            )
 
 
 if __name__ == "__main__":

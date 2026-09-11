@@ -1,7 +1,11 @@
 """Public HTTP surface for the SoS guest (health, jobs API, operator UI).
 
 Served on the Unit public port. JSON errors are `{"error": ..., ...}`.
-No engine URL schemes in request or response bodies.
+No engine URL schemes in request or response bodies. Ctl exports
+``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
+and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
+Transport is operator/ctl-mediated: no guest→ctl HTTP, no
+``runtime.apply compute-work`` from this guest.
 """
 
 from __future__ import annotations
@@ -14,7 +18,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sos.errors import SosError
-from sos.handoff_vocab import LOCAL_DEMOS, RESOURCE_CLASSES, WORK_KINDS, WORK_STATUSES
+from sos.handoff_vocab import (
+    LOCAL_DEMOS,
+    RECORDED_PAYLOAD_DIGEST,
+    RESOURCE_CLASSES,
+    WORK_KINDS,
+    WORK_STATUSES,
+)
 from sos.jobs import JobStore
 from sos.ui import OPERATOR_HTML
 
@@ -34,14 +44,52 @@ INFO_PAYLOAD = {
         "statuses": list(WORK_STATUSES),
         "handoff": ["kind", "class", "payload_digest"],
         "local_demo": sorted(LOCAL_DEMOS),
-        "ux_seed": "reserve is a stub lifecycle for operator UX; not a perf baseline",
+        "ux_seed": (
+            "reserve is a stub lifecycle for operator UX; "
+            "not a perf baseline until runtime #83 + remeasure"
+        ),
         "iec_named_baseline": "grammar/examples/reserve_ifrs17",
+        "reserve_payload_keys": [
+            "accounts",
+            "discount_bps",
+            "horizon",
+            "lapse_bps",
+            "paths",
+            "seed",
+            "workload",
+        ],
+        "reserve_catalogs": ["recorded", "live"],
+        "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
+        "runtime_reserve": "docs/reserve.md",
+        "runtime_reserve_helpers": [
+            "runtime.reserve.digest_for",
+            "runtime.reserve.recorded_params",
+            "runtime.reserve.live_params",
+        ],
+        "ctl_handoff": {
+            "mode": "operator-ctl",
+            "guest_to_ctl_http": False,
+            "guest_callable_submit": False,
+            "handoff": "GET /v0/jobs/{id}/handoff",
+            "payload": "GET /v0/jobs/{id}/payload",
+            "mesh": "compute-job -> sos",
+            "note": (
+                "Transport is operator/ctl-mediated. Guest UX is "
+                "submit/status/cancel. Emit WorkHandoff JSON only — no "
+                "guest→ctl HTTP, no runtime.apply compute-work, no env "
+                "that adds mesh destinations. Stub is the fallback; "
+                "operator/ctl admits via the binding. "
+                "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
+            ),
+        },
     },
     "ui": "/",
 }
 
 _JOB_RE = re.compile(r"^/v0/jobs/([^/]+)$")
 _CANCEL_RE = re.compile(r"^/v0/jobs/([^/]+)/cancel$")
+_HANDOFF_RE = re.compile(r"^/v0/jobs/([^/]+)/handoff$")
+_PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
 
 
 @dataclass
@@ -113,6 +161,16 @@ class SosApp:
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.cancel(cancel.group(1))
             return _json_response(200, job.to_dict())
+        handoff = _HANDOFF_RE.match(path)
+        if handoff:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.handoff(handoff.group(1)))
+        payload = _PAYLOAD_RE.match(path)
+        if payload:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.payload(payload.group(1)))
         job_match = _JOB_RE.match(path)
         if job_match:
             if method != "GET":

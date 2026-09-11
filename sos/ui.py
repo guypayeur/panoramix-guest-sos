@@ -153,12 +153,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
   <p class="banner"><strong>Stub / UX seed only.</strong> Reserve (shaped) is an
     in-process lifecycle demo so operators can compare submit → status pills →
     cancel with iec <code>docs/ux/journeys/run_lifecycle_monitoring.md</code>.
-    It is <strong>not</strong> a performance baseline, <strong>not</strong> IFRS17
-    math, and <strong>not</strong> runtime #70 Done. Comparable perf waits on
-    runtime compute-plane engines. Named iec baseline remains
+    It is <strong>not</strong> a performance baseline until runtime #83 + remeasure,
+    <strong>not</strong> IFRS17 math, and <strong>not</strong> runtime #70 Done.
+    Named iec baseline remains
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
     <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
-    no pause / resume / progress endpoints — cancel only.</p>
+    no pause / resume / progress endpoints — cancel only.
+    <strong>Stub fallback</strong> (default, in-process) vs
+    <strong>operator binding path</strong>: operator/ctl reads
+    <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
+    (mesh is compute-job → sos; worker calls this Unit). Transport today is
+    operator/ctl-mediated only — no guest→ctl HTTP, no
+    <code>runtime.apply compute-work</code> from the guest, no env that adds
+    mesh destinations. Recorded digest matches
+    <code>runtime.reserve.digest_for(recorded_params())</code> on
+    panoramix-runtime main (<code>docs/reserve.md</code>).</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -178,9 +187,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <input id="seconds" type="number" min="0" max="30" step="0.1" value="8">
         </div>
         <div id="reserve-fields" hidden>
-          <label for="label">Label</label>
+          <label for="catalog">Catalog (digest)</label>
+          <select id="catalog">
+            <option value="recorded" selected>recorded (CI)</option>
+            <option value="live">live</option>
+          </select>
+          <label for="label">Label (local UX)</label>
           <input id="label" value="reserve-shaped" autocomplete="off">
-          <label for="stages">Stages</label>
+          <label for="stages">Stages (local UX)</label>
           <input id="stages" type="number" min="2" max="8" step="1" value="3">
           <label for="resource-class">Class (UX label)</label>
           <select id="resource-class">
@@ -194,11 +208,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <button type="button" class="secondary" id="fill-reserve">Reserve template</button>
         </div>
       </form>
-      <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical demo params.
+      <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical catalog JSON
+        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — same as runtime.reserve.digest_for on main; docs/reserve.md).
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
-        Reserve (shaped) walks a few named stub stages (admit → project → fold, …) so cancel mid-flight is visible —
-        still an in-memory thread, not engines, not IFRS17 math.
-        The seam kind is job — never a demo label.</p>
+        Reserve (shaped) defaults to the <strong>recorded</strong> catalog. Stages/seconds are local stub UX only
+        (admit → project → fold, …) so cancel mid-flight is visible — still an in-memory thread, not engines, not IFRS17 math.
+        Ctl: GET /v0/jobs/{id}/handoff (kind/class/payload_digest/status) and /payload (canonical bytes).
+        Guest never calls runtime.apply compute-work. The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>
     <section>
@@ -236,6 +252,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     });
     $("fill-reserve").addEventListener("click", () => {
       $("demo").value = "reserve";
+      $("catalog").value = "recorded";
       $("label").value = "reserve-shaped";
       $("stages").value = "3";
       $("seconds").value = "8";
@@ -259,6 +276,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if (!Number.isInteger(stages)) { flash("Stages must be an integer."); return; }
         body = {
           demo: "reserve",
+          catalog: $("catalog").value,
           label: $("label").value,
           stages,
           seconds,

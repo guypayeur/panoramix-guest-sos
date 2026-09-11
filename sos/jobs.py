@@ -1,12 +1,9 @@
 """In-guest job store and stub runner.
 
-Process-local only. Opaque handoff is kind/class/payload_digest
-(runtime/compute_work.py on panoramix-runtime main, #70 Slice B). Local
-echo/sleep/reserve is a demo shortcut that synthesizes that shape.
-Reserve is a UX seed stub (named stages, cancel mid-flight) — not IFRS17
-math and not a perf baseline. Real engines are selected later by
-panoramix-runtime bindings — this module has no engine URLs, addresses, or
-schemes. Does not close #70.
+Process-local only. Emits WorkHandoff JSON (kind/class/payload_digest +
+status/id). Does not call runtime.apply compute-work. Mesh is
+compute-job → sos (worker calls Unit). In-process stub is the fallback;
+operator/ctl admits the exported handoff. Does not close #70.
 """
 
 from __future__ import annotations
@@ -17,9 +14,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from sos.errors import AlreadyTerminal, JobNotFound
-from sos.handoff import parse_submit
+from sos.errors import AlreadyTerminal, JobNotFound, PayloadUnknown
+from sos.handoff import ParsedSubmit, parse_submit, payload_export, HANDOFF_EXPORT_KEYS
 from sos.handoff_vocab import (
+    BACKED_RUNTIME,
+    BACKED_STUB,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
     DEMO_RESERVE,
@@ -30,8 +29,10 @@ from sos.handoff_vocab import (
     STATUS_RUNNING,
     STATUS_SUCCEEDED,
     TERMINAL,
+    WORK_STATUSES,
     reserve_stage_names,
 )
+from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 
 DEFAULT_STEP_SECONDS = 0.15
 
@@ -52,6 +53,8 @@ class Job:
     message: str | None = None
     error: str | None = None
     local: dict[str, Any] | None = None
+    payload_bytes: bytes | None = field(default=None, repr=False)
+    runtime_ref: dict[str, Any] | None = field(default=None, repr=False)
 
     def to_seam(self) -> dict[str, str]:
         """Runtime-aligned projection: id/kind/class/payload_digest/status."""
@@ -62,6 +65,16 @@ class Job:
             "payload_digest": self.payload_digest,
             "status": self.status,
         }
+
+    def to_handoff(self) -> dict[str, str]:
+        """Ctl export: WorkHandoff guest shape only (no nested payload)."""
+        seam = self.to_seam()
+        return {key: seam[key] for key in HANDOFF_EXPORT_KEYS}
+
+    def to_payload(self) -> dict[str, Any]:
+        if self.payload_bytes is None:
+            raise PayloadUnknown(self.id)
+        return payload_export(self.payload_digest, self.payload_bytes)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,29 +96,55 @@ class JobStore:
     """Thread-safe in-memory jobs. One process; gone on restart."""
 
     step_seconds: float = DEFAULT_STEP_SECONDS
+    runtime_hook: RuntimeHandoffHook = field(default_factory=InertRuntimeHandoffHook)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _jobs: dict[str, Job] = field(default_factory=dict, repr=False)
     _cancel: dict[str, threading.Event] = field(default_factory=dict, repr=False)
     _clock: Callable[[], str] = field(default=utcnow, repr=False)
 
     def submit(self, body: dict[str, Any]) -> Job:
-        kind, resource_class, payload_digest, local = parse_submit(body)
+        parsed: ParsedSubmit = parse_submit(body)
         job_id = str(uuid.uuid4())
         now = self._clock()
+        local = _copy_local(parsed.local)
         job = Job(
             id=job_id,
-            kind=kind,
-            resource_class=resource_class,
-            payload_digest=payload_digest,
+            kind=parsed.kind,
+            resource_class=parsed.resource_class,
+            payload_digest=parsed.payload_digest,
             status=STATUS_QUEUED,
             created_at=now,
             updated_at=now,
-            local=_copy_local(local),
+            local=local,
+            payload_bytes=parsed.payload_bytes,
         )
         cancel = threading.Event()
         with self._lock:
             self._jobs[job_id] = job
             self._cancel[job_id] = cancel
+
+        runtime_ref = self._try_admit(job)
+        if runtime_ref is not None:
+            with self._lock:
+                live = self._jobs.get(job_id)
+                if live is not None and live.status not in TERMINAL:
+                    live.runtime_ref = runtime_ref
+                    live.message = (
+                        "admitted via runtime hook (operator/ctl; no local stub)"
+                    )
+                    live.updated_at = self._clock()
+                    merged = dict(live.local) if live.local else {}
+                    merged["backed"] = BACKED_RUNTIME
+                    live.local = merged
+            return self.get(job_id)
+
+        if local is not None:
+            with self._lock:
+                live = self._jobs.get(job_id)
+                if live is not None:
+                    merged = dict(live.local) if live.local else {}
+                    merged["backed"] = BACKED_STUB
+                    live.local = merged
         thread = threading.Thread(
             target=self._run,
             args=(job_id, cancel),
@@ -115,20 +154,42 @@ class JobStore:
         thread.start()
         return self.get(job_id)
 
+    def _try_admit(self, job: Job) -> dict[str, Any] | None:
+        try:
+            return self.runtime_hook.admit(job.to_handoff(), job.payload_bytes)
+        except Exception:
+            return None
+
     def get(self, job_id: str) -> Job:
+        self._refresh_runtime_status(job_id)
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 raise JobNotFound(job_id)
             return self._snapshot(job)
 
+    def handoff(self, job_id: str) -> dict[str, str]:
+        return self.get(job_id).to_handoff()
+
+    def payload(self, job_id: str) -> dict[str, Any]:
+        return self.get(job_id).to_payload()
+
     def list(self) -> list[Job]:
         with self._lock:
-            jobs = [self._snapshot(j) for j in self._jobs.values()]
+            ids = list(self._jobs.keys())
+        jobs = [self.get(job_id) for job_id in ids]
         jobs.reverse()  # insertion order, newest first
         return jobs
 
     def cancel(self, job_id: str) -> Job:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise JobNotFound(job_id)
+            if job.status in TERMINAL:
+                raise AlreadyTerminal(job_id, job.status)
+            runtime_ref = job.runtime_ref
+        self._try_runtime_cancel(job_id, runtime_ref)
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -143,6 +204,34 @@ class JobStore:
                 event.set()
             return self._snapshot(job)
 
+    def _try_runtime_cancel(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> bool:
+        try:
+            return bool(self.runtime_hook.cancel(job_id, runtime_ref))
+        except Exception:
+            return False
+
+    def _refresh_runtime_status(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.runtime_ref is None or job.status in TERMINAL:
+                return
+            runtime_ref = job.runtime_ref
+        try:
+            reported = self.runtime_hook.status(job_id, runtime_ref)
+        except Exception:
+            return
+        if not reported or reported not in WORK_STATUSES:
+            return
+        if reported == job.status:
+            return
+        self._advance(
+            job_id,
+            reported,
+            message="status via runtime hook",
+        )
+
     def _snapshot(self, job: Job) -> Job:
         return Job(
             id=job.id,
@@ -155,6 +244,8 @@ class JobStore:
             message=job.message,
             error=job.error,
             local=_copy_local(job.local),
+            payload_bytes=job.payload_bytes,
+            runtime_ref=dict(job.runtime_ref) if job.runtime_ref else None,
         )
 
     def _advance(
