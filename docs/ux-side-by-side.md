@@ -14,7 +14,7 @@ Walk of [iec-proto-c `docs/ux/journeys/run_lifecycle_monitoring.md`](https://git
 | Progress (thinner) | `GET /v0/jobs/{id}/progress` |
 | Local event trail | `GET /v0/jobs/{id}/events` (also `events` on the job resource) |
 | Ctl handoff | `GET /v0/jobs/{id}/handoff`, `GET /v0/jobs/{id}/payload` |
-| Catalogs | recorded / live / **(parity TBD)** — wait for [runtime#86](https://github.com/guypayeur/panoramix-runtime/issues/86) |
+| Catalogs | recorded / live / parity (parity-scale) — guest mirrors [runtime#87](https://github.com/guypayeur/panoramix-runtime/pull/87) / [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) |
 
 ## Journey walk
 
@@ -44,15 +44,15 @@ Support key: **match** = same operator intent, thinner surface; **partial** = ho
 - **Real chunk progress** / planner observations / parallelism visualization.
 - **Regulatory audit** product (job-scoped `/v1/audit/events`, six-month defensibility). Local trail is process-memory and dies on restart.
 - **SPA polish**: no historical-run comparison, no ETA vs prior quarter, no step-ownership, no cross-tool investigation.
-- **IFRS17 / `reserve_ifrs17` math** and comparable **perf**. Runtime owns heavier parity-scale catalog ([#86](https://github.com/guypayeur/panoramix-runtime/issues/86)) and perf. Faster stub wall time is not evidence.
+- **IFRS17 / `reserve_ifrs17` math** and comparable **perf**. Guest now mirrors the third **parity** catalog digest from [runtime#87](https://github.com/guypayeur/panoramix-runtime/pull/87); the stub still does not run that kernel. Faster stub wall time is not evidence. #70/#78 stay open.
 
 ## Catalogs
 
 | Catalog | Guest today | Notes |
 |---|---|---|
-| recorded | yes | CI / default; digest pinned above |
+| recorded | yes | CI / default; digest `sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e` |
 | live | yes | Heavier lab catalog; still not IFRS17 |
-| parity | **TBD** | Runtime #86 will add a parity-scale third catalog digest. Guest will mirror when keys land. Do not invent a third catalog here |
+| parity (parity-scale) | yes | Same keys as recorded/live. Mirrors `runtime.reserve.parity_params()` / `digest_for` from [runtime#87](https://github.com/guypayeur/panoramix-runtime/pull/87) (`docs/reserve.md`). Digest `sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102`. Still not IFRS17; not #70 Done |
 
 ## Done-when checklist for the #70 UX box
 
@@ -74,3 +74,4 @@ Guest-side progress that is **not** the #70 stamp:
 - [x] Local event trail (labeled as such)
 - [x] Handoff / payload affordances (WorkHandoff emit only)
 - [x] This side-by-side note
+- [x] Mirror recorded / live / parity (parity-scale) catalog keys + parity digest (runtime #87)

@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from sos.errors import SosError
 from sos.handoff_vocab import (
     LOCAL_DEMOS,
+    PARITY_PAYLOAD_DIGEST,
     RECORDED_PAYLOAD_DIGEST,
     RESOURCE_CLASSES,
     WORK_KINDS,
@@ -58,14 +59,17 @@ INFO_PAYLOAD = {
             "seed",
             "workload",
         ],
-        "reserve_catalogs": ["recorded", "live"],
+        "reserve_catalogs": ["recorded", "live", "parity"],
         "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
+        "reserve_digest_parity": PARITY_PAYLOAD_DIGEST,
         "runtime_reserve": "docs/reserve.md",
         "runtime_reserve_helpers": [
             "runtime.reserve.digest_for",
             "runtime.reserve.recorded_params",
             "runtime.reserve.live_params",
+            "runtime.reserve.parity_params",
         ],
+        "runtime_reserve_parity": "runtime#87",
         "ctl_handoff": {
             "mode": "operator-ctl",
             "guest_to_ctl_http": False,

@@ -10,7 +10,11 @@ from pathlib import Path
 
 from platform_run import parse_listen
 from sos.handoff import digest_canonical, digest_bytes
-from sos.handoff_vocab import RECORDED_CANONICAL_JSON, RECORDED_PAYLOAD_DIGEST
+from sos.handoff_vocab import (
+    PARITY_PAYLOAD_DIGEST,
+    RECORDED_CANONICAL_JSON,
+    RECORDED_PAYLOAD_DIGEST,
+)
 from sos.http import INFO_PAYLOAD, SosApp
 from sos.jobs import JobStore
 
@@ -79,9 +83,15 @@ class HttpAppTests(unittest.TestCase):
                 "runtime.reserve.digest_for",
                 "runtime.reserve.recorded_params",
                 "runtime.reserve.live_params",
+                "runtime.reserve.parity_params",
             ],
         )
-        self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live"])
+        self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live", "parity"])
+        self.assertEqual(
+            body["jobs"]["reserve_digest_parity"],
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        self.assertEqual(body["jobs"]["runtime_reserve_parity"], "runtime#87")
         self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
         ctl = body["jobs"]["ctl_handoff"]
         self.assertEqual(ctl["mode"], "operator-ctl")
@@ -152,6 +162,8 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("digest_for", html)
             self.assertIn("recorded_params", html)
             self.assertIn('value="recorded"', html)
+            self.assertIn('value="parity"', html)
+            self.assertIn("parity-scale", html)
             self.assertNotIn("north-star Done", html)
             self.assertIn("Job detail", html)
             self.assertIn("Local event trail", html)
@@ -264,6 +276,28 @@ class HttpAppTests(unittest.TestCase):
         )
         self.assertEqual(smuggle.status, 400)
         self.assertEqual(_json(smuggle)["error"], "engine_smuggle")
+
+        parity = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "parity", "seconds": 0}).encode(),
+        )
+        self.assertEqual(parity.status, 201)
+        body = _json(parity)
+        self.assertEqual(body["local"]["catalog"], "parity")
+        self.assertEqual(body["payload_digest"], PARITY_PAYLOAD_DIGEST)
+        self.assertEqual(
+            body["payload_digest"],
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        alias = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "parity-scale", "seconds": 0}).encode(),
+        )
+        self.assertEqual(alias.status, 201)
+        self.assertEqual(_json(alias)["local"]["catalog"], "parity")
+        self.assertEqual(_json(alias)["payload_digest"], PARITY_PAYLOAD_DIGEST)
 
     def test_bad_kind(self) -> None:
         resp = self.app.handle(

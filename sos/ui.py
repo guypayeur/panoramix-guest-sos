@@ -231,6 +231,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <select id="catalog">
             <option value="recorded" selected>recorded (CI)</option>
             <option value="live">live</option>
+            <option value="parity">parity (parity-scale)</option>
           </select>
           <label for="label">Label (local UX)</label>
           <input id="label" value="reserve-shaped" autocomplete="off">

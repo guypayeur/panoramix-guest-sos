@@ -21,6 +21,8 @@ from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for,
 from sos.handoff_vocab import (
     BACKED_STUB,
     LIVE_PAYLOAD_DIGEST,
+    PARITY_CANONICAL_JSON,
+    PARITY_PAYLOAD_DIGEST,
     RECORDED_CANONICAL_JSON,
     RECORDED_PAYLOAD_DIGEST,
     STATUS_CANCELED,
@@ -201,6 +203,37 @@ class HandoffParseTests(unittest.TestCase):
         self.assertEqual(LIVE_PAYLOAD_DIGEST, live_digest)
         self.assertNotEqual(live_digest, digest)
 
+        parity_canonical = (
+            '{"accounts":2048,"discount_bps":300,"horizon":64,"lapse_bps":80,'
+            '"paths":4096,"seed":17070,"workload":"reserve"}'
+        )
+        parity_digest = "sha256:" + hashlib.sha256(
+            parity_canonical.encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(
+            parity_digest,
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+        )
+        self.assertEqual(PARITY_CANONICAL_JSON, parity_canonical)
+        self.assertEqual(PARITY_PAYLOAD_DIGEST, parity_digest)
+        parity = parse_submit({"demo": "reserve", "catalog": "parity"})
+        self.assertEqual(parity.kind, "job")
+        self.assertEqual(parity.resource_class, "cpu")
+        self.assertEqual(parity.local["catalog"], "parity")
+        self.assertEqual(parity.local["accounts"], 2048)
+        self.assertEqual(parity.local["horizon"], 64)
+        self.assertEqual(parity.local["paths"], 4096)
+        self.assertEqual(parity.local["seed"], 17070)
+        self.assertEqual(parity.local["lapse_bps"], 80)
+        self.assertEqual(parity.local["discount_bps"], 300)
+        self.assertEqual(parity.payload_digest, parity_digest)
+        self.assertEqual(parity.payload_bytes.decode("utf-8"), parity_canonical)
+        alias = parse_submit({"demo": "reserve", "catalog": "parity-scale"})
+        self.assertEqual(alias.local["catalog"], "parity")
+        self.assertEqual(alias.payload_digest, parity_digest)
+        self.assertNotEqual(parity_digest, digest)
+        self.assertNotEqual(parity_digest, live_digest)
+
     def test_reserve_payload_digest_is_stable(self) -> None:
         a = parse_submit({"demo": "reserve", "stages": 3, "label": "ux-seed", "seconds": 6})
         b = parse_submit({"seconds": 6, "demo": "reserve", "label": "ux-seed", "stages": 3})
@@ -224,6 +257,10 @@ class HandoffParseTests(unittest.TestCase):
         live = parse_submit({"demo": "reserve", "catalog": "live"})
         self.assertEqual(live.payload_digest, LIVE_PAYLOAD_DIGEST)
         self.assertNotEqual(live.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        parity = parse_submit({"demo": "reserve", "catalog": "parity"})
+        self.assertEqual(parity.payload_digest, PARITY_PAYLOAD_DIGEST)
+        self.assertNotEqual(parity.payload_digest, RECORDED_PAYLOAD_DIGEST)
+        self.assertNotEqual(parity.payload_digest, LIVE_PAYLOAD_DIGEST)
         custom = parse_submit({"demo": "reserve", "accounts": 49})
         self.assertNotEqual(custom.payload_digest, RECORDED_PAYLOAD_DIGEST)
         self.assertEqual(custom.local["accounts"], 49)
@@ -669,7 +706,12 @@ class JobStoreTests(unittest.TestCase):
         vocab = root.joinpath("sos/handoff_vocab.py").read_text(encoding="utf-8")
         self.assertIn("runtime.reserve.recorded_params", vocab)
         self.assertIn("live_params", vocab)
+        self.assertIn("parity_params", vocab)
         self.assertIn("digest_for", vocab)
+        self.assertIn(
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+            vocab,
+        )
         self.assertIn("docs/reserve.md", vocab)
         self.assertNotIn("TODO(#83)", vocab)
         self.assertNotIn("PR #84", vocab)
@@ -685,7 +727,13 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("runtime.reserve.digest_for", text, name)
             self.assertIn("recorded_params", text, name)
             self.assertIn("live_params", text, name)
+            self.assertIn("parity_params", text, name)
             self.assertIn("docs/reserve.md", text, name)
+            self.assertIn(
+                "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+                text,
+                name,
+            )
             self.assertIn("stub fallback", text.lower(), name)
             self.assertIn("operator binding", text.lower(), name)
             self.assertIn("guest→ctl HTTP", text, name)
@@ -710,9 +758,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("local event trail", ux.lower())
         self.assertIn("not iec chunk progress", ux.lower())
         self.assertIn("no pause", ux.lower())
-        self.assertIn("parity TBD", ux)
-        self.assertIn("#86", ux)
-        self.assertIn("recorded / live / **(parity TBD)**", ux)
+        self.assertIn("parity (parity-scale)", ux)
+        self.assertIn("#87", ux)
+        self.assertIn("recorded / live / parity (parity-scale)", ux)
+        self.assertIn(
+            "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
+            ux,
+        )
         self.assertIn("- [ ] `north_star_done: true`", ux)
         self.assertNotIn("- [x] `north_star_done: true`", ux)
         self.assertIn("- [ ] Operator/actuary path", ux)
