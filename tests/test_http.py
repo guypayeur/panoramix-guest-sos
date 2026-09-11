@@ -131,6 +131,14 @@ class HttpAppTests(unittest.TestCase):
             body["jobs"]["progress_honesty"],
         )
         self.assertIn("not a regulatory audit", body["jobs"]["events_honesty"])
+        self.assertIn("durable", body["jobs"]["events_honesty"])
+        self.assertIn("jsonl", body["jobs"]["events_honesty"].lower())
+        self.assertIn("not a siem", body["jobs"]["events_honesty"].lower())
+        self.assertIn("/v1/audit/events", body["jobs"]["events_honesty"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal events",
+            body["jobs"]["events_honesty"],
+        )
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal pause|resume",
@@ -185,7 +193,7 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("parity-scale", html)
             self.assertNotIn("north-star Done", html)
             self.assertIn("Job detail", html)
-            self.assertIn("Local event trail", html)
+            self.assertIn("Event trail", html)
             self.assertIn("View/copy handoff", html)
             self.assertIn("Fetch payload", html)
             self.assertNotIn("no pause / resume", html)
@@ -195,6 +203,9 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("/progress", html)
             self.assertIn("path-slices", html)
             self.assertIn("not a regulatory audit", html)
+            self.assertIn("not a SIEM", html)
+            self.assertIn("reserve-temporal events --id", html)
+            self.assertIn("/events", html)
             self.assertIn("docs/ux-side-by-side.md", html)
             self.assertIn("End run (canceled)", html)
             self.assertIn("Stub-backed jobs cancel locally", html)
@@ -424,6 +435,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(events.status, 200)
         trail = _json(events)
         self.assertEqual(trail["id"], job_id)
+        self.assertEqual(trail["source"], "memory")
         self.assertIn("not a regulatory audit", trail["note"])
         names = [item["event"] for item in trail["events"]]
         self.assertIn("submitted", names)
@@ -679,6 +691,72 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["progress"]["stages_completed"], 3)
         self.assertIn("path-slices", body["note"].lower())
         self.assertIn("not iec planner", body["note"].lower())
+        self.assertNotIn("temporal_product", body)
+        self.assertNotIn("workflow_id", body)
+        app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+
+    def test_events_durable_http(self) -> None:
+        class FakeHook:
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return "running"
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def events(self, job_id, runtime_ref):
+                return {
+                    "events": [
+                        {
+                            "ts": "2026-09-11T16:00:00Z",
+                            "event": "admit",
+                            "type": "WorkflowExecutionStarted",
+                            "seq": 1,
+                        },
+                        {
+                            "ts": "2026-09-11T16:00:01Z",
+                            "event": "fail",
+                            "type": "WorkflowExecutionFailed",
+                            "seq": 2,
+                        },
+                    ],
+                    "events_durable": True,
+                    "events_n": 2,
+                }
+
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=FakeHook()))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        job_id = _json(created)["id"]
+        events = app.handle("GET", f"/v0/jobs/{job_id}/events")
+        self.assertEqual(events.status, 200)
+        body = _json(events)
+        self.assertEqual(body["source"], "durable")
+        self.assertIs(body["events_durable"], True)
+        self.assertEqual(body["events_n"], 2)
+        self.assertEqual([item["event"] for item in body["events"]], ["admit", "fail"])
+        self.assertEqual(body["events"][0]["type"], "WorkflowExecutionStarted")
+        self.assertIn("jsonl", body["note"].lower())
+        self.assertIn("not a siem", body["note"].lower())
+        self.assertIn("/v1/audit/events", body["note"])
+        job = _json(app.handle("GET", f"/v0/jobs/{job_id}"))
+        self.assertEqual(job["events_source"], "durable")
+        self.assertIs(job["events_durable"], True)
+        self.assertEqual(job["events_n"], 2)
+        handoff = _json(app.handle("GET", f"/v0/jobs/{job_id}/handoff"))
+        self.assertNotIn("events", handoff)
+        self.assertNotIn("events_durable", handoff)
         self.assertNotIn("temporal_product", body)
         self.assertNotIn("workflow_id", body)
         app.handle("POST", f"/v0/jobs/{job_id}/cancel")

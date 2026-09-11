@@ -5,7 +5,8 @@ status/id). Does not call runtime.apply compute-work. Mesh is
 compute-job → sos (worker calls Unit). In-process stub is the fallback;
 operator/ctl admits the exported handoff. Pause/resume is durable-path
 only (injected hook); stub jobs are refused. Progress prefers
-hook.progress() path-slices when durable-backed. Does not close #70.
+hook.progress() path-slices when durable-backed. Events prefer
+hook.events() JSONL when durable-backed. Does not close #70.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 DEFAULT_STEP_SECONDS = 0.15
 PROGRESS_SOURCE_STUB = "stub"
 PROGRESS_SOURCE_DURABLE = "durable"
+EVENTS_SOURCE_MEMORY = "memory"
+EVENTS_SOURCE_DURABLE = "durable"
 _PROGRESS_COUNTER_KEYS = (
     "stage",
     "stages_total",
@@ -55,6 +58,13 @@ STUB_PROGRESS_NOTE = (
 DURABLE_PROGRESS_NOTE = (
     "Durable reserve-temporal path-slices — "
     "not iec planner parallelism; not iec chunk progress"
+)
+MEMORY_EVENTS_NOTE = (
+    "Process-memory event trail — not a regulatory audit product"
+)
+DURABLE_EVENTS_NOTE = (
+    "Durable reserve-temporal JSONL trail — not a SIEM; "
+    "not iec /v1/audit/events product"
 )
 
 
@@ -76,7 +86,10 @@ class Job:
     local: dict[str, Any] | None = None
     payload_bytes: bytes | None = field(default=None, repr=False)
     runtime_ref: dict[str, Any] | None = field(default=None, repr=False)
-    events: list[dict[str, str]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    events_source: str | None = None
+    events_durable: bool | None = None
+    events_n: int | None = None
 
     def to_seam(self) -> dict[str, str]:
         """Runtime-aligned projection: id/kind/class/payload_digest/status."""
@@ -99,7 +112,7 @@ class Job:
         return payload_export(self.payload_digest, self.payload_bytes)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             **self.to_seam(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -109,6 +122,13 @@ class Job:
             "events": _copy_events(self.events),
             "pause_resume": _pause_resume_honest(self),
         }
+        if self.events_source:
+            payload["events_source"] = self.events_source
+        if self.events_durable is not None:
+            payload["events_durable"] = self.events_durable
+        if self.events_n is not None:
+            payload["events_n"] = self.events_n
+        return payload
 
     def to_progress(self) -> dict[str, Any]:
         """Stub stage metadata only — not iec chunk progress / parallelism."""
@@ -132,11 +152,25 @@ class Job:
         return payload
 
     def to_events(self) -> dict[str, Any]:
-        """Local intervention log — not a regulatory audit product."""
+        """Process-memory trail, or durable overlay already applied on the snapshot."""
+        if self.events_source == EVENTS_SOURCE_DURABLE:
+            payload: dict[str, Any] = {
+                "id": self.id,
+                "events": _copy_events(self.events),
+                "source": EVENTS_SOURCE_DURABLE,
+                "note": DURABLE_EVENTS_NOTE,
+                "events_durable": (
+                    True if self.events_durable is None else self.events_durable
+                ),
+            }
+            if self.events_n is not None:
+                payload["events_n"] = self.events_n
+            return payload
         return {
             "id": self.id,
             "events": _copy_events(self.events),
-            "note": "Local event trail — not a regulatory audit product",
+            "source": EVENTS_SOURCE_MEMORY,
+            "note": MEMORY_EVENTS_NOTE,
         }
 
 
@@ -144,7 +178,7 @@ def _copy_local(local: dict[str, Any] | None) -> dict[str, Any] | None:
     return dict(local) if local else None
 
 
-def _copy_events(events: list[dict[str, str]] | None) -> list[dict[str, str]]:
+def _copy_events(events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [dict(item) for item in events] if events else []
 
 
@@ -196,6 +230,73 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(nested_raw, dict):
         payload["progress"] = {}
     return payload
+
+
+def _normalize_event(item: Any) -> dict[str, Any] | None:
+    """Keep JSONL-style records readable: at least ``event`` + copied fields."""
+    if not isinstance(item, dict):
+        return None
+    out = dict(item)
+    if "event" not in out:
+        if out.get("type") is not None:
+            out["event"] = str(out["type"])
+        elif out.get("kind") is not None:
+            out["event"] = str(out["kind"])
+        else:
+            return None
+    return out
+
+
+def _events_list_from_durable(
+    durable: dict[str, Any] | list[Any],
+) -> list[dict[str, Any]]:
+    if isinstance(durable, list):
+        raw = durable
+    else:
+        raw = durable.get("events") or []
+        if not isinstance(raw, list):
+            raw = []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        norm = _normalize_event(item)
+        if norm is not None:
+            out.append(norm)
+    return out
+
+
+def _apply_durable_events(
+    job: Job, durable: dict[str, Any] | list[Any]
+) -> Job:
+    """Overlay JSONL-style trail on a snapshot. Honesty: local durable, not SIEM."""
+    trail = _events_list_from_durable(durable)
+    job.events = trail
+    job.events_source = EVENTS_SOURCE_DURABLE
+    meta = durable if isinstance(durable, dict) else {}
+    if "events_durable" in meta:
+        job.events_durable = bool(meta["events_durable"])
+    elif "durable" in meta:
+        job.events_durable = bool(meta["durable"])
+    else:
+        job.events_durable = True
+    if meta.get("events_n") is not None:
+        job.events_n = int(meta["events_n"])
+    elif meta.get("n") is not None:
+        job.events_n = int(meta["n"])
+    else:
+        job.events_n = len(trail)
+    return job
+
+
+def _has_durable_events(reported: Any) -> bool:
+    if isinstance(reported, list):
+        return True
+    if not isinstance(reported, dict) or not reported:
+        return False
+    if "events" in reported:
+        return True
+    if reported.get("events_durable") or reported.get("durable"):
+        return True
+    return False
 
 
 @dataclass
@@ -279,7 +380,12 @@ class JobStore:
             job = self._jobs.get(job_id)
             if job is None:
                 raise JobNotFound(job_id)
-            return self._snapshot(job)
+            snap = self._snapshot(job)
+        if self._is_durable(snap):
+            durable = self._try_runtime_events(job_id, snap.runtime_ref)
+            if durable is not None:
+                return _apply_durable_events(snap, durable)
+        return snap
 
     def handoff(self, job_id: str) -> dict[str, str]:
         return self.get(job_id).to_handoff()
@@ -301,6 +407,11 @@ class JobStore:
         return job.to_progress()
 
     def events(self, job_id: str) -> dict[str, Any]:
+        """Prefer dedicated hook.events(); process-memory trail is fallback only.
+
+        ``get()`` already overlays durable JSONL onto the job snapshot when
+        the hook returns events.
+        """
         return self.get(job_id).to_events()
 
     def list(self) -> list[Job]:
@@ -420,6 +531,20 @@ class JobStore:
             return None
         return reported
 
+    def _try_runtime_events(
+        self, job_id: str, runtime_ref: dict[str, Any] | None
+    ) -> dict[str, Any] | list[Any] | None:
+        method = getattr(self.runtime_hook, "events", None)
+        if not callable(method):
+            return None
+        try:
+            reported = method(job_id, runtime_ref)
+        except Exception:
+            return None
+        if not _has_durable_events(reported):
+            return None
+        return reported
+
     def _refresh_runtime_status(self, job_id: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -455,6 +580,9 @@ class JobStore:
             payload_bytes=job.payload_bytes,
             runtime_ref=dict(job.runtime_ref) if job.runtime_ref else None,
             events=_copy_events(job.events),
+            events_source=job.events_source,
+            events_durable=job.events_durable,
+            events_n=job.events_n,
         )
 
     def _advance(

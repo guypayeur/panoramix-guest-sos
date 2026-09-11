@@ -30,7 +30,13 @@ from sos.handoff_vocab import (
     STATUS_CANCELED,
     STATUS_QUEUED,
 )
-from sos.jobs import JobStore, PROGRESS_SOURCE_DURABLE, PROGRESS_SOURCE_STUB
+from sos.jobs import (
+    JobStore,
+    EVENTS_SOURCE_DURABLE,
+    EVENTS_SOURCE_MEMORY,
+    PROGRESS_SOURCE_DURABLE,
+    PROGRESS_SOURCE_STUB,
+)
 
 
 def wait_status(store: JobStore, job_id: str, wanted: set[str], timeout: float = 2.0) -> str:
@@ -550,7 +556,9 @@ class JobStoreTests(unittest.TestCase):
 
         events = self.store.events(job.id)
         self.assertEqual(events["id"], job.id)
+        self.assertEqual(events["source"], EVENTS_SOURCE_MEMORY)
         self.assertIn("not a regulatory audit", events["note"])
+        self.assertNotIn("events_durable", events)
         names = [item["event"] for item in events["events"]]
         self.assertIn("submitted", names)
         self.assertIn("backed", names)
@@ -579,6 +587,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("canceled", trail)
         self.assertIn("stage", trail)
         body = self.store.events(job.id)
+        self.assertEqual(body["source"], EVENTS_SOURCE_MEMORY)
         self.assertEqual(body["events"][-1]["event"], "canceled")
         self.assertEqual(body["events"][-1]["detail"], "canceled by operator")
         handoff = self.store.handoff(job.id)
@@ -598,6 +607,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(progress["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("not iec chunk progress", progress["note"])
         events = [item["event"] for item in self.store.events(job.id)["events"]]
+        self.assertEqual(self.store.events(job.id)["source"], EVENTS_SOURCE_MEMORY)
         self.assertIn("submitted", events)
         self.assertIn("succeeded", events)
         self.assertNotIn("pause", events)
@@ -805,6 +815,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIsNone(hook.admit({}, None))
         self.assertIsNone(hook.status("id", None))
         self.assertIsNone(hook.progress("id", None))
+        self.assertIsNone(hook.events("id", None))
 
     def test_progress_durable_hook_counters(self) -> None:
         class DurableProgressHook:
@@ -882,6 +893,134 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("stages_completed", stubby)
         fallback.cancel(backed.id)
 
+    def test_events_durable_hook_jsonl(self) -> None:
+        class DurableEventsHook:
+            def __init__(self) -> None:
+                self.reported = "running"
+                self.calls: list[tuple[str, dict | None]] = []
+                self.payload: dict | list | None = {
+                    "events": [
+                        {
+                            "ts": "2026-09-11T16:00:00Z",
+                            "event": "admit",
+                            "type": "WorkflowExecutionStarted",
+                            "seq": 1,
+                            "id": "cw_deadbeefdeadbeef",
+                        },
+                        {
+                            "ts": "2026-09-11T16:00:01Z",
+                            "event": "stage_completed",
+                            "type": "StageCompleted",
+                            "seq": 2,
+                            "stages_completed": 1,
+                        },
+                        {
+                            "ts": "2026-09-11T16:00:02Z",
+                            "event": "pause",
+                            "type": "WorkflowExecutionSignaled",
+                            "signal": "pause",
+                            "seq": 3,
+                        },
+                    ],
+                    "events_durable": True,
+                    "events_n": 3,
+                }
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def events(self, job_id, runtime_ref):
+                self.calls.append((job_id, runtime_ref))
+                return self.payload
+
+        hook = DurableEventsHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        body = store.events(job.id)
+        self.assertEqual(body["id"], job.id)
+        self.assertEqual(body["source"], EVENTS_SOURCE_DURABLE)
+        self.assertIs(body["events_durable"], True)
+        self.assertEqual(body["events_n"], 3)
+        names = [item["event"] for item in body["events"]]
+        self.assertEqual(names, ["admit", "stage_completed", "pause"])
+        self.assertEqual(body["events"][0]["type"], "WorkflowExecutionStarted")
+        self.assertEqual(body["events"][1]["type"], "StageCompleted")
+        self.assertEqual(body["events"][2]["signal"], "pause")
+        self.assertIn("jsonl", body["note"].lower())
+        self.assertIn("not a siem", body["note"].lower())
+        self.assertIn("/v1/audit/events", body["note"])
+        self.assertNotIn("submitted", names)
+        self.assertEqual(hook.calls[-1][0], job.id)
+        resource = store.get(job.id).to_dict()
+        self.assertEqual(resource["events_source"], EVENTS_SOURCE_DURABLE)
+        self.assertIs(resource["events_durable"], True)
+        self.assertEqual(resource["events_n"], 3)
+        self.assertEqual([item["event"] for item in resource["events"]], names)
+        handoff = store.handoff(job.id)
+        self.assertNotIn("events", handoff)
+        self.assertNotIn("events_source", handoff)
+        self.assertNotIn("events_durable", handoff)
+        store.cancel(job.id)
+
+        hook.payload = [
+            {
+                "ts": "2026-09-11T16:10:00Z",
+                "event": "succeed",
+                "type": "WorkflowExecutionCompleted",
+                "seq": 4,
+            }
+        ]
+        listed = JobStore(step_seconds=0.02, runtime_hook=hook)
+        listed_job = listed.submit({"demo": "echo", "message": "x"})
+        listed_body = listed.events(listed_job.id)
+        self.assertEqual(listed_body["source"], EVENTS_SOURCE_DURABLE)
+        self.assertIs(listed_body["events_durable"], True)
+        self.assertEqual(listed_body["events_n"], 1)
+        self.assertEqual(listed_body["events"][0]["event"], "succeed")
+        listed.cancel(listed_job.id)
+
+        hook.payload = {
+            "events": [
+                {"ts": "2026-09-11T16:20:00Z", "event": "cancel", "type": "WorkflowExecutionCanceled"}
+            ],
+            "durable": True,
+            "n": 1,
+        }
+        ctl = JobStore(step_seconds=0.02, runtime_hook=hook)
+        ctl_job = ctl.submit({"demo": "reserve", "seconds": 8})
+        ctl_body = ctl.events(ctl_job.id)
+        self.assertEqual(ctl_body["source"], EVENTS_SOURCE_DURABLE)
+        self.assertIs(ctl_body["events_durable"], True)
+        self.assertEqual(ctl_body["events_n"], 1)
+        self.assertEqual(ctl_body["events"][0]["event"], "cancel")
+        ctl.cancel(ctl_job.id)
+
+        class SilentDurableHook(DurableEventsHook):
+            def events(self, job_id, runtime_ref):
+                return None
+
+        silent = SilentDurableHook()
+        fallback = JobStore(step_seconds=0.02, runtime_hook=silent)
+        backed = fallback.submit({"demo": "reserve", "seconds": 8})
+        memory = fallback.events(backed.id)
+        self.assertEqual(memory["source"], EVENTS_SOURCE_MEMORY)
+        self.assertIn("submitted", [item["event"] for item in memory["events"]])
+        self.assertNotIn("events_durable", memory)
+        fallback.cancel(backed.id)
+
     def test_guest_never_imports_runtime(self) -> None:
         from pathlib import Path
 
@@ -928,6 +1067,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("python3 -m runtime.apply reserve-temporal resume", text, name)
             self.assertIn("python3 -m runtime.apply reserve-temporal progress", text, name)
             self.assertIn("reserve-temporal progress --id", text, name)
+            self.assertIn("python3 -m runtime.apply reserve-temporal events", text, name)
+            self.assertIn("reserve-temporal events --id", text, name)
             self.assertIn("local-reserve-temporal.example.yaml", text, name)
             self.assertIn("verified @ `63c4d8e`", text, name)
             self.assertIn("stages_completed", text, name)
@@ -992,14 +1133,29 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("python3 -m runtime.apply reserve-temporal resume", ux)
         self.assertIn("python3 -m runtime.apply reserve-temporal progress", ux)
         self.assertIn("reserve-temporal progress --id", ux)
+        self.assertIn("python3 -m runtime.apply reserve-temporal events", ux)
+        self.assertIn("reserve-temporal events --id", ux)
         self.assertIn(
             "| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn(
+            "| 4.1 Audit trail | `GET /v1/audit/events?job_id=…` | **match** (thinner) |",
+            ux,
+        )
+        self.assertNotIn(
+            "| 4.1 Audit trail | `GET /v1/audit/events?job_id=…` | **partial** |",
             ux,
         )
         self.assertIn("path-slices", ux.lower())
         self.assertIn("not iec planner", ux.lower())
         self.assertIn("- [ ] Real chunk / step progress", ux)
         self.assertNotIn("- [x] Real chunk / step progress", ux)
+        self.assertIn("- [ ] Regulatory audit trail", ux)
+        self.assertNotIn("- [x] Regulatory audit trail", ux)
+        self.assertIn("siem", ux.lower())
+        self.assertIn("not a SIEM", ux)
+        self.assertIn("/v1/audit/events", ux)
         self.assertIn("stub_only", ux)
         self.assertIn("409", ux)
         self.assertIn("| 2.1 Pause |", ux)

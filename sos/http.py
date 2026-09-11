@@ -5,7 +5,8 @@ No engine URL schemes in request or response bodies. Ctl exports
 ``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
 Pause/resume (``POST .../pause`` / ``POST .../resume``) require the
-durable path; stub-only jobs return 409 stub_only. Transport is
+durable path; stub-only jobs return 409 stub_only. Events prefer
+``hook.events()`` JSONL when durable-backed. Transport is
 operator/ctl-mediated: no guest→ctl HTTP, no
 ``runtime.apply compute-work`` from this guest.
 """
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 
 from sos.errors import SosError
 from sos.handoff_vocab import (
+    CTL_EVENTS,
     CTL_PAUSE_RESUME,
     CTL_PROGRESS,
     LOCAL_DEMOS,
@@ -99,7 +101,12 @@ INFO_PAYLOAD = {
             "not iec chunk progress. "
             f"Operator/ctl: {CTL_PROGRESS}"
         ),
-        "events_honesty": "local event trail; not a regulatory audit",
+        "events_honesty": (
+            "durable reserve-temporal JSONL trail when a hook provides it; "
+            "else process-memory fallback; not a SIEM; "
+            "not iec /v1/audit/events product; not a regulatory audit. "
+            f"Operator/ctl: {CTL_EVENTS}"
+        ),
         "pause": "POST /v0/jobs/{id}/pause",
         "resume": "POST /v0/jobs/{id}/resume",
         "pause_resume": True,
