@@ -185,6 +185,33 @@ OPERATOR_HTML = """<!DOCTYPE html>
       margin: 0 0 0.4rem;
     }
     .compare table { font-size: 0.8rem; margin-top: 0.35rem; }
+    .terminal, .recover {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.7rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .terminal {
+      border-color: var(--bad);
+      background: #241414;
+    }
+    .terminal.canceled {
+      border-color: var(--line);
+      background: #1a1f26;
+    }
+    .recover {
+      border-color: var(--warn);
+      background: #241c10;
+    }
+    .terminal h3, .recover h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .terminal p, .recover p { margin: 0.25rem 0; font-size: 0.82rem; }
+    .terminal .trail { margin: 0.35rem 0 0.1rem; }
     .owners { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.4rem 0 0.15rem; }
     .trail { font-size: 0.8rem; padding-left: 1.1rem; }
     .trail li { margin: 0.2rem 0; }
@@ -252,6 +279,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
     kind/class) jobs already in this process. Typical/ETA only from
     succeeded prior walls when enough samples exist.
     Not a forecast. Not IFRS17. Not iec SPA historical widget.
+    Failed/canceled jobs show a terminal/failure summary
+    (status + message + optional last events / stage) — not a SIEM,
+    not iec <code>/v1/audit/events</code>. Recoverability is handoff +
+    payload export for operator/ctl re-admit
+    (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
+    Cancel/fail does not auto-retry. Pause/resume remains durable-only.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -329,14 +362,18 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <p class="hint" id="pause-hint" style="margin-top:0">Pause/Resume require the durable path.
         Stub jobs stay disabled. Operator/ctl:
         <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code></p>
+      <p class="hint" id="recover-hint">Cancel/fail does not auto-retry. Use View/copy handoff
+        and Fetch payload for operator/ctl re-admit
+        (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
+        Pause/resume remains durable-only (stub 409 stub_only).</p>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
       <h2 style="margin-top:1.1rem">Event trail</h2>
       <p class="hint" style="margin-top:0">On this same panel. Durable reserve-temporal JSONL when a hook provides it;
         otherwise process-memory. Not a SIEM, not a regulatory audit product.
         Operator/ctl: <code>python3 -m runtime.apply reserve-temporal events --id cw_…</code></p>
       <div id="events"><p class="empty">No events.</p></div>
-      <h2 style="margin-top:1.1rem">Handoff / payload</h2>
-      <pre id="seam-view">Use View/copy handoff or Fetch payload for the ctl path. WorkHandoff emit only — no runtime.apply from this guest.</pre>
+      <h2 style="margin-top:1.1rem">Handoff / payload (ctl re-admit)</h2>
+      <pre id="seam-view">Use View/copy handoff or Fetch payload for operator/ctl re-admit. Cancel/fail does not auto-retry. WorkHandoff emit only — no runtime.apply from this guest.</pre>
       <pre id="detail" hidden>Select a job.</pre>
     </section>
   </main>
@@ -344,13 +381,17 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <div class="modal-card" role="dialog" aria-labelledby="cancel-title">
       <h3 id="cancel-title">Cancel this run?</h3>
       <p>Cancel ends the run (status <code>canceled</code>).
-        <strong>Cancel is not pause.</strong></p>
+        <strong>Cancel is not pause.</strong>
+        Cancel/fail does not auto-retry.</p>
       <p class="hint" style="margin-top:0">Pause/Resume exist on the durable/ctl
         path only
         (<code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
         Stub-backed jobs cancel locally. Runtime-backed jobs (injected hook)
         signal the hook, then the guest job is marked <code>canceled</code>
-        if it was still live (running or paused).</p>
+        if it was still live (running or paused).
+        Re-admit is operator/ctl
+        <code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>
+        (handoff + payload export) — not resume-from-failed.</p>
       <div class="row" style="margin-top:0.85rem">
         <button type="button" class="danger" id="cancel-confirm">End run (canceled)</button>
         <button type="button" class="secondary" id="cancel-dismiss">Keep running</button>
@@ -548,8 +589,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         return;
       }
       let note = kind === "handoff"
-        ? "WorkHandoff JSON (id/kind/class/payload_digest/status). Copied when clipboard is available. Guest does not call runtime.apply."
-        : "Payload export for the ctl path (canonical bytes). Guest does not call runtime.apply.";
+        ? "WorkHandoff JSON (id/kind/class/payload_digest/status) for operator/ctl re-admit. Copied when clipboard is available. Guest does not call runtime.apply. Cancel/fail does not auto-retry."
+        : "Payload export for operator/ctl re-admit (canonical bytes). Guest does not call runtime.apply. Cancel/fail does not auto-retry.";
       const copied = await copyText(text);
       if (kind === "handoff" && copied) note += " Copied to clipboard.";
       $("seam-view").textContent = note + "\\n\\n" + text;
@@ -687,6 +728,98 @@ OPERATOR_HTML = """<!DOCTYPE html>
         line.textContent = "No named stub stages (status only). Not iec chunk progress.";
       }
       wrap.appendChild(line);
+      return wrap;
+    }
+
+    function renderTerminal(job) {
+      const wrap = document.createElement("div");
+      const status = (job.terminal && job.terminal.status) || job.status;
+      wrap.className = "terminal" + (status === "canceled" ? " canceled" : "");
+      const title = document.createElement("h3");
+      title.textContent = "Failure / terminal (thinner)";
+      wrap.appendChild(title);
+      const term = job.terminal || {};
+      const line = document.createElement("p");
+      line.appendChild(pill(status));
+      line.appendChild(document.createTextNode(" — " + (term.message || job.message || status)));
+      wrap.appendChild(line);
+      const stage = term.stage || (job.local && job.local.stage);
+      if (stage) {
+        const st = document.createElement("p");
+        const idx = term.stage_index != null ? term.stage_index
+          : (job.local && job.local.stage_index);
+        st.textContent = "Last stage: " + stage +
+          (idx != null ? (" (" + idx + ")") : "") +
+          " — how far it got; not resume-from-failed.";
+        wrap.appendChild(st);
+      }
+      if (term.error) {
+        const err = document.createElement("p");
+        err.textContent = "Error: " + term.error;
+        wrap.appendChild(err);
+      }
+      const last = term.last_events || [];
+      if (last.length) {
+        const ul = document.createElement("ul");
+        ul.className = "trail";
+        for (const ev of last) {
+          const li = document.createElement("li");
+          const kind = document.createElement("span");
+          kind.className = "kind";
+          kind.textContent = eventLabel(ev);
+          li.appendChild(kind);
+          const detail = eventDetail(ev);
+          if (detail) li.appendChild(document.createTextNode(" — " + detail));
+          ul.appendChild(li);
+        }
+        wrap.appendChild(ul);
+      }
+      const honesty = document.createElement("p");
+      honesty.className = "hint";
+      honesty.textContent = "Not a SIEM. Not iec /v1/audit/events product.";
+      wrap.appendChild(honesty);
+      return wrap;
+    }
+
+    function renderRecoverability(job) {
+      const wrap = document.createElement("div");
+      wrap.className = "recover";
+      const title = document.createElement("h3");
+      title.textContent = "Recoverability (thinner)";
+      wrap.appendChild(title);
+      const rec = job.recoverability || {};
+      const salvage = document.createElement("p");
+      salvage.textContent = rec.payload_known
+        ? "Salvageable: WorkHandoff identity + payload bytes. In-flight compute is not salvaged."
+        : "Salvageable: WorkHandoff identity (digest only; payload_unknown). In-flight compute is not salvaged.";
+      wrap.appendChild(salvage);
+      const noRetry = document.createElement("p");
+      noRetry.textContent = "Cancel/fail does not auto-retry. No resume-from-failed.";
+      wrap.appendChild(noRetry);
+      const ctl = document.createElement("p");
+      ctl.className = "hint";
+      ctl.textContent = "Operator/ctl re-admit: " +
+        (rec.re_admit || "python3 -m runtime.apply reserve-temporal admit --handoff JSON") +
+        ". Pause/resume remains durable-only (stub 409 stub_only).";
+      wrap.appendChild(ctl);
+      const row = document.createElement("div");
+      row.className = "row";
+      const h = document.createElement("button");
+      h.type = "button";
+      h.className = "secondary";
+      h.textContent = "Export handoff for re-admit";
+      h.addEventListener("click", () => fetchSeam("handoff"));
+      const p = document.createElement("button");
+      p.type = "button";
+      p.className = "secondary";
+      p.textContent = "Export payload for re-admit";
+      p.addEventListener("click", () => fetchSeam("payload"));
+      row.append(h, p);
+      wrap.appendChild(row);
+      const honesty = document.createElement("p");
+      honesty.className = "hint";
+      honesty.textContent = "Not IFRS17. Guest does not call runtime.apply.";
+      wrap.appendChild(honesty);
       return wrap;
     }
 
@@ -947,6 +1080,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
       host.appendChild(renderProgress(job));
+      if (job.status === "failed" || job.status === "canceled") {
+        host.appendChild(renderTerminal(job));
+        host.appendChild(renderRecoverability(job));
+      }
       host.appendChild(renderCompare(job));
       host.appendChild(renderInvestigate(job));
       $("detail").textContent = JSON.stringify(job, null, 2);

@@ -26,12 +26,16 @@ from sos.handoff_vocab import (
     BACKED_RUNTIME,
     BACKED_STUB,
     CATALOG_CROSSCHECK_NOTE,
+    CTL_ADMIT,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
     DEMO_RESERVE,
     DEMO_SLEEP,
+    FAILED_OR_CANCELED,
+    LAST_EVENTS_N,
     OWNERSHIP_NOTE,
     PATH_SLICE_OWNERS,
+    RECOVERABILITY_NOTE,
     STATUS_CANCELED,
     STATUS_FAILED,
     STATUS_PAUSED,
@@ -39,6 +43,7 @@ from sos.handoff_vocab import (
     STATUS_RUNNING,
     STATUS_SUCCEEDED,
     TERMINAL,
+    TERMINAL_NOTE,
     WORK_STATUSES,
     reserve_stage_names,
     short_digest,
@@ -142,6 +147,12 @@ class Job:
         investigate = _investigate_payload(self, hooked=_pause_resume_honest(self))
         if investigate:
             payload["investigate"] = investigate
+        terminal = _terminal_payload(self)
+        if terminal:
+            payload["terminal"] = terminal
+        recoverability = _recoverability_payload(self)
+        if recoverability:
+            payload["recoverability"] = recoverability
         return payload
 
     def to_progress(self) -> dict[str, Any]:
@@ -230,6 +241,53 @@ def _attach_investigate(payload: dict[str, Any], job: Job, *, hooked: bool) -> N
     investigate = _investigate_payload(job, hooked=hooked)
     if investigate:
         payload["investigate"] = investigate
+
+
+def _last_events(
+    events: list[dict[str, Any]] | None, n: int = LAST_EVENTS_N
+) -> list[dict[str, Any]]:
+    if not events:
+        return []
+    return _copy_events(events[-n:])
+
+
+def _terminal_payload(job: Job) -> dict[str, Any] | None:
+    """Failed/canceled summary. Honesty: not SIEM / not iec audit product."""
+    if job.status not in FAILED_OR_CANCELED:
+        return None
+    local = job.local or {}
+    payload: dict[str, Any] = {
+        "status": job.status,
+        "message": job.message,
+        "note": TERMINAL_NOTE,
+        "events_source": job.events_source or EVENTS_SOURCE_MEMORY,
+    }
+    if job.error:
+        payload["error"] = job.error
+    stage = local.get("stage")
+    if stage:
+        payload["stage"] = stage
+        if local.get("stage_index") is not None:
+            payload["stage_index"] = local["stage_index"]
+    last = _last_events(job.events)
+    if last:
+        payload["last_events"] = last
+    return payload
+
+
+def _recoverability_payload(job: Job) -> dict[str, Any] | None:
+    """Handoff/payload re-admit. Cancel/fail does not auto-retry."""
+    if job.status not in FAILED_OR_CANCELED:
+        return None
+    return {
+        "auto_retry": False,
+        "resume_from_failed": False,
+        "handoff": f"GET /v0/jobs/{job.id}/handoff",
+        "payload": f"GET /v0/jobs/{job.id}/payload",
+        "payload_known": job.payload_bytes is not None,
+        "re_admit": CTL_ADMIT,
+        "note": RECOVERABILITY_NOTE,
+    }
 
 
 def _copy_local(local: dict[str, Any] | None) -> dict[str, Any] | None:

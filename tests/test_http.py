@@ -151,10 +151,19 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("guest process history", body["jobs"]["compare_honesty"])
         self.assertIn("No guest→ctl HTTP", body["jobs"]["compare_honesty"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
+        self.assertIn("does not auto-retry", body["jobs"]["cancel_note"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal pause|resume",
             body["jobs"]["cancel_note"],
         )
+        self.assertIn("SIEM", body["jobs"]["terminal"])
+        self.assertIn("/v1/audit/events", body["jobs"]["terminal"])
+        self.assertIn("does not auto-retry", body["jobs"]["recoverability"])
+        self.assertIn(
+            "python3 -m runtime.apply reserve-temporal admit --handoff JSON",
+            body["jobs"]["recoverability"],
+        )
+        self.assertIn("stub_only", body["jobs"]["recoverability"])
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -235,6 +244,14 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Not Slack", html)
             self.assertIn("Event trail is on this panel", html)
             self.assertIn("not a SIEM", html)
+            self.assertIn("Failure / terminal (thinner)", html)
+            self.assertIn("Recoverability (thinner)", html)
+            self.assertIn("does not auto-retry", html)
+            self.assertIn("Export handoff for re-admit", html)
+            self.assertIn("Export payload for re-admit", html)
+            self.assertIn("reserve-temporal admit --handoff JSON", html)
+            self.assertIn("not iec /v1/audit/events", html)
+            self.assertIn("No resume-from-failed", html)
             self.assertIn("Vs recent guest jobs", html)
             self.assertIn("/compare", html)
             self.assertIn("Not a forecast", html)
@@ -335,7 +352,20 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn('"work":', body["utf8"])
         canceled = self.app.handle("POST", f"/v0/jobs/{job['id']}/cancel")
         self.assertEqual(canceled.status, 200)
-        self.assertEqual(_json(canceled)["status"], "canceled")
+        canceled_job = _json(canceled)
+        self.assertEqual(canceled_job["status"], "canceled")
+        self.assertEqual(canceled_job["terminal"]["status"], "canceled")
+        self.assertEqual(canceled_job["terminal"]["message"], "canceled by operator")
+        self.assertIn("not a SIEM", canceled_job["terminal"]["note"])
+        self.assertIn("/v1/audit/events", canceled_job["terminal"]["note"])
+        self.assertEqual(canceled_job["recoverability"]["auto_retry"], False)
+        self.assertEqual(canceled_job["recoverability"]["resume_from_failed"], False)
+        self.assertIs(canceled_job["recoverability"]["payload_known"], True)
+        self.assertIn("does not auto-retry", canceled_job["recoverability"]["note"])
+        self.assertIn(
+            "reserve-temporal admit --handoff JSON",
+            canceled_job["recoverability"]["re_admit"],
+        )
 
         smuggle = self.app.handle(
             "POST",
@@ -478,6 +508,9 @@ class HttpAppTests(unittest.TestCase):
         job = _json(canceled)
         self.assertEqual(job["status"], "canceled")
         self.assertIn("canceled", [item["event"] for item in job["events"]])
+        self.assertEqual(job["terminal"]["status"], "canceled")
+        self.assertEqual(job["terminal"]["last_events"][-1]["event"], "canceled")
+        self.assertIs(job["recoverability"]["auto_retry"], False)
 
         compare = self.app.handle("GET", f"/v0/jobs/{job_id}/compare")
         self.assertEqual(compare.status, 200)
@@ -583,8 +616,93 @@ class HttpAppTests(unittest.TestCase):
         job_id = _json(created)["id"]
         canceled = self.app.handle("POST", f"/v0/jobs/{job_id}/cancel")
         self.assertEqual(canceled.status, 200)
-        self.assertEqual(_json(canceled)["status"], "canceled")
-        self.assertNotEqual(_json(canceled)["status"], "cancelled")
+        body = _json(canceled)
+        self.assertEqual(body["status"], "canceled")
+        self.assertNotEqual(body["status"], "cancelled")
+        self.assertEqual(body["terminal"]["status"], "canceled")
+        self.assertIs(body["recoverability"]["auto_retry"], False)
+        self.assertNotIn("terminal", _json(created))
+        self.assertNotIn("recoverability", _json(created))
+
+    def test_failed_and_canceled_terminal_http(self) -> None:
+        class FailHook:
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return "failed"
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def events(self, job_id, runtime_ref):
+                return {
+                    "events": [
+                        {
+                            "ts": "2026-09-11T16:00:00Z",
+                            "event": "admit",
+                            "type": "WorkflowExecutionStarted",
+                        },
+                        {
+                            "ts": "2026-09-11T16:00:01Z",
+                            "event": "fail",
+                            "type": "WorkflowExecutionFailed",
+                        },
+                    ],
+                    "events_durable": True,
+                    "events_n": 2,
+                }
+
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=FailHook()))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        self.assertEqual(created.status, 201)
+        job = _json(created)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["terminal"]["status"], "failed")
+        self.assertEqual(job["terminal"]["message"], "status via runtime hook")
+        self.assertEqual(job["terminal"]["events_source"], "durable")
+        self.assertEqual(job["terminal"]["last_events"][-1]["event"], "fail")
+        self.assertIn("not a SIEM", job["terminal"]["note"])
+        self.assertIs(job["recoverability"]["auto_retry"], False)
+        self.assertIs(job["recoverability"]["resume_from_failed"], False)
+        self.assertIs(job["recoverability"]["payload_known"], True)
+        self.assertIn(job["id"], job["recoverability"]["handoff"])
+        handoff = _json(app.handle("GET", f"/v0/jobs/{job['id']}/handoff"))
+        self.assertNotIn("terminal", handoff)
+        self.assertNotIn("recoverability", handoff)
+        self.assertEqual(handoff["status"], "failed")
+
+        opaque = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps(
+                {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+            ).encode(),
+        )
+        oid = _json(opaque)["id"]
+        canceled = self.app.handle("POST", f"/v0/jobs/{oid}/cancel")
+        body = _json(canceled)
+        self.assertEqual(body["status"], "canceled")
+        self.assertEqual(body["terminal"]["status"], "canceled")
+        self.assertIs(body["recoverability"]["payload_known"], False)
+
+        done = wait_http_status(self.app, _json(self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "echo", "message": "ok"}).encode(),
+        ))["id"], {"succeeded"})
+        self.assertNotIn("terminal", done)
+        self.assertNotIn("recoverability", done)
 
     def test_cancel_terminal_conflict(self) -> None:
         created = self.app.handle(
