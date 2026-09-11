@@ -158,7 +158,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     runtime compute-plane engines. Named iec baseline remains
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
     <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
-    no pause / resume / progress endpoints — cancel only.</p>
+    no pause / resume / progress endpoints — cancel only. Operator/ctl admits
+    opaque work via <code>GET /v0/jobs/{id}/handoff</code> and
+    <code>/payload</code> (mesh is compute-job → sos; awaiting a platform-stamped
+    guest submit path).</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -198,6 +201,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
         Reserve (shaped) walks a few named stub stages (admit → project → fold, …) so cancel mid-flight is visible —
         still an in-memory thread, not engines, not IFRS17 math.
+        Ctl: GET /v0/jobs/{id}/handoff (kind/class/payload_digest/status) and /payload (canonical bytes).
         The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
     </section>

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from platform_run import parse_listen
-from sos.handoff import digest_canonical
+from sos.handoff import digest_canonical, digest_bytes, reserve_work_request
 from sos.http import INFO_PAYLOAD, SosApp
 from sos.jobs import JobStore
 
@@ -66,6 +66,14 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["jobs"]["local_demo"], ["echo", "reserve", "sleep"])
         self.assertIn("stub", body["jobs"]["ux_seed"])
         self.assertEqual(body["jobs"]["iec_named_baseline"], "grammar/examples/reserve_ifrs17")
+        ctl = body["jobs"]["ctl_handoff"]
+        self.assertEqual(ctl["mode"], "operator-ctl")
+        self.assertIs(ctl["awaiting_runtime_stamp"], True)
+        self.assertIn("handoff", ctl["handoff"])
+        self.assertIn("payload", ctl["payload"])
+        self.assertEqual(ctl["mesh"], "compute-job -> sos")
+        self.assertNotIn("PLATFORM_COMPUTE", json.dumps(ctl))
+        self.assertNotIn("PLATFORM_RAY", json.dumps(ctl))
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -95,7 +103,9 @@ class HttpAppTests(unittest.TestCase):
             self.assertNotIn("sos.demo.echo", html)
             self.assertNotIn("ray://", html)
             self.assertNotIn("temporal://", html)
-            self.assertNotIn("north-star Done", html)
+            self.assertIn("/v0/jobs/{id}/handoff", html)
+            self.assertIn("/payload", html)
+            self.assertIn("compute-job", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -155,15 +165,35 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(
             job["payload_digest"],
             digest_canonical(
-                {
-                    "class": "cpu",
-                    "demo": "reserve",
-                    "label": "reserve-shaped",
-                    "seconds": 8,
-                    "stages": 3,
-                }
+                reserve_work_request(
+                    label="reserve-shaped",
+                    stages=3,
+                    seconds=8,
+                    resource_class="cpu",
+                )
             ),
         )
+        handoff = self.app.handle("GET", f"/v0/jobs/{job['id']}/handoff")
+        self.assertEqual(handoff.status, 200)
+        exported = _json(handoff)
+        self.assertEqual(
+            set(exported),
+            {"id", "kind", "class", "payload_digest", "status"},
+        )
+        self.assertEqual(exported["id"], job["id"])
+        self.assertEqual(exported["payload_digest"], job["payload_digest"])
+        self.assertNotIn("payload", exported)
+        self.assertNotIn("local", exported)
+
+        payload = self.app.handle("GET", f"/v0/jobs/{job['id']}/payload")
+        self.assertEqual(payload.status, 200)
+        body = _json(payload)
+        self.assertEqual(body["payload_digest"], job["payload_digest"])
+        self.assertEqual(digest_bytes(bytes.fromhex(body["hex"])), job["payload_digest"])
+        self.assertEqual(body["utf8"].encode("utf-8"), bytes.fromhex(body["hex"]))
+        self.assertNotIn("payload", body)
+        self.assertIn('"work":"reserve"', body["utf8"])
+        self.assertNotIn("reserve_ifrs17", body["utf8"])
         canceled = self.app.handle("POST", f"/v0/jobs/{job['id']}/cancel")
         self.assertEqual(canceled.status, 200)
         self.assertEqual(_json(canceled)["status"], "canceled")
@@ -224,7 +254,33 @@ class HttpAppTests(unittest.TestCase):
                 self.assertEqual(resp.status, 400)
                 self.assertEqual(_json(resp)["error"], "engine_smuggle")
 
+    def test_payload_unknown_for_opaque_digest_only(self) -> None:
+        created = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps(
+                {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+            ).encode(),
+        )
+        job_id = _json(created)["id"]
+        missing = self.app.handle("GET", f"/v0/jobs/{job_id}/payload")
+        self.assertEqual(missing.status, 404)
+        self.assertEqual(_json(missing)["error"], "payload_unknown")
+        handoff = _json(self.app.handle("GET", f"/v0/jobs/{job_id}/handoff"))
+        self.assertEqual(handoff["kind"], "job")
+        self.assertNotIn("payload", handoff)
+
+    def test_handoff_and_payload_missing(self) -> None:
+        self.assertEqual(self.app.handle("GET", "/v0/jobs/nope/handoff").status, 404)
+        self.assertEqual(self.app.handle("GET", "/v0/jobs/nope/payload").status, 404)
+        self.assertEqual(
+            self.app.handle("POST", "/v0/jobs/nope/handoff").status, 405
+        )
+
     def test_missing_job(self) -> None:
+        resp = self.app.handle("GET", "/v0/jobs/not-a-job")
+        self.assertEqual(resp.status, 404)
+        self.assertEqual(_json(resp)["error"], "not_found")
         resp = self.app.handle("GET", "/v0/jobs/not-a-job")
         self.assertEqual(resp.status, 404)
         self.assertEqual(_json(resp)["error"], "not_found")

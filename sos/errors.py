@@ -71,6 +71,20 @@ class JobNotFound(SosError):
         super().__init__("not_found", id=job_id)
 
 
+class PayloadUnknown(SosError):
+    http_status = 404
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(
+            "payload_unknown",
+            id=job_id,
+            detail=(
+                "opaque submit recorded payload_digest only; "
+                "demo shortcuts store canonical JSON bytes for ctl export"
+            ),
+        )
+
+
 class AlreadyTerminal(SosError):
     http_status = 409
 

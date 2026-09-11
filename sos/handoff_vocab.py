@@ -27,12 +27,17 @@ DEFAULT_SLEEP_SECONDS = 2
 MAX_SLEEP_SECONDS = 30.0
 
 # Reserve-shaped UX seed (not IFRS17 math; not the iec baseline).
+# Payload work token is ``reserve`` (parameters only). Named iec baseline
+# remains grammar/examples/reserve_ifrs17 on runtime method.yaml.
+RESERVE_WORK = "reserve"
 DEFAULT_RESERVE_LABEL = "reserve-shaped"
 DEFAULT_RESERVE_STAGES = 3
 MIN_RESERVE_STAGES = 2
 MAX_RESERVE_STAGES = 8
 DEFAULT_RESERVE_SECONDS = 6
 MAX_RESERVE_SECONDS = MAX_SLEEP_SECONDS
+BACKED_STUB = "stub"
+BACKED_RUNTIME = "runtime"
 RESERVE_STAGE_NAMES = (
     "admit",
     "project",

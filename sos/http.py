@@ -1,7 +1,9 @@
 """Public HTTP surface for the SoS guest (health, jobs API, operator UI).
 
 Served on the Unit public port. JSON errors are `{"error": ..., ...}`.
-No engine URL schemes in request or response bodies.
+No engine URL schemes in request or response bodies. Ctl exports
+``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
+and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
 """
 
 from __future__ import annotations
@@ -36,12 +38,26 @@ INFO_PAYLOAD = {
         "local_demo": sorted(LOCAL_DEMOS),
         "ux_seed": "reserve is a stub lifecycle for operator UX; not a perf baseline",
         "iec_named_baseline": "grammar/examples/reserve_ifrs17",
+        "ctl_handoff": {
+            "mode": "operator-ctl",
+            "awaiting_runtime_stamp": True,
+            "handoff": "GET /v0/jobs/{id}/handoff",
+            "payload": "GET /v0/jobs/{id}/payload",
+            "mesh": "compute-job -> sos",
+            "note": (
+                "Guest UX stays submit/status/cancel. Operator/ctl admits the "
+                "opaque handoff to runtime compute. Awaiting a platform-stamped "
+                "guest submit path; hook is inert until then."
+            ),
+        },
     },
     "ui": "/",
 }
 
 _JOB_RE = re.compile(r"^/v0/jobs/([^/]+)$")
 _CANCEL_RE = re.compile(r"^/v0/jobs/([^/]+)/cancel$")
+_HANDOFF_RE = re.compile(r"^/v0/jobs/([^/]+)/handoff$")
+_PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
 
 
 @dataclass
@@ -113,6 +129,16 @@ class SosApp:
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.cancel(cancel.group(1))
             return _json_response(200, job.to_dict())
+        handoff = _HANDOFF_RE.match(path)
+        if handoff:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.handoff(handoff.group(1)))
+        payload = _PAYLOAD_RE.match(path)
+        if payload:
+            if method != "GET":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            return _json_response(200, self.store.payload(payload.group(1)))
         job_match = _JOB_RE.match(path)
         if job_match:
             if method != "GET":
