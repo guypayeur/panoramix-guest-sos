@@ -171,7 +171,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
       color: var(--muted);
       margin: 0 0 0.4rem;
     }
-    .investigate p { margin: 0.25rem 0; font-size: 0.82rem; }
+    .investigate p, .compare p { margin: 0.25rem 0; font-size: 0.82rem; }
+    .compare {
+      margin-top: 0.65rem;
+      padding-top: 0.55rem;
+      border-top: 1px solid var(--line);
+    }
+    .compare h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .compare table { font-size: 0.8rem; margin-top: 0.35rem; }
     .owners { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.4rem 0 0.15rem; }
     .trail { font-size: 0.8rem; padding-left: 1.1rem; }
     .trail li { margin: 0.2rem 0; }
@@ -235,6 +248,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     (name + short digest) for cross-check — not a data-catalog product.
     Static path-slice ownership tags when hooked (not Slack, not a
     live team directory). Event trail stays on this panel (not a SIEM).
+    Historical comparison is thinner: recent same-catalog (or same
+    kind/class) jobs already in this process. Typical/ETA only from
+    succeeded prior walls when enough samples exist.
+    Not a forecast. Not IFRS17. Not iec SPA historical widget.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -347,6 +364,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     let lastSeamText = "";
     let lastProgress = null;
     let lastEvents = null;
+    let lastCompare = null;
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -559,6 +577,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const end = live(job.status) ? Date.now() : Date.parse(job.updated_at);
       if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
       const s = Math.max(0, (end - start) / 1000);
+      return fmtSecs(s);
+    }
+
+    function fmtSecs(s) {
+      if (s == null || !Number.isFinite(Number(s))) return "—";
+      s = Number(s);
       if (s < 60) return s.toFixed(1) + "s";
       return Math.floor(s / 60) + "m " + Math.floor(s % 60) + "s";
     }
@@ -717,6 +741,92 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return wrap;
     }
 
+    function renderCompare(job) {
+      const wrap = document.createElement("div");
+      wrap.className = "compare";
+      const title = document.createElement("h3");
+      title.textContent = "Vs recent guest jobs";
+      wrap.appendChild(title);
+      const payload = (lastCompare && job && lastCompare.id === job.id) ? lastCompare : null;
+      const honesty = document.createElement("p");
+      honesty.className = "hint";
+      honesty.textContent = "Not a forecast. Not IFRS17. Not iec SPA historical widget.";
+      if (!payload) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No comparison loaded.";
+        wrap.appendChild(empty);
+        wrap.appendChild(honesty);
+        return wrap;
+      }
+      const match = document.createElement("p");
+      match.className = "hint";
+      match.style.marginTop = "0.15rem";
+      const by = payload.matched_by === "catalog" ? "same catalog"
+        : payload.matched_by === "kind_class" ? "same kind/class"
+        : "guest history";
+      match.textContent = "Matched by " + by + " in this process (n=" +
+        (payload.priors_n != null ? payload.priors_n : 0) + ").";
+      wrap.appendChild(match);
+      const thisLine = document.createElement("p");
+      const thisElapsed = payload.this && payload.this.elapsed_s;
+      thisLine.textContent = "This run elapsed: " +
+        (thisElapsed != null ? fmtSecs(thisElapsed) : "—");
+      wrap.appendChild(thisLine);
+      const priors = payload.priors || [];
+      if (!priors.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No prior jobs in this process to compare.";
+        wrap.appendChild(empty);
+      } else {
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        thead.innerHTML = "<tr><th>Prior</th><th>Status</th><th>Elapsed</th></tr>";
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        for (const prior of priors) {
+          const tr = document.createElement("tr");
+          const tdI = document.createElement("td");
+          tdI.className = "id";
+          tdI.textContent = String(prior.id || "").slice(0, 8);
+          const tdS = document.createElement("td");
+          if (prior.status) tdS.appendChild(pill(prior.status));
+          else tdS.textContent = "—";
+          const tdE = document.createElement("td");
+          tdE.textContent = (prior.elapsed_s != null) ? fmtSecs(prior.elapsed_s) : "—";
+          tr.append(tdI, tdS, tdE);
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+      }
+      if (payload.typical_elapsed_s != null) {
+        const typ = document.createElement("p");
+        typ.textContent = "Typical prior wall (median of succeeded priors): " +
+          fmtSecs(payload.typical_elapsed_s) + " · n=" + payload.typical_n;
+        wrap.appendChild(typ);
+      }
+      if (payload.eta_elapsed_s != null) {
+        const eta = document.createElement("p");
+        eta.textContent = "ETA (typical prior wall, not a forecast): " +
+          fmtSecs(payload.eta_elapsed_s);
+        wrap.appendChild(eta);
+      }
+      if (payload.typical_elapsed_s != null && payload.this &&
+          payload.this.elapsed_s != null &&
+          Number(payload.this.elapsed_s) > Number(payload.typical_elapsed_s)) {
+        const past = document.createElement("p");
+        past.textContent = "This run is past typical prior wall.";
+        wrap.appendChild(past);
+      }
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = payload.note || honesty.textContent;
+      wrap.appendChild(note);
+      return wrap;
+    }
+
     function eventLabel(ev) {
       return String(ev.event || ev.type || ev.kind || "event");
     }
@@ -837,6 +947,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
       host.appendChild(renderProgress(job));
+      host.appendChild(renderCompare(job));
       host.appendChild(renderInvestigate(job));
       $("detail").textContent = JSON.stringify(job, null, 2);
       $("handoff-btn").disabled = false;
@@ -870,7 +981,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tr.className = "job" + (job.id === selectedId ? " selected" : "");
         tr.addEventListener("click", () => {
           selectedId = job.id;
-          loadProgress(job.id).then(() => loadEvents(job.id)).then(() => render());
+          loadProgress(job.id).then(() => loadEvents(job.id)).then(() => loadCompare(job.id)).then(() => render());
         });
         const tdS = document.createElement("td"); tdS.appendChild(pill(job.status));
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
@@ -935,6 +1046,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
     }
 
+    async function loadCompare(id) {
+      if (!id) {
+        lastCompare = null;
+        return;
+      }
+      try {
+        const res = await fetch("/v0/jobs/" + id + "/compare");
+        const body = await res.json();
+        lastCompare = res.ok ? body : null;
+      } catch (e) {
+        lastCompare = null;
+      }
+    }
+
     async function refresh() {
       try {
         const res = await fetch("/v0/jobs");
@@ -945,9 +1070,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
           selectedId = selected.id;
           await loadProgress(selectedId);
           await loadEvents(selectedId);
+          await loadCompare(selectedId);
         } else {
           lastProgress = null;
           lastEvents = null;
+          lastCompare = null;
         }
         render();
       } catch (e) {

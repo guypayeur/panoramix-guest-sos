@@ -1178,6 +1178,9 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("not #70 done", text.lower(), name)
             self.assertIn("/progress", text, name)
             self.assertIn("/events", text, name)
+            self.assertIn("/compare", text, name)
+            self.assertIn("not a forecast", text.lower(), name)
+            self.assertIn("iec spa historical widget", text.lower(), name)
             self.assertIn(
                 "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
                 text,
@@ -1188,6 +1191,17 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("run_lifecycle_monitoring.md", ux)
         self.assertIn("GET /v0/jobs/{id}/progress", ux)
         self.assertIn("GET /v0/jobs/{id}/events", ux)
+        self.assertIn("GET /v0/jobs/{id}/compare", ux)
+        self.assertIn(
+            "| 1.1 Job detail + status | SPA → `GET /v1/jobs/{job_id}` | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn("Historical comparison", ux)
+        self.assertIn("not a forecast", ux.lower())
+        self.assertIn("iec SPA historical widget", ux)
+        self.assertNotIn("no historical-run comparison", ux)
+        self.assertIn("historical comparison is **match (thinner)**", ux.lower())
+        self.assertIn("Thinner historical-run comparison", ux)
         self.assertIn("local event trail", ux.lower())
         self.assertIn("not iec chunk progress", ux.lower())
         self.assertIn("**match** (thinner)", ux)
@@ -1251,6 +1265,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("- [ ] `north_star_done: true`", ux)
         self.assertNotIn("- [x] `north_star_done: true`", ux)
         self.assertIn("- [ ] Operator/actuary path", ux)
+        self.assertNotIn("- [x] Operator/actuary path", ux)
         self.assertIn("does **not** mark #70 Done", ux)
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)

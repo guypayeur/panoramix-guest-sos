@@ -6,7 +6,8 @@ compute-job → sos (worker calls Unit). In-process stub is the fallback;
 operator/ctl admits the exported handoff. Pause/resume is durable-path
 only (injected hook or opt-in lab adapter); stub jobs are refused.
 Progress prefers hook.progress() path-slices when durable-backed.
-Events prefer hook.events() JSONL when durable-backed. Default hook
+Events prefer hook.events() JSONL when durable-backed. Historical
+comparison uses in-process list/get identity only. Default hook
 stays inert. Does not close #70. Does not close #78.
 """
 
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from sos.compare import compare_vs_priors
 from sos.errors import AlreadyTerminal, IllegalTransition, JobNotFound, PayloadUnknown, StubOnly
 from sos.handoff import ParsedSubmit, parse_submit, payload_export, HANDOFF_EXPORT_KEYS
 from sos.handoff_vocab import (
@@ -470,6 +472,16 @@ class JobStore:
         the hook returns events.
         """
         return self.get(job_id).to_events()
+
+    def compare(self, job_id: str) -> dict[str, Any]:
+        """Vs recent same-catalog or same-kind/class jobs already in this store.
+
+        Reuses ``list()`` / ``get()`` identity. No guest→ctl channel.
+        Does not invent typical/ETA without succeeded prior walls.
+        """
+        current = self.get(job_id)
+        peers = [job for job in self.list() if job.id != job_id]
+        return compare_vs_priors(current, peers, now=self._clock())
 
     def list(self) -> list[Job]:
         with self._lock:
