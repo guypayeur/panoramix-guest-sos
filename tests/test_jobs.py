@@ -1300,6 +1300,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("admit --handoff JSON", text, name)
             self.assertIn("not a forecast", text.lower(), name)
             self.assertIn("iec spa historical widget", text.lower(), name)
+            self.assertIn("PANORAMIX_SOS_JOBS_DIR", text, name)
+            self.assertIn(".sos/jobs", text, name)
             self.assertIn(
                 "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
                 text,
@@ -1320,7 +1322,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("iec SPA historical widget", ux)
         self.assertNotIn("no historical-run comparison", ux)
         self.assertIn("historical comparison is **match (thinner)**", ux.lower())
+        self.assertIn("history persistence is **match (thinner)**", ux.lower())
+        self.assertIn("| History persistence | guest restart wipes in-process priors | **match** (thinner) |", ux)
         self.assertIn("Thinner historical-run comparison", ux)
+        self.assertIn("Thinner history persistence", ux)
+        self.assertIn("PANORAMIX_SOS_JOBS_DIR", ux)
+        self.assertIn(".sos/jobs", ux)
+        self.assertIn("- [x] Thinner history persistence", ux)
         self.assertIn("local event trail", ux.lower())
         self.assertIn("not iec chunk progress", ux.lower())
         self.assertIn("**match** (thinner)", ux)

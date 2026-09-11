@@ -158,7 +158,17 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("not IFRS17", body["jobs"]["compare_honesty"])
         self.assertIn("not iec SPA historical widget", body["jobs"]["compare_honesty"])
         self.assertIn("guest process history", body["jobs"]["compare_honesty"])
+        self.assertIn("PANORAMIX_SOS_JOBS_DIR", body["jobs"]["compare_honesty"])
+        self.assertIn("Fail-closed", body["jobs"]["compare_honesty"])
         self.assertIn("No guest→ctl HTTP", body["jobs"]["compare_honesty"])
+        persist = body["jobs"]["history_persist"]
+        self.assertEqual(persist["env"], "PANORAMIX_SOS_JOBS_DIR")
+        self.assertEqual(persist["default"], ".sos/jobs")
+        self.assertEqual(persist["disable"], "off")
+        self.assertIs(persist["enabled"], False)
+        self.assertIn("Fail-closed", persist["note"])
+        self.assertIn("Not a SIEM", persist["note"])
+        self.assertIn("Not #70 Done", persist["note"])
         self.assertIn("Cancel is not pause", body["jobs"]["cancel_note"])
         self.assertIn("does not auto-retry", body["jobs"]["cancel_note"])
         self.assertIn(
@@ -272,7 +282,8 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("Not a forecast", html)
             self.assertIn("Not IFRS17", html)
             self.assertIn("Not iec SPA historical widget", html)
-            self.assertIn("No prior jobs in this process to compare", html)
+            self.assertIn("No prior jobs in guest history to compare", html)
+            self.assertIn("PANORAMIX_SOS_JOBS_DIR", html)
             self.assertIn("typical_elapsed_s", html)
             self.assertIn("eta_elapsed_s", html)
 

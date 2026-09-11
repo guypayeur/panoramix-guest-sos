@@ -6,9 +6,10 @@ No engine URL schemes in request or response bodies. Ctl exports
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
 Pause/resume (``POST .../pause`` / ``POST .../resume``) require the
 durable path; stub-only jobs return 409 stub_only. Events prefer
-``hook.events()`` JSONL when durable-backed. Compare uses in-process
-job history only. Transport is operator/ctl-mediated: no guest→ctl
-HTTP, no ``runtime.apply compute-work`` from this guest.
+``hook.events()`` JSONL when durable-backed. Compare uses guest
+history (in-process plus local lab files when persisted). Transport
+is operator/ctl-mediated: no guest→ctl HTTP, no
+``runtime.apply compute-work`` from this guest.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from sos.handoff_vocab import (
     WORK_STATUSES,
 )
 from sos.jobs import JobStore
+from sos.persist import describe_history_persist, jobs_dir_from_env
 from sos.runtime_hook import describe_runtime_hook, resolve_runtime_hook
 from sos.ui import OPERATOR_HTML
 
@@ -125,12 +127,27 @@ INFO_PAYLOAD = {
             "Event trail stays on the same panel; not a SIEM."
         ),
         "compare_honesty": (
-            "guest process history only — recent same-catalog jobs when "
-            "catalog is on the job, else same kind/class. Elapsed from "
-            "created/updated timestamps; typical/ETA only from succeeded "
-            "prior walls when two or more samples exist. not a forecast; "
-            "not IFRS17; not iec SPA historical widget. No guest→ctl HTTP."
+            "guest process history plus local lab files when persisted "
+            "(.sos/jobs or PANORAMIX_SOS_JOBS_DIR). recent same-catalog "
+            "jobs when catalog is on the job, else same kind/class. "
+            "Elapsed from created/updated timestamps; typical/ETA only "
+            "from succeeded prior walls when two or more samples exist. "
+            "Fail-closed if persistence is disabled or the dir is "
+            "unwritable. not a forecast; not IFRS17; not iec SPA "
+            "historical widget. No guest→ctl HTTP."
         ),
+        "history_persist": {
+            "env": "PANORAMIX_SOS_JOBS_DIR",
+            "default": ".sos/jobs",
+            "disable": "off",
+            "note": (
+                "Local lab job records for compare / recoverability. "
+                "Fail-closed if disabled or unwritable. Reloads recent "
+                "succeeded priors across guest restart. Does not invent "
+                "typical/ETA. Not a SIEM. Not a six-month audit "
+                "product. Not a cross-host DB. Not #70 Done."
+            ),
+        },
         "pause": "POST /v0/jobs/{id}/pause",
         "resume": "POST /v0/jobs/{id}/resume",
         "pause_resume": True,
@@ -154,7 +171,9 @@ INFO_PAYLOAD = {
         ),
         "recoverability": (
             "Failed/canceled jobs expose handoff + payload export for "
-            "operator/ctl re-admit. Cancel/fail does not auto-retry. "
+            "operator/ctl re-admit (payload bytes when known, including "
+            "after a guest restart if history was persisted). "
+            "Cancel/fail does not auto-retry. "
             "No resume-from-failed. Pause/resume remains durable-only "
             f"(stub 409 stub_only). Operator/ctl: {CTL_ADMIT}"
         ),
@@ -207,7 +226,10 @@ class SosApp:
     """Dispatch table used by the HTTP handler and by tests (no sockets)."""
 
     def __init__(self, store: JobStore | None = None) -> None:
-        self.store = store or JobStore(runtime_hook=resolve_runtime_hook())
+        self.store = store or JobStore(
+            runtime_hook=resolve_runtime_hook(),
+            persist_dir=jobs_dir_from_env(),
+        )
 
     def handle(self, method: str, path: str, body: bytes = b"") -> HttpResponse:
         method = method.upper()
@@ -296,6 +318,9 @@ class SosApp:
         payload = json.loads(json.dumps(INFO_PAYLOAD))
         payload["jobs"]["durable_hook"] = describe_runtime_hook(
             self.store.runtime_hook
+        )
+        payload["jobs"]["history_persist"] = describe_history_persist(
+            self.store.persist_dir
         )
         return payload
 

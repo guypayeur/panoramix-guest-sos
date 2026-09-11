@@ -1,14 +1,15 @@
 """In-guest job store and stub runner.
 
-Process-local only. Emits WorkHandoff JSON (kind/class/payload_digest +
-status/id). Does not call runtime.apply compute-work. Mesh is
-compute-job → sos (worker calls Unit). In-process stub is the fallback;
-operator/ctl admits the exported handoff. Pause/resume is durable-path
-only (injected hook or opt-in lab adapter); stub jobs are refused.
+Emits WorkHandoff JSON (kind/class/payload_digest + status/id). Does
+not call runtime.apply compute-work. Mesh is compute-job → sos
+(worker calls Unit). In-process stub is the fallback; operator/ctl
+admits the exported handoff. Pause/resume is durable-path only
+(injected hook or opt-in lab adapter); stub jobs are refused.
 Progress prefers hook.progress() path-slices when durable-backed.
 Events prefer hook.events() JSONL when durable-backed. Historical
-comparison uses in-process list/get identity only. Default hook
-stays inert. Does not close #70. Does not close #78.
+comparison uses list/get identity (in-process plus local lab files
+when persisted). Default hook stays inert. Does not close #70.
+Does not close #78.
 """
 
 from __future__ import annotations
@@ -17,11 +18,21 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from sos.compare import compare_vs_priors
 from sos.errors import AlreadyTerminal, IllegalTransition, JobNotFound, PayloadUnknown, StubOnly
 from sos.handoff import ParsedSubmit, parse_submit, payload_export, HANDOFF_EXPORT_KEYS
+from sos.persist import (
+    RESTART_LOST_ERROR,
+    RESTART_LOST_MESSAGE,
+    job_to_record,
+    load_recent_records,
+    prepare_jobs_dir,
+    record_to_job_kwargs,
+    write_record,
+)
 from sos.handoff_vocab import (
     BACKED_RUNTIME,
     BACKED_STUB,
@@ -418,14 +429,56 @@ def _has_durable_events(reported: Any) -> bool:
 
 @dataclass
 class JobStore:
-    """Thread-safe in-memory jobs. One process; gone on restart."""
+    """Thread-safe jobs. Optional local lab files survive guest restart."""
 
     step_seconds: float = DEFAULT_STEP_SECONDS
     runtime_hook: RuntimeHandoffHook = field(default_factory=InertRuntimeHandoffHook)
+    persist_dir: Path | str | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _jobs: dict[str, Job] = field(default_factory=dict, repr=False)
     _cancel: dict[str, threading.Event] = field(default_factory=dict, repr=False)
     _clock: Callable[[], str] = field(default=utcnow, repr=False)
+
+    def __post_init__(self) -> None:
+        prepared = prepare_jobs_dir(self.persist_dir)
+        self.persist_dir = prepared
+        if prepared is not None:
+            self._reload()
+
+    def _persist_locked(self, job: Job) -> None:
+        """Caller holds ``_lock``. Fail-closed: write errors are ignored."""
+        if self.persist_dir is None:
+            return
+        write_record(self.persist_dir, job_to_record(job))
+
+    def _reload(self) -> None:
+        """Load recent records. Non-terminal stub work is not resumed."""
+        if self.persist_dir is None:
+            return
+        records = load_recent_records(self.persist_dir)
+        records.sort(
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("id") or ""),
+            )
+        )
+        with self._lock:
+            for record in records:
+                kwargs = record_to_job_kwargs(record)
+                if kwargs is None:
+                    continue
+                job_id = kwargs["id"]
+                if job_id in self._jobs:
+                    continue
+                job = Job(**kwargs)
+                if job.status not in TERMINAL:
+                    job.status = STATUS_FAILED
+                    job.updated_at = self._clock()
+                    job.message = RESTART_LOST_MESSAGE
+                    job.error = RESTART_LOST_ERROR
+                    self._append_event_locked(job, "failed", RESTART_LOST_MESSAGE)
+                self._jobs[job.id] = job
+                self._persist_locked(job)
 
     def submit(self, body: dict[str, Any]) -> Job:
         parsed: ParsedSubmit = parse_submit(body)
@@ -452,6 +505,7 @@ class JobStore:
             self._jobs[job_id] = job
             self._cancel[job_id] = cancel
             self._append_event_locked(job, "submitted", submit_detail)
+            self._persist_locked(job)
 
         runtime_ref = self._try_admit(job)
         if runtime_ref is not None:
@@ -467,6 +521,7 @@ class JobStore:
                     merged["backed"] = BACKED_RUNTIME
                     live.local = merged
                     self._append_event_locked(live, "backed", BACKED_RUNTIME)
+                    self._persist_locked(live)
             return self.get(job_id)
 
         with self._lock:
@@ -476,6 +531,7 @@ class JobStore:
                 merged["backed"] = BACKED_STUB
                 live.local = merged
                 self._append_event_locked(live, "backed", BACKED_STUB)
+                self._persist_locked(live)
         thread = threading.Thread(
             target=self._run,
             args=(job_id, cancel),
@@ -532,10 +588,11 @@ class JobStore:
         return self.get(job_id).to_events()
 
     def compare(self, job_id: str) -> dict[str, Any]:
-        """Vs recent same-catalog or same-kind/class jobs already in this store.
+        """Vs recent same-catalog or same-kind/class jobs in guest history.
 
-        Reuses ``list()`` / ``get()`` identity. No guest→ctl channel.
-        Does not invent typical/ETA without succeeded prior walls.
+        Reuses ``list()`` / ``get()`` identity (in-process plus reloaded
+        lab files). No guest→ctl channel. Does not invent typical/ETA
+        without succeeded prior walls.
         """
         current = self.get(job_id)
         peers = [job for job in self.list() if job.id != job_id]
@@ -568,6 +625,7 @@ class JobStore:
             job.updated_at = now
             job.message = "canceled by operator"
             self._append_event_locked(job, "canceled", "canceled by operator")
+            self._persist_locked(job)
             event = self._cancel.get(job_id)
             if event is not None:
                 event.set()
@@ -615,6 +673,7 @@ class JobStore:
             detail = f"{next_status} via runtime hook"
             job.message = detail
             self._append_event_locked(job, next_status, detail)
+            self._persist_locked(job)
             return self._snapshot(job)
 
     def _append_event_locked(self, job: Job, event: str, detail: str) -> None:
@@ -753,6 +812,7 @@ class JobStore:
                     self._append_event_locked(job, "running", message or "running")
                 elif status == STATUS_PAUSED:
                     self._append_event_locked(job, "paused", message or "paused")
+            self._persist_locked(job)
             return True
 
     def _wait(self, job_id: str, cancel: threading.Event, seconds: float) -> bool:

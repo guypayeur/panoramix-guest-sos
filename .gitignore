@@ -1,3 +1,6 @@
+# Local lab job history (PANORAMIX_SOS_JOBS_DIR default)
+.sos/
+
 # Python
 __pycache__/
 *.py[cod]

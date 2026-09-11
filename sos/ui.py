@@ -293,7 +293,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Static path-slice ownership tags when hooked (not Slack, not a
     live team directory). Event trail stays on this panel (not a SIEM).
     Historical comparison is thinner: recent same-catalog (or same
-    kind/class) jobs already in this process. Typical/ETA only from
+    kind/class) jobs in guest history (in-process plus local lab files
+    under <code>.sos/jobs</code> / <code>PANORAMIX_SOS_JOBS_DIR</code>
+    when persisted; fail-closed if disabled). Typical/ETA only from
     succeeded prior walls when enough samples exist.
     Not a forecast. Not IFRS17. Not iec SPA historical widget.
     Failed/canceled jobs show a terminal/failure summary
@@ -918,7 +920,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const by = payload.matched_by === "catalog" ? "same catalog"
         : payload.matched_by === "kind_class" ? "same kind/class"
         : "guest history";
-      match.textContent = "Matched by " + by + " in this process (n=" +
+      match.textContent = "Matched by " + by + " in guest history (n=" +
         (payload.priors_n != null ? payload.priors_n : 0) + ").";
       wrap.appendChild(match);
       const thisLine = document.createElement("p");
@@ -930,7 +932,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       if (!priors.length) {
         const empty = document.createElement("p");
         empty.className = "empty";
-        empty.textContent = "No prior jobs in this process to compare.";
+        empty.textContent = "No prior jobs in guest history to compare.";
         wrap.appendChild(empty);
       } else {
         const table = document.createElement("table");
