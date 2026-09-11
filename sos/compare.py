@@ -1,7 +1,8 @@
-"""Thinner historical-run comparison from in-process job history.
+"""Thinner historical-run comparison from guest job history.
 
 Uses list/get identity already present: catalog name (when on the job),
-kind/class, created_at/updated_at. Does not invent wall times or ETAs.
+kind/class, created_at/updated_at. History may include records reloaded
+from local lab files. Does not invent wall times or ETAs.
 Not a forecast. Not IFRS17. Not iec SPA historical widget.
 Does not close #70 / #78. Does not unlock #61 / #29.
 """
@@ -23,17 +24,19 @@ COMPARE_HONESTY = (
     "Not a forecast. Not IFRS17. Not iec SPA historical widget."
 )
 COMPARE_NOTE_EMPTY = (
-    "No prior jobs in this process to compare. " + COMPARE_HONESTY
+    "No prior jobs in guest history to compare. " + COMPARE_HONESTY
 )
 COMPARE_NOTE_THIN = (
-    "Guest process history only — elapsed from created/updated timestamps. "
+    "Guest history only (in-process plus local lab files when persisted) — "
+    "elapsed from created/updated timestamps. "
     "Typical/ETA omitted until two succeeded priors exist. "
     + COMPARE_HONESTY
 )
 COMPARE_NOTE_TYPICAL = (
     "Typical wall is the median of succeeded prior elapsed times "
-    "in this process. ETA is that same typical wall when this run "
-    "is still live. " + COMPARE_HONESTY
+    "in guest history (in-process plus local lab files when persisted). "
+    "ETA is that same typical wall when this run is still live. "
+    + COMPARE_HONESTY
 )
 
 
