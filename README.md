@@ -141,7 +141,7 @@ Two paths (plus an opt-in lab adapter below):
 
 1. **Stub fallback (default):** `POST /v0/jobs` runs in-process. `local.backed` is `stub`. Submit/status/cancel stay on this Unit. Pause/resume is **refused** (`409 stub_only`).
 2. **Operator binding path:** operator/ctl reads the exported WorkHandoff and admits that tuple on the runtime compute plane via the binding. This Unit only **emits** the JSON.
-3. **Opt-in lab loopback:** `PANORAMIX_RUNTIME_ROOT` injects the existing hook and subprocesses `reserve-temporal` locally. Fail closed if unset. Not guest→ctl HTTP. Not #70 Done.
+3. **Opt-in lab loopback:** `PANORAMIX_CTL_HTTP` (preferred) talks to runtime loopback ctl HTTP (`/reserve-temporal/…`); `PANORAMIX_RUNTIME_ROOT` still subprocesses `reserve-temporal` locally. Fail closed if unset. Not guest→ctl HTTP (not mesh). Not #70 Done.
 
 ```bash
 # Guest UX (unchanged):
@@ -172,11 +172,28 @@ python3 -m runtime.apply reserve-temporal cancel --id cw_…
 
 Guest flow: UI / `POST /v0/jobs` with `demo:"reserve"` → `GET /v0/jobs/{id}/handoff` (+ `/payload`) → operator/ctl `reserve-temporal`. Guest-facing shape stays WorkHandoff only — no `workflow_id` / `task_queue` on the seam. Guest does not call apply. Cancel on this path is workflow cancel. Guest local cancel is unchanged. Pause/resume on the guest HTTP/UI is durable-path only (injected hook or opt-in lab adapter); stub jobs return `409 stub_only` and point here. Cancel is not pause. This does **not** close #70 and is not #78 Done; it does **not** stamp `north_star_done`.
 
-`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume/progress/events return none/false, so the in-process stub still runs. The default hook stays inert. Do **not** invent guest→ctl HTTP, `PLATFORM_RAY_*`, or mesh destinations. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`. `GET /v0/jobs/{id}/progress` prefers `hook.progress()` counters when the job is durable-backed; otherwise stub metadata. `GET /v0/jobs/{id}/events` prefers `hook.events()` JSONL when the job is durable-backed; otherwise process-memory.
+`sos.runtime_hook.InertRuntimeHandoffHook` is **inert**: admit/cancel/status/pause/resume/progress/events return none/false, so the in-process stub still runs. The default hook stays inert. Do **not** invent guest→ctl HTTP over the mesh, `PLATFORM_RAY_*`, or mesh destinations. If an operator injects a hook that admits, cancel tries the hook first, then falls back to local cancel. Pause/resume call the hook when present and only then set `paused` / `running`. `GET /v0/jobs/{id}/progress` prefers `hook.progress()` counters when the job is durable-backed; otherwise stub metadata. `GET /v0/jobs/{id}/events` prefers `hook.events()` JSONL when the job is durable-backed; otherwise process-memory.
+
+#### Opt-in lab loopback (ctl HTTP, preferred)
+
+Local lab only. When runtime `runtime.serve` is already listening on the reserve-temporal binding (`publish.ctl_bind` / `publish.ctl_port` **19215**), set `PANORAMIX_CTL_HTTP` to that **loopback** origin (example: `http://127.0.0.1:19215`). `SosApp` then injects `sos.lab_ctl_http.LabReserveTemporalHttpHook` on the **existing** hook seam and prefers durable status / progress / events / pause / resume / cancel via:
+
+```bash
+# runtime (already serving):
+python3 -m runtime.serve --binding bindings/local-reserve-temporal.example.yaml
+# guest:
+export PANORAMIX_CTL_HTTP=http://127.0.0.1:19215
+# optional when ctl.require is on:
+# export PANORAMIX_CTL_HTTP_BEARER=…
+```
+
+Verbs match runtime **main** @ `fb901542` (PR #100) / [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) § Loopback ctl HTTP: `POST /reserve-temporal/admit` (WorkHandoff triple JSON or `?catalog=recorded`), `GET /reserve-temporal/status|progress|events?id=cw_…`, `POST /reserve-temporal/pause|resume|cancel?id=cw_…`. Unset, non-loopback, or an unusable origin **fails closed** (inert stub). Optional `PANORAMIX_CTL_HTTP_BEARER` sends `Authorization: Bearer …`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` adds `live=1` on admit. This is **operator loopback ctl HTTP**, not guest→mesh ctl, not a Unit Git scheme, and not `runtime.apply compute-work`. Pin stays **0.5**.
+
+When `PANORAMIX_CTL_HTTP` is unset, the subprocess path below still works. When both are set, HTTP wins. CI without either env is unchanged.
 
 #### Opt-in lab loopback (local subprocess)
 
-Local lab only. Set `PANORAMIX_RUNTIME_ROOT` to a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout that contains `runtime/apply.py`. `SosApp` then injects `sos.lab_ctl.LabReserveTemporalHook` on the **existing** hook seam. That adapter runs `python3 -m runtime.apply reserve-temporal` (`admit|status|progress|events|pause|resume|cancel`) as a **local subprocess** against that checkout, using the WorkHandoff the guest already emits. Optional `PANORAMIX_RESERVE_TEMPORAL_BINDING` passes `--binding`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` passes `--live`. Unset or missing root **fails closed** (inert stub). CI without the env is unchanged.
+Local lab only. Set `PANORAMIX_RUNTIME_ROOT` to a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout that contains `runtime/apply.py`. `SosApp` then injects `sos.lab_ctl.LabReserveTemporalHook` on the **existing** hook seam. That adapter runs `python3 -m runtime.apply reserve-temporal` (`admit|status|progress|events|pause|resume|cancel`) as a **local subprocess** against that checkout, using the WorkHandoff the guest already emits. Optional `PANORAMIX_RESERVE_TEMPORAL_BINDING` passes `--binding`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` passes `--live`. Unset or missing root **fails closed** (inert stub). Prefer `PANORAMIX_CTL_HTTP` when serve is already up; this subprocess path stays valid.
 
 This is not guest-callable ctl HTTP, not a second control plane, and not `runtime.apply compute-work`. Stub-only pause/resume still **409** `stub_only`. Does **not** close runtime #70 / #78, does **not** unlock cloud, does **not** stamp `north_star_done`.
 

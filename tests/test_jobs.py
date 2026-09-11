@@ -1194,9 +1194,12 @@ class JobStoreTests(unittest.TestCase):
             blob = "\n".join(imports)
             self.assertNotIn("from runtime", blob, path)
             self.assertNotIn("import runtime", blob, path)
-            # Opt-in lab adapter may subprocess reserve-temporal; nothing else.
+            # Opt-in lab adapters may subprocess or talk loopback ctl HTTP.
             if path.name != "lab_ctl.py":
                 self.assertNotIn("subprocess", text, path)
+            if path.name != "lab_ctl_http.py":
+                self.assertNotIn("urllib.request", text, path)
+                self.assertNotIn("urlopen", text, path)
             self.assertNotIn("os.system", text, path)
             self.assertNotIn("Popen", text, path)
 
@@ -1252,6 +1255,10 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("does **not** call `runtime.apply compute-work`", text, name)
             self.assertIn("hook stays inert", text.lower(), name)
             self.assertIn("PANORAMIX_RUNTIME_ROOT", text, name)
+            self.assertIn("PANORAMIX_CTL_HTTP", text, name)
+            self.assertIn("/reserve-temporal/", text, name)
+            self.assertIn("fb901542", text, name)
+            self.assertIn("Loopback ctl HTTP", text, name)
             self.assertTrue(
                 "fail closed" in text.lower() or "fails closed" in text.lower(),
                 name,
@@ -1425,6 +1432,9 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("- [ ] Temporal-backed UX", ux)
         self.assertNotIn("- [x] Temporal-backed UX", ux)
         self.assertIn("PANORAMIX_RUNTIME_ROOT", ux)
+        self.assertIn("PANORAMIX_CTL_HTTP", ux)
+        self.assertIn("/reserve-temporal/", ux)
+        self.assertIn("fb901542", ux)
         self.assertIn("opt-in lab", ux.lower())
         self.assertIn("workflow cancel", ux.lower())
         self.assertNotIn("ray:", ux)
