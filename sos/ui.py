@@ -158,9 +158,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     }
     .step.done { color: var(--ok); }
     .step.current { color: var(--run); border-color: var(--run); }
-    .trail { font-size: 0.8rem; }
+    .trail { font-size: 0.8rem; padding-left: 1.1rem; }
     .trail li { margin: 0.2rem 0; }
     .trail .ts { font-family: var(--mono); color: var(--muted); font-size: 0.74rem; }
+    .trail .kind { font-weight: 650; }
     #cancel-modal {
       position: fixed;
       inset: 0;
@@ -211,7 +212,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Progress prefers durable path-slice counters when a runtime hook
     provides them; otherwise stub stage metadata (not iec planner
     parallelism / iec chunk progress).
-    Local event trail is not a regulatory audit.
+    Event trail prefers durable reserve-temporal JSONL when a hook
+    provides it; otherwise process-memory (not a SIEM / not a
+    regulatory audit).
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -287,8 +290,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
         Stub jobs stay disabled. Operator/ctl:
         <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code></p>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
-      <h2 style="margin-top:1.1rem">Local event trail</h2>
-      <p class="hint" style="margin-top:0">Process-local interventions on this guest — not a regulatory audit product.</p>
+      <h2 style="margin-top:1.1rem">Event trail</h2>
+      <p class="hint" style="margin-top:0">Durable reserve-temporal JSONL when a hook provides it;
+        otherwise process-memory. Not a SIEM, not a regulatory audit product.
+        Operator/ctl: <code>python3 -m runtime.apply reserve-temporal events --id cw_…</code></p>
       <div id="events"><p class="empty">No events.</p></div>
       <h2 style="margin-top:1.1rem">Handoff / payload</h2>
       <pre id="seam-view">Use View/copy handoff or Fetch payload for the ctl path. WorkHandoff emit only — no runtime.apply from this guest.</pre>
@@ -318,6 +323,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     let pendingCancelId = null;
     let lastSeamText = "";
     let lastProgress = null;
+    let lastEvents = null;
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -611,10 +617,36 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return wrap;
     }
 
+    function eventLabel(ev) {
+      return String(ev.event || ev.type || ev.kind || "event");
+    }
+
+    function eventDetail(ev) {
+      if (ev.detail) return String(ev.detail);
+      if (ev.type && String(ev.type) !== eventLabel(ev)) return String(ev.type);
+      if (ev.signal) return String(ev.signal);
+      if (ev.activity) return String(ev.activity);
+      return "";
+    }
+
     function renderEvents(job) {
       const host = $("events");
       host.replaceChildren();
-      const events = (job && job.events) || [];
+      const payload = (lastEvents && job && lastEvents.id === job.id) ? lastEvents : null;
+      const events = (payload && payload.events) || (job && job.events) || [];
+      const source = (payload && payload.source) || (job && job.events_source) || "memory";
+      const src = document.createElement("p");
+      src.className = "hint";
+      src.style.marginTop = "0.15rem";
+      if (source === "durable") {
+        const n = (payload && payload.events_n != null) ? payload.events_n
+          : (job && job.events_n != null) ? job.events_n : events.length;
+        src.textContent = "Source: durable — reserve-temporal JSONL (n=" + n
+          + "). Survives runtime restart. Not a SIEM / not iec /v1/audit/events.";
+      } else {
+        src.textContent = "Source: memory — process-local trail; dies on restart. Not a regulatory audit.";
+      }
+      host.appendChild(src);
       if (!events.length) {
         const p = document.createElement("p");
         p.className = "empty";
@@ -629,8 +661,16 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const ts = document.createElement("span");
         ts.className = "ts";
         ts.textContent = fmtTs(ev.ts);
+        const kind = document.createElement("span");
+        kind.className = "kind";
+        kind.textContent = eventLabel(ev);
         li.appendChild(ts);
-        li.appendChild(document.createTextNode(" · " + ev.event + " — " + (ev.detail || "")));
+        li.appendChild(document.createTextNode(" · "));
+        li.appendChild(kind);
+        const detail = eventDetail(ev);
+        if (detail) {
+          li.appendChild(document.createTextNode(" — " + detail));
+        }
         ul.appendChild(li);
       }
       host.appendChild(ul);
@@ -683,6 +723,15 @@ OPERATOR_HTML = """<!DOCTYPE html>
       if (prog && prog.fraction != null) {
         rows.push(...dlRow("fraction", String(prog.fraction)));
       }
+      const trail = (lastEvents && lastEvents.id === job.id) ? lastEvents : null;
+      const evSource = (trail && trail.source) || job.events_source;
+      if (evSource) {
+        rows.push(...dlRow("events source", evSource));
+      }
+      if (job.events_durable === true || (trail && trail.events_durable === true)) {
+        const n = (trail && trail.events_n != null) ? trail.events_n : job.events_n;
+        rows.push(...dlRow("events durable", n != null ? ("yes · n=" + n) : "yes"));
+      }
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
       host.appendChild(renderProgress(job));
@@ -718,7 +767,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tr.className = "job" + (job.id === selectedId ? " selected" : "");
         tr.addEventListener("click", () => {
           selectedId = job.id;
-          loadProgress(job.id).then(() => render());
+          loadProgress(job.id).then(() => loadEvents(job.id)).then(() => render());
         });
         const tdS = document.createElement("td"); tdS.appendChild(pill(job.status));
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
@@ -769,6 +818,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
     }
 
+    async function loadEvents(id) {
+      if (!id) {
+        lastEvents = null;
+        return;
+      }
+      try {
+        const res = await fetch("/v0/jobs/" + id + "/events");
+        const body = await res.json();
+        lastEvents = res.ok ? body : null;
+      } catch (e) {
+        lastEvents = null;
+      }
+    }
+
     async function refresh() {
       try {
         const res = await fetch("/v0/jobs");
@@ -778,8 +841,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if (selected) {
           selectedId = selected.id;
           await loadProgress(selectedId);
+          await loadEvents(selectedId);
         } else {
           lastProgress = null;
+          lastEvents = null;
         }
         render();
       } catch (e) {
