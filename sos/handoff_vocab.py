@@ -7,6 +7,7 @@ RESOURCE_CLASSES = frozenset({"cpu", "gpu"})
 WORK_STATUSES = (
     "queued",
     "running",
+    "paused",
     "succeeded",
     "failed",
     "canceled",
@@ -14,9 +15,14 @@ WORK_STATUSES = (
 TERMINAL = frozenset({"succeeded", "failed", "canceled"})
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
+STATUS_PAUSED = "paused"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_CANCELED = "canceled"
+# Operator/ctl pointer — guest does not invoke this.
+CTL_PAUSE_RESUME = (
+    "python3 -m runtime.apply reserve-temporal pause|resume --id cw_…"
+)
 
 DEMO_ECHO = "echo"
 DEMO_SLEEP = "sleep"

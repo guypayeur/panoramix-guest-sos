@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from sos.handoff_vocab import LOCAL_DEMOS, RESOURCE_CLASSES, WORK_KINDS
+from sos.handoff_vocab import (
+    CTL_PAUSE_RESUME,
+    LOCAL_DEMOS,
+    RESOURCE_CLASSES,
+    WORK_KINDS,
+)
 
 
 class SosError(Exception):
@@ -94,9 +99,39 @@ class AlreadyTerminal(SosError):
             id=job_id,
             status=status,
             note=(
-                "This guest has no pause/resume. Cancel ends a live run "
-                "(status canceled). Stub-backed cancel is local; "
+                "Cancel ends a live run (status canceled), including paused. "
+                "Cancel is not pause. Pause/resume is durable-path only "
+                f"({CTL_PAUSE_RESUME}). Stub-backed cancel is local; "
                 "runtime-backed cancel signals the injected hook, then marks "
                 "the guest job canceled if it was still live."
             ),
+        )
+
+
+class StubOnly(SosError):
+    http_status = 409
+
+    def __init__(self, job_id: str, action: str) -> None:
+        super().__init__(
+            "stub_only",
+            id=job_id,
+            action=action,
+            detail=(
+                f"{action} requires the durable path; the in-process stub "
+                "cannot pause or resume. Operator/ctl: "
+                f"{CTL_PAUSE_RESUME}"
+            ),
+        )
+
+
+class IllegalTransition(SosError):
+    http_status = 409
+
+    def __init__(self, job_id: str, status: str, action: str) -> None:
+        super().__init__(
+            "illegal_transition",
+            id=job_id,
+            status=status,
+            action=action,
+            detail=f"cannot {action} job in status {status}",
         )

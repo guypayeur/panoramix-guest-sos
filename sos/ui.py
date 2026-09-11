@@ -88,6 +88,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
       opacity: 1;
       cursor: not-allowed;
     }
+    button.secondary:disabled {
+      color: var(--muted);
+      border-color: var(--line);
+      background: transparent;
+      cursor: not-allowed;
+    }
     button.row-cancel {
       padding: 0.18rem 0.5rem;
       font-size: 0.75rem;
@@ -111,6 +117,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     }
     .st-queued { color: #c9b36a; }
     .st-running { color: var(--run); }
+    .st-paused { color: var(--warn); }
     .st-succeeded { color: var(--ok); }
     .st-failed { color: var(--bad); }
     .st-canceled { color: var(--muted); }
@@ -183,7 +190,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <p class="sub">Day-one guest path: submit → status → cancel. Opaque handoff is
         kind / class / payload_digest (runtime/compute_work.py, #70 Slice B). Local
         echo / sleep / reserve is a demo shortcut that synthesizes that shape —
-        this page never takes engine URLs.</p>
+        this page never takes engine URLs. Pause/Resume is durable-path only.</p>
     </div>
     <p class="sub" id="info-line">loading…</p>
   </header>
@@ -194,8 +201,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <strong>not</strong> IFRS17 math, and <strong>not</strong> runtime #70 Done.
     Named iec baseline remains
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
-    <code>proofs/fixtures/iec-parity/method.yaml</code>). Guest is thinner:
-    <strong>no pause / resume</strong> — Cancel ends the run (<code>canceled</code>).
+    <code>proofs/fixtures/iec-parity/method.yaml</code>).     Guest is thinner:
+    Pause/Resume exist on the <strong>durable path only</strong>
+    (injected hook or operator/ctl
+    <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
+    Stub-only jobs refuse pause/resume (<code>409 stub_only</code>) —
+    this page does not pretend otherwise. Cancel ends the run
+    (<code>canceled</code>) from running or paused; cancel is not pause.
     Progress is stub stage metadata only (not iec chunk progress).
     Local event trail is not a regulatory audit.
     <strong>Stub fallback</strong> (default, in-process) vs
@@ -264,9 +276,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <h2 style="margin-top:1.1rem">Job detail</h2>
       <div class="row" style="margin:0 0 0.55rem">
         <button type="button" class="danger" id="cancel-btn" disabled>Cancel selected job</button>
+        <button type="button" class="secondary" id="pause-btn" disabled>Pause</button>
+        <button type="button" class="secondary" id="resume-btn" disabled>Resume</button>
         <button type="button" class="secondary" id="handoff-btn" disabled>View/copy handoff</button>
         <button type="button" class="secondary" id="payload-btn" disabled>Fetch payload</button>
       </div>
+      <p class="hint" id="pause-hint" style="margin-top:0">Pause/Resume require the durable path.
+        Stub jobs stay disabled. Operator/ctl:
+        <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code></p>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
       <h2 style="margin-top:1.1rem">Local event trail</h2>
       <p class="hint" style="margin-top:0">Process-local interventions on this guest — not a regulatory audit product.</p>
@@ -279,11 +296,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
   <div id="cancel-modal" hidden>
     <div class="modal-card" role="dialog" aria-labelledby="cancel-title">
       <h3 id="cancel-title">Cancel this run?</h3>
-      <p>This guest has <strong>no pause/resume</strong> yet. Cancel ends the run
-        (status <code>canceled</code>).</p>
-      <p class="hint" style="margin-top:0">Stub-backed jobs cancel locally.
-        Runtime-backed jobs (injected hook) signal the hook, then the guest job
-        is marked <code>canceled</code> if it was still live.</p>
+      <p>Cancel ends the run (status <code>canceled</code>).
+        <strong>Cancel is not pause.</strong></p>
+      <p class="hint" style="margin-top:0">Pause/Resume exist on the durable/ctl
+        path only
+        (<code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
+        Stub-backed jobs cancel locally. Runtime-backed jobs (injected hook)
+        signal the hook, then the guest job is marked <code>canceled</code>
+        if it was still live (running or paused).</p>
       <div class="row" style="margin-top:0.85rem">
         <button type="button" class="danger" id="cancel-confirm">End run (canceled)</button>
         <button type="button" class="secondary" id="cancel-dismiss">Keep running</button>
@@ -388,6 +408,61 @@ OPERATOR_HTML = """<!DOCTYPE html>
     function live(status) {
       return status !== "succeeded" && status !== "failed" && status !== "canceled";
     }
+
+    function durable(job) {
+      if (!job) return false;
+      if (job.pause_resume === true) return true;
+      const backed = job.local && job.local.backed;
+      return backed === "runtime";
+    }
+
+    function syncLifecycleButtons(job) {
+      const canCancel = !!(job && live(job.status));
+      $("cancel-btn").disabled = !canCancel;
+      $("cancel-btn").textContent = canCancel
+        ? "Cancel selected job"
+        : (job ? "Cannot cancel (terminal)" : "Cancel selected job");
+      const canPause = !!(job && durable(job) && job.status === "running");
+      const canResume = !!(job && durable(job) && job.status === "paused");
+      $("pause-btn").disabled = !canPause;
+      $("resume-btn").disabled = !canResume;
+      const hint = $("pause-hint");
+      if (!job) {
+        hint.textContent = "Pause/Resume require the durable path. Stub jobs stay disabled. Operator/ctl: python3 -m runtime.apply reserve-temporal pause|resume --id cw_…";
+        return;
+      }
+      if (!durable(job)) {
+        hint.textContent = "Stub-only job: Pause/Resume disabled (409 stub_only). Durable path or operator/ctl: python3 -m runtime.apply reserve-temporal pause|resume --id cw_…";
+        return;
+      }
+      if (job.status === "running") {
+        hint.textContent = "Durable-backed: Pause is enabled. Cancel is not pause.";
+        return;
+      }
+      if (job.status === "paused") {
+        hint.textContent = "Durable-backed: Resume is enabled. Cancel from paused still ends the run.";
+        return;
+      }
+      hint.textContent = "Durable-backed pause/resume is idle on this status. Cancel is not pause.";
+    }
+
+    async function signalJob(id, action) {
+      flash("");
+      const res = await fetch("/v0/jobs/" + id + "/" + action, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+      }
+      selectedId = id;
+      await refresh();
+    }
+
+    $("pause-btn").addEventListener("click", () => {
+      if (selectedId) signalJob(selectedId, "pause");
+    });
+    $("resume-btn").addEventListener("click", () => {
+      if (selectedId) signalJob(selectedId, "resume");
+    });
 
     async function cancelJob(id) {
       flash("");
@@ -539,6 +614,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         $("events").appendChild(empty);
         $("handoff-btn").disabled = true;
         $("payload-btn").disabled = true;
+        $("pause-btn").disabled = true;
+        $("resume-btn").disabled = true;
         return;
       }
       const local = job.local || {};
@@ -576,6 +653,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
         renderDetail(null);
         $("cancel-btn").disabled = true;
         $("cancel-btn").textContent = "Cancel selected job";
+        $("pause-btn").disabled = true;
+        $("resume-btn").disabled = true;
+        syncLifecycleButtons(null);
         return;
       }
       const table = document.createElement("table");
@@ -619,9 +699,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const selected = jobs.find(j => j.id === selectedId) || jobs[0];
       selectedId = selected.id;
       renderDetail(selected);
-      const can = live(selected.status);
-      $("cancel-btn").disabled = !can;
-      $("cancel-btn").textContent = can ? "Cancel selected job" : "Cannot cancel (terminal)";
+      syncLifecycleButtons(selected);
     }
 
     async function refresh() {
