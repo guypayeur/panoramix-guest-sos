@@ -4,9 +4,10 @@ Process-local only. Emits WorkHandoff JSON (kind/class/payload_digest +
 status/id). Does not call runtime.apply compute-work. Mesh is
 compute-job → sos (worker calls Unit). In-process stub is the fallback;
 operator/ctl admits the exported handoff. Pause/resume is durable-path
-only (injected hook); stub jobs are refused. Progress prefers
-hook.progress() path-slices when durable-backed. Events prefer
-hook.events() JSONL when durable-backed. Does not close #70.
+only (injected hook or opt-in lab adapter); stub jobs are refused.
+Progress prefers hook.progress() path-slices when durable-backed.
+Events prefer hook.events() JSONL when durable-backed. Default hook
+stays inert. Does not close #70. Does not close #78.
 """
 
 from __future__ import annotations

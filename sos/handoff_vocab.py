@@ -19,7 +19,8 @@ STATUS_PAUSED = "paused"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_CANCELED = "canceled"
-# Operator/ctl pointer — guest does not invoke this.
+# Operator/ctl pointer — default guest does not invoke this.
+# Opt-in lab adapter may invoke reserve-temporal locally; not compute-work.
 CTL_PAUSE_RESUME = (
     "python3 -m runtime.apply reserve-temporal pause|resume --id cw_…"
 )

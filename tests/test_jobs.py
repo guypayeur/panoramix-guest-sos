@@ -1035,8 +1035,9 @@ class JobStoreTests(unittest.TestCase):
             blob = "\n".join(imports)
             self.assertNotIn("from runtime", blob, path)
             self.assertNotIn("import runtime", blob, path)
-            # Guest may document operator/ctl pause|resume; it must not invoke apply.
-            self.assertNotIn("subprocess", text, path)
+            # Opt-in lab adapter may subprocess reserve-temporal; nothing else.
+            if path.name != "lab_ctl.py":
+                self.assertNotIn("subprocess", text, path)
             self.assertNotIn("os.system", text, path)
             self.assertNotIn("Popen", text, path)
 
@@ -1091,6 +1092,13 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("runtime.apply compute-work", text, name)
             self.assertIn("does **not** call `runtime.apply compute-work`", text, name)
             self.assertIn("hook stays inert", text.lower(), name)
+            self.assertIn("PANORAMIX_RUNTIME_ROOT", text, name)
+            self.assertTrue(
+                "fail closed" in text.lower() or "fails closed" in text.lower(),
+                name,
+            )
+            self.assertNotIn("fixes #70", text.lower(), name)
+            self.assertNotIn("fixes #78", text.lower(), name)
             self.assertIn("workflow cancel", text.lower(), name)
             self.assertIn("workflow_id", text, name)
             self.assertIn("task_queue", text, name)
@@ -1204,6 +1212,8 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("after #89", ux.lower())
         self.assertIn("- [ ] Temporal-backed UX", ux)
         self.assertNotIn("- [x] Temporal-backed UX", ux)
+        self.assertIn("PANORAMIX_RUNTIME_ROOT", ux)
+        self.assertIn("opt-in lab", ux.lower())
         self.assertIn("workflow cancel", ux.lower())
         self.assertNotIn("ray:", ux)
         self.assertNotIn("temporal:", ux)
