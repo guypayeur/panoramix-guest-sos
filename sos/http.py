@@ -92,9 +92,10 @@ INFO_PAYLOAD = {
                 "guest→ctl HTTP, no runtime.apply compute-work, no env "
                 "that adds mesh destinations. Stub is the fallback; "
                 "operator/ctl admits via the binding. Default hook stays "
-                "inert. Opt-in lab: PANORAMIX_RUNTIME_ROOT local ctl "
-                "loopback to reserve-temporal on the existing hook seam "
-                "(not mesh HTTP). "
+                "inert. Opt-in lab: PANORAMIX_CTL_HTTP loopback ctl "
+                "HTTP (preferred) or PANORAMIX_RUNTIME_ROOT local "
+                "apply loopback to reserve-temporal on the existing hook "
+                "seam (not mesh HTTP; not guest→mesh ctl). "
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },

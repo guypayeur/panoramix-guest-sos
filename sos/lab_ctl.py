@@ -4,6 +4,11 @@ Uses the existing ``RuntimeHandoffHook`` injection point. Not a second
 control plane. Not guest-callable ctl HTTP over the mesh. Not
 ``PLATFORM_RAY_*``. Not engine URLs. Pin stays 0.5.
 
+Sibling ``sos.lab_ctl_http`` is the preferred opt-in when
+``PANORAMIX_CTL_HTTP`` is a loopback origin (runtime.serve verbs).
+This module stays the subprocess path via ``PANORAMIX_RUNTIME_ROOT``.
+Default without either env stays inert.
+
 Opt-in via ``PANORAMIX_RUNTIME_ROOT`` pointing at a panoramix-runtime
 checkout that contains ``runtime/apply.py``. Unset or missing root
 fails closed (caller keeps the inert stub). Optional

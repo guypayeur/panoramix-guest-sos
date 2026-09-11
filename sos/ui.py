@@ -259,7 +259,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>grammar/examples/reserve_ifrs17</code> (see panoramix-runtime
     <code>proofs/fixtures/iec-parity/method.yaml</code>).     Guest is thinner:
     Pause/Resume exist on the <strong>durable path only</strong>
-    (injected hook, opt-in <code>PANORAMIX_RUNTIME_ROOT</code> lab adapter,
+    (injected hook, opt-in <code>PANORAMIX_CTL_HTTP</code> loopback ctl
+    HTTP or <code>PANORAMIX_RUNTIME_ROOT</code> lab adapter,
     or operator/ctl
     <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
     Stub-only jobs refuse pause/resume (<code>409 stub_only</code>) —
@@ -292,8 +293,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
     operator/ctl-mediated only — no guest→ctl HTTP, no
     <code>runtime.apply compute-work</code> from the guest, no env that adds
     mesh destinations. Default hook stays inert. Opt-in lab
+    <code>PANORAMIX_CTL_HTTP</code> may call loopback
+    <code>/reserve-temporal/…</code> (preferred) or
     <code>PANORAMIX_RUNTIME_ROOT</code> may invoke
-    <code>reserve-temporal</code> locally on the existing hook seam (not #70 Done).
+    <code>reserve-temporal</code> locally on the existing hook seam
+    (not guest→mesh ctl; not #70 Done).
     Recorded digest matches
     <code>runtime.reserve.digest_for(recorded_params())</code> on
     panoramix-runtime main (<code>docs/reserve.md</code>).
