@@ -73,6 +73,14 @@ class HttpAppTests(unittest.TestCase):
             "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
         )
         self.assertEqual(body["jobs"]["runtime_reserve"], "docs/reserve.md")
+        self.assertEqual(
+            body["jobs"]["runtime_reserve_helpers"],
+            [
+                "runtime.reserve.digest_for",
+                "runtime.reserve.recorded_params",
+                "runtime.reserve.live_params",
+            ],
+        )
         self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live"])
         self.assertIn("workload", body["jobs"]["reserve_payload_keys"])
         ctl = body["jobs"]["ctl_handoff"]
@@ -134,8 +142,9 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("runtime #70 Done", html)
             self.assertIn("not</strong> runtime #70 Done", html)
             self.assertNotIn("awaiting a platform-stamped", html)
-            self.assertNotIn("docs/reserve.md", html)
-            self.assertNotIn("digest_for", html)
+            self.assertIn("docs/reserve.md", html)
+            self.assertIn("digest_for", html)
+            self.assertIn("recorded_params", html)
             self.assertIn('value="recorded"', html)
             self.assertNotIn("north-star Done", html)
 

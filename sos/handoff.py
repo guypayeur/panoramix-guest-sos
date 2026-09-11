@@ -3,9 +3,9 @@
 Hard reference: runtime/compute_work.py on panoramix-runtime main.
 Guest emits WorkHandoff JSON only (kind/class/payload_digest + status/id).
 Does not call runtime.apply compute-work. Does not open guest→ctl HTTP.
-Reserve catalogs are a small stable param set (TODO(#83) remirror if
-runtime documents different keys on main). Ctl export has no nested
-``payload`` field. Does not close #70. Does not unlock #61 / #29.
+Reserve catalogs mirror runtime.reserve.recorded_params / live_params /
+digest_for on panoramix-runtime main (docs/reserve.md). Ctl export has
+no nested ``payload`` field. Does not close #70. Does not unlock #61 / #29.
 """
 
 from __future__ import annotations
@@ -196,12 +196,12 @@ def payload_export(digest: str, blob: bytes) -> dict[str, Any]:
 
 
 def recorded_params() -> dict[str, Any]:
-    """Recorded/CI catalog (small stable set; TODO(#83) remirror)."""
+    """Recorded/CI catalog. Mirrors runtime.reserve.recorded_params on main."""
     return dict(RECORDED_PARAMS)
 
 
 def live_params() -> dict[str, Any]:
-    """Live/lab catalog (small stable set; TODO(#83) remirror)."""
+    """Live/lab catalog. Mirrors runtime.reserve.live_params on main."""
     return dict(LIVE_PARAMS)
 
 
@@ -218,10 +218,10 @@ def params_for_catalog(catalog: str) -> dict[str, Any]:
 
 
 def payload_for(params: dict[str, Any]) -> dict[str, Any]:
-    """Canonical reserve bytes (small stable param set; not IFRS17).
+    """Canonical reserve bytes. Mirrors runtime.reserve.payload_for on main.
 
-    TODO(#83): remirror keys if runtime #83 documents a different catalog
-    on main. Until then keep this shape so the recorded digest stays put.
+    Keys match docs/reserve.md (not IFRS17). Guest copies them; it does
+    not import runtime.
     """
     return {
         "workload": str(params.get("workload") or RESERVE_WORKLOAD),
@@ -235,7 +235,11 @@ def payload_for(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def digest_for(params: dict[str, Any]) -> str:
-    """sha256 of payload_for canonical JSON. Recorded digest is frozen."""
+    """sha256 of payload_for canonical JSON.
+
+    Must match runtime.reserve.digest_for on panoramix-runtime main.
+    Recorded catalog is sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e.
+    """
     return digest_canonical(payload_for(params))
 
 
@@ -275,11 +279,11 @@ def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
     """UX-seed reserve shortcut → synthesized job + stable payload digest.
 
     Default kind is ``job``, default class is ``cpu``. Optional ``class: gpu``
-    is an opaque label only. Payload bytes are the small catalog
-    (``workload`` / ``accounts`` / ``horizon`` / ``paths`` / ``seed`` /
-    ``lapse_bps`` / ``discount_bps``). Local ``label`` / ``stages`` /
-    ``seconds`` are stub UX and are **not** in the digest. Guest emits
-    WorkHandoff JSON only — it never calls ``runtime.apply compute-work``.
+    is an opaque label only. Payload bytes match runtime.reserve.payload_for
+    / digest_for on panoramix-runtime main (docs/reserve.md). Local
+    ``label`` / ``stages`` / ``seconds`` are stub UX and are **not** in the
+    digest. Guest emits WorkHandoff JSON only — it never calls
+    ``runtime.apply compute-work``.
     """
     catalog_raw = body.get("catalog", RESERVE_CATALOG_RECORDED)
     if not isinstance(catalog_raw, str):

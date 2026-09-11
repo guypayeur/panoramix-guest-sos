@@ -165,8 +165,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     (mesh is compute-job → sos; worker calls this Unit). Transport today is
     operator/ctl-mediated only — no guest→ctl HTTP, no
     <code>runtime.apply compute-work</code> from the guest, no env that adds
-    mesh destinations. Recorded digest is frozen; remirror when runtime #83
-    lands.</p>
+    mesh destinations. Recorded digest matches
+    <code>runtime.reserve.digest_for(recorded_params())</code> on
+    panoramix-runtime main (<code>docs/reserve.md</code>).</p>
   <main>
     <section>
       <h2>Submit local demo</h2>
@@ -208,7 +209,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         </div>
       </form>
       <p class="hint">Stored as kind=job, class=cpu (or gpu label), payload_digest=sha256 of canonical catalog JSON
-        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — small stable set; remirror when runtime #83 lands).
+        (workload/accounts/horizon/paths/seed/lapse_bps/discount_bps — same as runtime.reserve.digest_for on main; docs/reserve.md).
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
         Reserve (shaped) defaults to the <strong>recorded</strong> catalog. Stages/seconds are local stub UX only
         (admit → project → fold, …) so cancel mid-flight is visible — still an in-memory thread, not engines, not IFRS17 math.

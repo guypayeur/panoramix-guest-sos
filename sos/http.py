@@ -61,6 +61,11 @@ INFO_PAYLOAD = {
         "reserve_catalogs": ["recorded", "live"],
         "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
         "runtime_reserve": "docs/reserve.md",
+        "runtime_reserve_helpers": [
+            "runtime.reserve.digest_for",
+            "runtime.reserve.recorded_params",
+            "runtime.reserve.live_params",
+        ],
         "ctl_handoff": {
             "mode": "operator-ctl",
             "guest_to_ctl_http": False,

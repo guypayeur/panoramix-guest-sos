@@ -601,7 +601,12 @@ class JobStoreTests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         vocab = root.joinpath("sos/handoff_vocab.py").read_text(encoding="utf-8")
-        self.assertIn("TODO(#83)", vocab)
+        self.assertIn("runtime.reserve.recorded_params", vocab)
+        self.assertIn("live_params", vocab)
+        self.assertIn("digest_for", vocab)
+        self.assertIn("docs/reserve.md", vocab)
+        self.assertNotIn("TODO(#83)", vocab)
+        self.assertNotIn("PR #84", vocab)
         self.assertIn(
             "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
             vocab,
@@ -611,13 +616,24 @@ class JobStoreTests(unittest.TestCase):
             self.assertNotIn("python3 -m runtime.apply", text, name)
             self.assertNotIn("runtime.apply reserve", text, name)
             self.assertIn("runtime.apply compute-work", text, name)
+            self.assertIn("runtime.reserve.digest_for", text, name)
+            self.assertIn("recorded_params", text, name)
+            self.assertIn("live_params", text, name)
+            self.assertIn("docs/reserve.md", text, name)
             self.assertIn("stub fallback", text.lower(), name)
             self.assertIn("operator binding", text.lower(), name)
             self.assertIn("guest→ctl HTTP", text, name)
-            self.assertIn("digests will be aligned when #83 lands", text, name)
+            self.assertNotIn("digests will be aligned when #83 lands", text, name)
+            self.assertNotIn("TODO(#83)", text, name)
+            self.assertNotIn("PR #84", text, name)
             self.assertIn("#83 + remeasure", text, name)
             self.assertNotIn("awaiting runtime stamp", text.lower(), name)
             self.assertIn("not #70 done", text.lower(), name)
+            self.assertIn(
+                "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
+                text,
+                name,
+            )
 
 
 if __name__ == "__main__":

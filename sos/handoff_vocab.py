@@ -29,11 +29,9 @@ MAX_SLEEP_SECONDS = 30.0
 # Reserve-shaped work request — small stable param set, thinner than IFRS17.
 # Hardcoded catalogs; do not import runtime; do not vendor iec.
 #
-# TODO(#83): remirror these keys if runtime #83 documents a different
-# catalog on main (accounts/scale/etc.). Current set copies runtime PR #84
-# payload_for / digest_for so recorded sha256 stays aligned until that
-# remirror. Do not change RECORDED_PAYLOAD_DIGEST without a matching
-# runtime fixture change.
+# Mirrored from panoramix-runtime **main** helpers (see docs/reserve.md):
+# runtime.reserve.recorded_params, live_params, digest_for.
+# Do not change RECORDED_PAYLOAD_DIGEST unless those helpers change on main.
 RESERVE_WORKLOAD = "reserve"
 RESERVE_CATALOG_RECORDED = "recorded"
 RESERVE_CATALOG_LIVE = "live"
@@ -73,7 +71,8 @@ LIVE_PARAMS: dict[str, int | str] = {
     "discount_bps": 300,
 }
 # sha256 of canonical JSON (sort_keys, separators=(",", ":")) of payload_for
-# recorded catalog. Keep unchanged unless TODO(#83) remirror lands.
+# recorded catalog. Must equal runtime.reserve.digest_for(recorded_params())
+# on panoramix-runtime main (docs/reserve.md).
 RECORDED_PAYLOAD_DIGEST = (
     "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e"
 )
