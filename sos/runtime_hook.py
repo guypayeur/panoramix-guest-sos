@@ -28,6 +28,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol
 
+HOOK_KIND_INERT = "inert"
+HOOK_KIND_CTL_HTTP = "ctl_http"
+HOOK_KIND_CTL_APPLY = "ctl_apply"
+
 
 class RuntimeHandoffHook(Protocol):
     """Admit/cancel/status/pause/resume/progress/events when an operator injects a live hook."""
@@ -129,3 +133,54 @@ def resolve_runtime_hook(
     if hook is None:
         return InertRuntimeHandoffHook()
     return hook
+
+
+def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
+    """Honest hook label for /v0/info + UI. No pretend when inert.
+
+    ``durable_path`` is true only when an opt-in lab adapter is
+    actually hooked. Default is inert (fail closed). Not guest→mesh
+    ctl. Does not close #70 / #78. north_star_done stays false.
+    """
+    from sos.lab_ctl import LabReserveTemporalHook
+    from sos.lab_ctl_http import LabReserveTemporalHttpHook
+
+    if isinstance(hook, LabReserveTemporalHttpHook):
+        return {
+            "kind": HOOK_KIND_CTL_HTTP,
+            "durable_path": True,
+            "adapter": "LabReserveTemporalHttpHook",
+            "ctl_http": hook.base_url,
+            "guest_to_mesh_ctl": False,
+            "north_star_done": False,
+            "note": (
+                "Durable path active via loopback ctl HTTP. "
+                "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
+                "Not #70 Done. north_star_done false."
+            ),
+        }
+    if isinstance(hook, LabReserveTemporalHook):
+        return {
+            "kind": HOOK_KIND_CTL_APPLY,
+            "durable_path": True,
+            "adapter": "LabReserveTemporalHook",
+            "guest_to_mesh_ctl": False,
+            "north_star_done": False,
+            "note": (
+                "Durable path via local reserve-temporal apply hook. "
+                "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
+                "Not #70 Done. north_star_done false."
+            ),
+        }
+    return {
+        "kind": HOOK_KIND_INERT,
+        "durable_path": False,
+        "adapter": type(hook).__name__,
+        "guest_to_mesh_ctl": False,
+        "north_star_done": False,
+        "note": (
+            "Default hook is inert. Fail-closed without "
+            "PANORAMIX_CTL_HTTP or PANORAMIX_RUNTIME_ROOT. "
+            "No pretend durable path."
+        ),
+    }

@@ -191,6 +191,21 @@ Verbs match runtime **main** @ `fb901542` (PR #100) / [`docs/reserve.md`](https:
 
 When `PANORAMIX_CTL_HTTP` is unset, the subprocess path below still works. When both are set, HTTP wins. CI without either env is unchanged.
 
+#### Lab compose (one-shot serve + CTL_HTTP)
+
+One-shot local lab (script + [docs/lab-compose.md](docs/lab-compose.md)): start `runtime.serve` with [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (ctl **19215**), start this guest with `PANORAMIX_CTL_HTTP=http://127.0.0.1:19215` and `PLATFORM_LISTEN_HTTP`, POST a recorded reserve demo, show `local.backed=runtime` plus durable progress/events/`pause_resume`, tear down. Fail-closed without env. Not guest→mesh ctl. Not SIEM. Not IFRS17. Pin **0.5**. Does **not** close runtime #70 / #78; does **not** unlock #61 / #29; `north_star_done` stays false.
+
+```bash
+# Plan only (no processes, no Temporal — CI):
+python3 scripts/lab_compose_reserve_temporal.py --dry-run
+
+# Live one-shot (operator lab; needs a panoramix-runtime checkout):
+export PANORAMIX_RUNTIME_ROOT=/path/to/panoramix-runtime
+python3 scripts/lab_compose_reserve_temporal.py
+```
+
+WSL stamp already exists at `~/panoramix-lab/evidence-70/stamp-71fb4c9-ctl-http/` — this compose does **not** reproduce that pack and does **not** stamp the #70 UX Done-when boxes.
+
 #### Opt-in lab loopback (local subprocess)
 
 Local lab only. Set `PANORAMIX_RUNTIME_ROOT` to a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout that contains `runtime/apply.py`. `SosApp` then injects `sos.lab_ctl.LabReserveTemporalHook` on the **existing** hook seam. That adapter runs `python3 -m runtime.apply reserve-temporal` (`admit|status|progress|events|pause|resume|cancel`) as a **local subprocess** against that checkout, using the WorkHandoff the guest already emits. Optional `PANORAMIX_RESERVE_TEMPORAL_BINDING` passes `--binding`. Optional `PANORAMIX_RESERVE_TEMPORAL_LIVE=1` passes `--live`. Unset or missing root **fails closed** (inert stub). Prefer `PANORAMIX_CTL_HTTP` when serve is already up; this subprocess path stays valid.

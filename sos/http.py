@@ -34,7 +34,7 @@ from sos.handoff_vocab import (
     WORK_STATUSES,
 )
 from sos.jobs import JobStore
-from sos.runtime_hook import resolve_runtime_hook
+from sos.runtime_hook import describe_runtime_hook, resolve_runtime_hook
 from sos.ui import OPERATOR_HTML
 
 MAX_BODY = 64 * 1024
@@ -96,6 +96,8 @@ INFO_PAYLOAD = {
                 "HTTP (preferred) or PANORAMIX_RUNTIME_ROOT local "
                 "apply loopback to reserve-temporal on the existing hook "
                 "seam (not mesh HTTP; not guest→mesh ctl). "
+                "One-shot lab: scripts/lab_compose_reserve_temporal.py "
+                "(runtime.serve + PANORAMIX_CTL_HTTP). "
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
@@ -223,7 +225,7 @@ class SosApp:
         if path == "/v0/info":
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
-            return _json_response(200, INFO_PAYLOAD)
+            return _json_response(200, self._info_payload())
         if path in ("/", "/ui"):
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
@@ -284,6 +286,18 @@ class SosApp:
             job = self.store.get(job_match.group(1))
             return _json_response(200, job.to_dict())
         return _json_response(404, {"error": "not_found", "path": path})
+
+    def _info_payload(self) -> dict[str, Any]:
+        """Static product info plus an honest durable-hook badge.
+
+        ``durable_path`` is true only when an opt-in lab adapter is
+        hooked. Inert default does not pretend. Not guest→mesh ctl.
+        """
+        payload = json.loads(json.dumps(INFO_PAYLOAD))
+        payload["jobs"]["durable_hook"] = describe_runtime_hook(
+            self.store.runtime_hook
+        )
+        return payload
 
     def _create_job(self, body: bytes) -> HttpResponse:
         payload = _read_json_object(body)
