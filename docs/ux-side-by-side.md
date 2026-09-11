@@ -14,7 +14,7 @@ Walk of [iec-proto-c `docs/ux/journeys/run_lifecycle_monitoring.md`](https://git
 | Progress (thinner) | `GET /v0/jobs/{id}/progress` |
 | Local event trail | `GET /v0/jobs/{id}/events` (also `events` on the job resource) |
 | Ctl handoff | `GET /v0/jobs/{id}/handoff`, `GET /v0/jobs/{id}/payload` |
-| Durable ctl (temporal-local) | operator/ctl `runtime.apply reserve-temporal` + runtime [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (pin 0.5). Landing PR [runtime#89](https://github.com/guypayeur/panoramix-runtime/pull/89); same paths on runtime main |
+| Durable ctl (temporal-local) | operator/ctl `runtime.apply reserve-temporal` + runtime [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (pin 0.5) on panoramix-runtime **main** |
 | Catalogs | recorded / live / parity (parity-scale) — guest mirrors panoramix-runtime **main** `runtime.reserve.parity_params` / `digest_for` / [`docs/reserve.md`](https://github.com/guypayeur/panoramix-runtime/blob/main/docs/reserve.md) |
 
 ## Journey walk
