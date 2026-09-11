@@ -30,6 +30,20 @@ CTL_PROGRESS = (
 CTL_EVENTS = (
     "python3 -m runtime.apply reserve-temporal events --id cw_…"
 )
+CTL_ADMIT = (
+    "python3 -m runtime.apply reserve-temporal admit --handoff JSON"
+)
+FAILED_OR_CANCELED = frozenset({STATUS_FAILED, STATUS_CANCELED})
+LAST_EVENTS_N = 5
+TERMINAL_NOTE = (
+    "Terminal/failure summary — status + message + optional last events / "
+    "stage when known; not a SIEM; not iec /v1/audit/events product"
+)
+RECOVERABILITY_NOTE = (
+    "Cancel/fail does not auto-retry. Re-admit via operator/ctl "
+    "reserve-temporal (handoff + payload). Pause/resume remains "
+    "durable-only (stub 409 stub_only). Not IFRS17."
+)
 
 DEMO_ECHO = "echo"
 DEMO_SLEEP = "sleep"

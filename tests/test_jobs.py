@@ -23,6 +23,7 @@ from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for,
 from sos.handoff_vocab import (
     BACKED_STUB,
     CATALOG_CROSSCHECK_NOTE,
+    CTL_ADMIT,
     LIVE_PAYLOAD_DIGEST,
     OWNERSHIP_NOTE,
     PARITY_CANONICAL_JSON,
@@ -30,8 +31,11 @@ from sos.handoff_vocab import (
     PATH_SLICE_OWNERS,
     RECORDED_CANONICAL_JSON,
     RECORDED_PAYLOAD_DIGEST,
+    RECOVERABILITY_NOTE,
     STATUS_CANCELED,
+    STATUS_FAILED,
     STATUS_QUEUED,
+    TERMINAL_NOTE,
     short_digest,
 )
 from sos.jobs import (
@@ -476,6 +480,13 @@ class JobStoreTests(unittest.TestCase):
         again = self.store.get(job.id)
         self.assertEqual(again.status, "canceled")
         self.assertIsNone(again.error)
+        body = again.to_dict()
+        self.assertEqual(body["terminal"]["status"], "canceled")
+        self.assertEqual(body["terminal"]["message"], "canceled by operator")
+        self.assertEqual(body["terminal"]["note"], TERMINAL_NOTE)
+        self.assertIn("not a SIEM", body["terminal"]["note"])
+        self.assertIs(body["recoverability"]["auto_retry"], False)
+        self.assertEqual(body["recoverability"]["note"], RECOVERABILITY_NOTE)
 
     def test_reserve_lifecycle_named_stages(self) -> None:
         job = self.store.submit(
@@ -526,6 +537,18 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(again.status, "canceled")
         self.assertIsNone(again.error)
         self.assertIn(again.local.get("stage"), {"admit", "project", "fold"})
+        body = again.to_dict()
+        self.assertEqual(body["terminal"]["status"], "canceled")
+        self.assertIn(body["terminal"]["stage"], {"admit", "project", "fold"})
+        self.assertIn(body["terminal"]["last_events"][-1]["event"], {"canceled"})
+        self.assertEqual(body["terminal"]["events_source"], EVENTS_SOURCE_MEMORY)
+        self.assertIs(body["recoverability"]["auto_retry"], False)
+        self.assertIs(body["recoverability"]["resume_from_failed"], False)
+        self.assertIs(body["recoverability"]["payload_known"], True)
+        self.assertEqual(body["recoverability"]["re_admit"], CTL_ADMIT)
+        self.assertIn(job.id, body["recoverability"]["handoff"])
+        self.assertNotIn("terminal", again.to_handoff())
+        self.assertNotIn("recoverability", again.to_handoff())
 
     def test_reserve_gpu_class_is_label_only(self) -> None:
         job = self.store.submit({"demo": "reserve", "class": "gpu", "seconds": 0})
@@ -642,6 +665,92 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("succeeded", events)
         self.assertNotIn("pause", events)
         self.assertNotIn("resume", events)
+        done = self.store.get(job.id).to_dict()
+        self.assertNotIn("terminal", done)
+        self.assertNotIn("recoverability", done)
+
+    def test_failed_and_canceled_terminal_surface(self) -> None:
+        class FailHook:
+            def __init__(self) -> None:
+                self.reported = "failed"
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return self.reported
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def events(self, job_id, runtime_ref):
+                return {
+                    "events": [
+                        {
+                            "ts": "2026-09-11T16:00:00Z",
+                            "event": "admit",
+                            "type": "WorkflowExecutionStarted",
+                        },
+                        {
+                            "ts": "2026-09-11T16:00:01Z",
+                            "event": "fail",
+                            "type": "WorkflowExecutionFailed",
+                        },
+                    ],
+                    "events_durable": True,
+                    "events_n": 2,
+                }
+
+        hook = FailHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        failed = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(failed.status, STATUS_FAILED)
+        body = failed.to_dict()
+        self.assertEqual(body["terminal"]["status"], "failed")
+        self.assertEqual(body["terminal"]["message"], "status via runtime hook")
+        self.assertEqual(body["terminal"]["events_source"], EVENTS_SOURCE_DURABLE)
+        self.assertEqual(body["terminal"]["last_events"][-1]["event"], "fail")
+        self.assertEqual(body["terminal"]["note"], TERMINAL_NOTE)
+        self.assertIn("not a SIEM", body["terminal"]["note"])
+        self.assertIn("/v1/audit/events", body["terminal"]["note"])
+        self.assertIs(body["recoverability"]["auto_retry"], False)
+        self.assertIs(body["recoverability"]["resume_from_failed"], False)
+        self.assertIs(body["recoverability"]["payload_known"], True)
+        self.assertEqual(body["recoverability"]["re_admit"], CTL_ADMIT)
+        self.assertIn("does not auto-retry", body["recoverability"]["note"])
+        self.assertNotIn("terminal", failed.to_handoff())
+        self.assertNotIn("recoverability", failed.to_handoff())
+
+        stub = self.store.submit({"demo": "sleep", "seconds": 8})
+        self.assertNotIn("terminal", stub.to_dict())
+        self.assertIs(
+            self.store._advance(
+                stub.id, STATUS_FAILED, message="stub runner failed", error="boom"
+            ),
+            True,
+        )
+        boom = self.store.get(stub.id)
+        self.assertEqual(boom.status, STATUS_FAILED)
+        boom_body = boom.to_dict()
+        self.assertEqual(boom_body["terminal"]["status"], "failed")
+        self.assertEqual(boom_body["terminal"]["message"], "stub runner failed")
+        self.assertEqual(boom_body["terminal"]["error"], "boom")
+        self.assertIs(boom_body["recoverability"]["auto_retry"], False)
+
+        opaque = self.store.submit(
+            {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+        )
+        canceled = self.store.cancel(opaque.id)
+        self.assertEqual(canceled.status, STATUS_CANCELED)
+        opaque_body = canceled.to_dict()
+        self.assertEqual(opaque_body["terminal"]["status"], "canceled")
+        self.assertIs(opaque_body["recoverability"]["payload_known"], False)
 
     def test_handoff_export_and_payload_bytes(self) -> None:
         job = self.store.submit({"demo": "reserve", "label": "ux-seed", "stages": 3, "seconds": 0})
@@ -1179,6 +1288,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("/progress", text, name)
             self.assertIn("/events", text, name)
             self.assertIn("/compare", text, name)
+            self.assertIn("does **not** auto-retry", text, name)
+            self.assertIn("admit --handoff JSON", text, name)
             self.assertIn("not a forecast", text.lower(), name)
             self.assertIn("iec spa historical widget", text.lower(), name)
             self.assertIn(
@@ -1267,6 +1378,29 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("- [ ] Operator/actuary path", ux)
         self.assertNotIn("- [x] Operator/actuary path", ux)
         self.assertIn("does **not** mark #70 Done", ux)
+        self.assertIn(
+            "| Failure surface (clarity) | job detail after fail/cancel | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn(
+            "| Recoverability (handoff re-admit) | ctl re-admit after fail/cancel | **match** (thinner) |",
+            ux,
+        )
+        self.assertNotIn(
+            "| Failure surface (clarity) | job detail after fail/cancel | **partial** |",
+            ux,
+        )
+        self.assertNotIn(
+            "| Recoverability (handoff re-admit) | ctl re-admit after fail/cancel | **partial** |",
+            ux,
+        )
+        self.assertIn("does **not** auto-retry", ux)
+        self.assertIn("Thinner failure / terminal summary", ux)
+        self.assertIn("Thinner recoverability", ux)
+        self.assertIn("- [x] Thinner failure / terminal summary", ux)
+        self.assertIn("- [x] Thinner recoverability", ux)
+        self.assertNotIn("- [x] `north_star_done: true`", ux)
+        self.assertIn("admit --handoff JSON", ux)
         self.assertIn("reserve-temporal", ux)
         self.assertIn("temporal-local", ux)
         self.assertIn("local-reserve-temporal.example.yaml", ux)
