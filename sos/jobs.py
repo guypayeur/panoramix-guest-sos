@@ -112,6 +112,7 @@ from sos.events_export import (
     export_meta,
     filter_events,
 )
+from sos.lab_ctl import WORK_ID_RE
 from sos.runtime_hook import (
     InertRuntimeHandoffHook,
     RuntimeHandoffHook,
@@ -154,6 +155,9 @@ _IEC_PLATFORM_ZERO_DEFAULTS = frozenset(
         "kernel_time_s",
     }
 )
+_IEC_JOB_ID_KEYS = ("iec_job_id", "iec_id")
+_CW_ID_KEYS = ("cw_id", "compute_work_id", "work_id")
+_OMIT_IDENTITY = frozenset({"", "none", "null", "unknown", "undefined"})
 STUB_PROGRESS_NOTE = (
     "Stub stage metadata derived from job fields — "
     "not iec chunk progress or parallelism"
@@ -178,9 +182,10 @@ SAME_JOB_PROGRESS_NOTE = (
     "IFRS17 math. Phase/fraction when the hook supplies them — "
     "omit Platform unknown/0 defaults (runtime #149 / #150); never "
     "invent. Richer hook fields surface when present (no invented "
-    "SPA chunk/ETA/heartbeat chrome). Walls (api_e2e_ms / "
-    "wall_elapsed_ms) omitted when missing — never invented. "
-    "Not #70 Done. north_star_done false"
+    "SPA chunk/ETA/heartbeat chrome). Nested iec_job_id / cw_id "
+    "when the hook/ctl supplies them — omitted when missing; never "
+    "invented. Walls (api_e2e_ms / wall_elapsed_ms) omitted when "
+    "missing — never invented. Not #70 Done. north_star_done false"
 )
 TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
@@ -269,6 +274,7 @@ class Job:
         payload["handoff_docs"] = _handoff_docs_payload(self)
         if self.error == ERROR_CTL_HTTP_UNREACHABLE:
             payload["lab_serve"] = lab_serve_affordance()
+        _attach_nested_identities(payload, self.runtime_ref)
         return payload
 
     def to_progress(self) -> dict[str, Any]:
@@ -291,6 +297,7 @@ class Job:
         if stage_index is not None:
             payload["stage_index"] = stage_index
         _attach_investigate(payload, self, hooked=False)
+        _attach_nested_identities(payload, self.runtime_ref)
         return payload
 
     def to_events(self, kinds: list[str] | None = None) -> dict[str, Any]:
@@ -561,6 +568,75 @@ def _first_progress_value(data: dict[str, Any], key: str) -> Any:
         if key in blob and blob[key] not in (None, ""):
             return blob[key]
     return None
+
+
+def _honest_identity(value: Any) -> str | None:
+    """Pass through a hook/ctl identity. Omit empty / unknown. Never invent."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in _OMIT_IDENTITY:
+        return None
+    return text
+
+
+def _cw_id_from_value(value: Any) -> str | None:
+    text = _honest_identity(value)
+    if text and WORK_ID_RE.fullmatch(text):
+        return text
+    return None
+
+
+def nested_ctl_identities(*blobs: Any) -> dict[str, str]:
+    """iec_job_id / cw_id when hook/ctl supplied them. Omit when missing."""
+    iec_job_id: str | None = None
+    cw_id: str | None = None
+    queue: list[Any] = list(blobs)
+    seen: set[int] = set()
+    while queue:
+        blob = queue.pop(0)
+        if not isinstance(blob, dict):
+            continue
+        ident = id(blob)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        for key in _IEC_JOB_ID_KEYS:
+            text = _honest_identity(blob.get(key))
+            if text:
+                iec_job_id = text
+                break
+        found_cw = None
+        for key in _CW_ID_KEYS:
+            raw = _cw_id_from_value(blob.get(key))
+            if raw:
+                found_cw = raw
+                break
+        if found_cw is None:
+            found_cw = _cw_id_from_value(blob.get("id"))
+        if found_cw:
+            cw_id = found_cw
+        handoff = blob.get("handoff")
+        if isinstance(handoff, dict):
+            queue.append(handoff)
+        nested = blob.get("progress")
+        if isinstance(nested, dict):
+            queue.append(nested)
+    out: dict[str, str] = {}
+    if iec_job_id:
+        out["iec_job_id"] = iec_job_id
+    if cw_id:
+        out["cw_id"] = cw_id
+    return out
+
+
+def _attach_nested_identities(payload: dict[str, Any], *blobs: Any) -> None:
+    """Copy nested iec-local identities. Omit when missing. Never invent."""
+    identities = nested_ctl_identities(*blobs)
+    if identities.get("iec_job_id"):
+        payload["iec_job_id"] = identities["iec_job_id"]
+    if identities.get("cw_id"):
+        payload["cw_id"] = identities["cw_id"]
 
 
 def _as_int(value: Any) -> int | None:
@@ -903,6 +979,7 @@ def _progress_from_durable(
             payload["elapsed_source"] = elapsed_source
     _attach_wall_elapsed(payload, durable=durable, status=status)
     _attach_investigate(payload, job, hooked=True)
+    _attach_nested_identities(payload, job.runtime_ref, durable, status)
     return payload
 
 
@@ -1352,6 +1429,9 @@ class JobStore:
                     status=_hook_status_payload(self.runtime_hook),
                 )
                 self._store_wall_ms(job.id, payload.get("wall_elapsed_ms"))
+                self._store_nested_identities(
+                    job.id, job.runtime_ref, durable, _hook_status_payload(self.runtime_hook)
+                )
                 return payload
         return job.to_progress()
 
@@ -1441,6 +1521,30 @@ class JobStore:
 
     def _is_durable(self, job: Job) -> bool:
         return _is_runtime_backed(job)
+
+    def _store_nested_identities(self, job_id: str, *blobs: Any) -> None:
+        """Remember hook/ctl iec_job_id / cw_id. Omit missing. Never invent."""
+        identities = nested_ctl_identities(*blobs)
+        if not identities:
+            return
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None:
+                return
+            ref = dict(live.runtime_ref) if live.runtime_ref else {}
+            changed = False
+            iec_job_id = identities.get("iec_job_id")
+            if iec_job_id and ref.get("iec_job_id") != iec_job_id:
+                ref["iec_job_id"] = iec_job_id
+                changed = True
+            cw_id = identities.get("cw_id")
+            if cw_id and not ref.get("id"):
+                ref["id"] = cw_id
+                changed = True
+            if not changed:
+                return
+            live.runtime_ref = ref
+            self._persist_locked(live)
 
     def _store_wall_ms(self, job_id: str, ms: Any) -> None:
         """Persist a real durable wall. Omit invalid. Never invent."""
@@ -1628,6 +1732,9 @@ class JobStore:
             return
         self._store_wall_ms(
             job_id, wall_elapsed_ms_from_durable(_hook_status_payload(self.runtime_hook))
+        )
+        self._store_nested_identities(
+            job_id, runtime_ref, _hook_status_payload(self.runtime_hook)
         )
         if not reported or reported not in WORK_STATUSES:
             return

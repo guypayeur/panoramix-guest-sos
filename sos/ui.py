@@ -362,6 +362,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     detail / progress only when the hook progress/status JSON
     includes it — omitted when missing; never invented.
     Durable wall is not a forecast, not IFRS17, not iec SPA.
+    Nested iec-local <code>iec_job_id</code> / <code>cw_id</code>
+    appear on job detail / progress only when the hook or ctl
+    supplies them — omitted when missing; never invented.
+    Not a SPA chunk / ETA panel.
     Event trail prefers durable reserve-temporal JSONL when a hook
     provides it; otherwise process-memory. Filter by kind and
     download JSON / JSONL for local salvage (not a SIEM / not a
@@ -906,6 +910,15 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return digest === "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c";
     }
 
+    function nestedIdentities(job, prog) {
+      const iec = (prog && prog.iec_job_id) || (job && job.iec_job_id) || "";
+      const cw = (prog && prog.cw_id) || (job && job.cw_id) || "";
+      return {
+        iec_job_id: iec ? String(iec) : null,
+        cw_id: cw ? String(cw) : null
+      };
+    }
+
     function honestPhase(prog) {
       if (!prog) return null;
       const raw = (prog.phase != null && prog.phase !== "") ? prog.phase : prog.event;
@@ -1037,6 +1050,17 @@ OPERATOR_HTML = """<!DOCTYPE html>
         text += " Not #70 Done. north_star_done false.";
         line.textContent = text;
         wrap.appendChild(line);
+        const ids = nestedIdentities(job, prog);
+        if (ids.iec_job_id || ids.cw_id) {
+          const nest = document.createElement("p");
+          nest.className = "hint identities";
+          const bits = [];
+          if (ids.iec_job_id) bits.push("iec_job_id " + ids.iec_job_id);
+          if (ids.cw_id) bits.push("cw_id " + ids.cw_id);
+          nest.textContent = bits.join(" · ")
+            + " — nested iec-local identities when the hook supplies them; omit when missing.";
+          wrap.appendChild(nest);
+        }
         const extras = [];
         if (prog && prog.scenarios_completed != null && prog.total_scenarios != null) {
           extras.push("scenarios " + prog.scenarios_completed + " / " + prog.total_scenarios);
@@ -1589,6 +1613,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
         ...dlRow("backed", local.backed || "—")
       ];
       const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
+      const ids = nestedIdentities(job, prog);
+      if (ids.iec_job_id) {
+        rows.push(...dlRow("iec job", ids.iec_job_id, true));
+      }
+      if (ids.cw_id) {
+        rows.push(...dlRow("cw id", ids.cw_id, true));
+      }
       if (prog && prog.source) {
         rows.push(...dlRow("progress source", prog.source));
       }
