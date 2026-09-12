@@ -210,6 +210,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .step.pending { color: var(--muted); }
     .step .name { font-weight: 650; }
     .step .owner { display: block; font-size: 0.64rem; font-weight: 500; letter-spacing: 0; }
+    .step .elapsed { display: block; font-size: 0.64rem; font-weight: 500; letter-spacing: 0; }
+    .handoff-docs {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.7rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .handoff-docs h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .handoff-docs p { margin: 0.25rem 0; font-size: 0.82rem; }
     .investigate {
       margin-top: 0.65rem;
       padding-top: 0.55rem;
@@ -340,6 +355,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Fraction / stages_completed stay the hook counters.
     Stub stays “stage i of n” without fake names (not iec planner
     parallelism / iec chunk progress).
+    Optional per-stage elapsed on the durable timeline only when
+    progress or events provide real timestamps — omitted when
+    missing; never invented.
     Event trail prefers durable reserve-temporal JSONL when a hook
     provides it; otherwise process-memory. Filter by kind and
     download JSON / JSONL for local salvage (not a SIEM / not a
@@ -364,6 +382,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     admit (new job id). Fail-closed without hook or when payload is
     missing — no silent stub re-admit. Not resume-from-failed.
     Cancel/fail does not auto-retry. Pause/resume remains durable-only.
+    Job detail includes compact <strong>Handoff docs</strong>
+    reminders for handoff + payload export, recoverability / re-admit,
+    and lab-compose (<code>docs/lab-compose.md</code>) — operator
+    clarity, not a second control plane.
     Job list can filter by real status
     (queued / running / paused / succeeded / failed / canceled).
     Light auto-refresh is opt-in, or on when
@@ -924,6 +946,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
               own.textContent = slice.owner;
               step.appendChild(own);
             }
+            if (slice.elapsed_ms != null && Number.isFinite(Number(slice.elapsed_ms))) {
+              const el = document.createElement("span");
+              el.className = "elapsed";
+              el.textContent = fmtSecs(Number(slice.elapsed_ms) / 1000);
+              step.appendChild(el);
+            }
             bar.appendChild(step);
           }
           wrap.appendChild(bar);
@@ -939,6 +967,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
           text += (text ? " · " : "") + "fraction " + frac;
         }
         text += " — durable reserve-temporal path-slices, not iec planner parallelism.";
+        text += " Per-stage elapsed only when progress/events provide real timestamps — omitted when missing.";
         line.textContent = text;
         wrap.appendChild(line);
         return wrap;
@@ -1094,6 +1123,42 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const honesty = document.createElement("p");
       honesty.className = "hint";
       honesty.textContent = "Not SIEM. Not IFRS17. Guest does not call runtime.apply.";
+      wrap.appendChild(honesty);
+      return wrap;
+    }
+
+    function renderHandoffDocs(job) {
+      const wrap = document.createElement("div");
+      wrap.className = "handoff-docs";
+      const title = document.createElement("h3");
+      title.textContent = "Handoff docs (thinner)";
+      wrap.appendChild(title);
+      const docs = (job && job.handoff_docs) || {};
+      const handoff = document.createElement("p");
+      handoff.textContent = "Handoff + payload export: " +
+        (docs.handoff || ("GET /v0/jobs/" + job.id + "/handoff")) +
+        " and " +
+        (docs.payload || ("GET /v0/jobs/" + job.id + "/payload")) +
+        ". Use View/copy handoff and Fetch payload. Operator/ctl: " +
+        (docs.re_admit || "python3 -m runtime.apply reserve-temporal admit --handoff JSON") +
+        ".";
+      wrap.appendChild(handoff);
+      const recover = document.createElement("p");
+      recover.textContent = "Recoverability / re-admit: cancel/fail does not auto-retry. Re-admit is a new admit (" +
+        (docs.re_admit_http || ("POST /v0/jobs/" + job.id + "/re-admit")) +
+        " when a durable hook is active). Fail-closed without hook or payload — no silent stub. Not resume-from-failed.";
+      wrap.appendChild(recover);
+      const lab = document.createElement("p");
+      lab.textContent = "Lab compose: " +
+        (docs.lab_compose || "docs/lab-compose.md") +
+        " / " +
+        (docs.lab_compose_script || "scripts/lab_compose_reserve_temporal.py") +
+        " (opt-in PANORAMIX_CTL_HTTP or PANORAMIX_RUNTIME_ROOT; --dry-run in CI).";
+      wrap.appendChild(lab);
+      const honesty = document.createElement("p");
+      honesty.className = "hint";
+      honesty.textContent = docs.note ||
+        "Operator clarity — not a second control plane. Not #70 Done. Not SIEM. Not IFRS17.";
       wrap.appendChild(honesty);
       return wrap;
     }
@@ -1399,6 +1464,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         host.appendChild(renderLabServe(job));
       }
       host.appendChild(renderProgress(job));
+      host.appendChild(renderHandoffDocs(job));
       if (job.status === "failed" || job.status === "canceled") {
         host.appendChild(renderTerminal(job));
         host.appendChild(renderRecoverability(job));
