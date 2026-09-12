@@ -1,6 +1,6 @@
 # Lab compose: one-shot Temporal-backed reserve path
 
-One-shot local lab so an operator can start **runtime.serve** (ctl **19215**) and this guest with `PANORAMIX_CTL_HTTP`, POST a recorded reserve demo, and see `local.backed=runtime` plus durable progress / events / `pause_resume`.
+One-shot local lab so an operator can start **runtime.serve** (ctl **19215**) and this guest with `PANORAMIX_CTL_HTTP`, POST a recorded reserve demo, and see `local.backed=runtime` plus durable progress / events / `pause_resume`, then **admit → cancel/fail → one-click `POST /v0/jobs/{id}/re-admit` → new job id** when the durable hook is active (`PANORAMIX_CTL_HTTP` preferred or `PANORAMIX_RUNTIME_ROOT`).
 
 WSL stamp already exists at operator lab `~/panoramix-lab/evidence-70/stamp-71fb4c9-ctl-http/` — this page does **not** reproduce that pack.
 
@@ -12,14 +12,15 @@ WSL stamp already exists at operator lab `~/panoramix-lab/evidence-70/stamp-71fb
 2. This guest: `PLATFORM_LISTEN_HTTP=18280` and `PANORAMIX_CTL_HTTP=http://127.0.0.1:19215` (loopback only; off-loopback fails closed).
 3. `POST /v0/jobs` with `{"demo":"reserve","catalog":"recorded"}`.
 4. Show `local.backed=runtime`, durable `GET /progress` / `GET /events`, and `pause_resume`.
-5. Tear down both processes.
+5. `POST /v0/jobs/{id}/cancel` (or wait for fail), then one-click `POST /v0/jobs/{id}/re-admit` and show a **new** job id (`local.re_admit_from` = the canceled/failed id). Not resume-from-failed.
+6. Tear down both processes.
 
-CI uses `--dry-run` (plan JSON only). No live Temporal is required for unit tests.
+CI uses `--dry-run` (plan JSON plus in-process re-admit smokes: hooked new job id, inert / payload-unknown **409** `re_admit_unavailable`). No live Temporal is required for unit tests. Fail-closed without hook or payload — **no silent stub**.
 
 ## Commands
 
 ```bash
-# Plan only (no processes, no Temporal):
+# Plan + in-process re-admit smokes (no processes, no Temporal):
 python3 scripts/lab_compose_reserve_temporal.py --dry-run
 
 # Live one-shot (operator lab; needs a runtime checkout + serve):
@@ -39,13 +40,15 @@ export PANORAMIX_CTL_HTTP=http://127.0.0.1:19215
 export PLATFORM_LISTEN_HTTP=18280
 python3 ./platform_run.py
 
-# terminal 3 — recorded reserve:
-curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
+# terminal 3 — recorded reserve, then cancel + one-click re-admit:
+JOB=$(curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
   -H 'Content-Type: application/json' \
-  -d '{"demo":"reserve","catalog":"recorded"}'
+  -d '{"demo":"reserve","catalog":"recorded"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl -sS -X POST http://127.0.0.1:18280/v0/jobs/$JOB/cancel
+curl -sS -X POST http://127.0.0.1:18280/v0/jobs/$JOB/re-admit
 ```
 
-Without `PANORAMIX_CTL_HTTP` the guest stays stub (`local.backed=stub`, pause **409** `stub_only`). That is fail-closed, not a pretend durable path.
+Without `PANORAMIX_CTL_HTTP` the guest stays stub (`local.backed=stub`, pause **409** `stub_only`). One-click re-admit is **409** `re_admit_unavailable` (`hook_inert`). Missing handoff/payload is **409** `re_admit_unavailable` (`payload_unknown`). That is fail-closed — **no silent stub re-admit**, not resume-from-failed, not a pretend durable path.
 
 When the env is set to a valid loopback origin but `runtime.serve` is down (connection refused / timeout), admit/status/progress fail closed with **`ctl_http_unreachable`** (lab-serve down) — not a hung poll, not pretend durable. Start serve or unset the env. Not #70 Done.
 
@@ -62,3 +65,4 @@ Operator UI (`GET /`) reads `GET /v0/info` → `jobs.durable_hook`. A badge says
 - Claiming #70 UX Done or `north_star_done`
 - Cloud unlock (#61 / #29)
 - Closing runtime #70 / #78
+- Resume-from-failed / silent stub re-admit

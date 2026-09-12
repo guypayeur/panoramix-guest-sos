@@ -6,6 +6,11 @@ Documents and plans ``runtime.serve`` (binding
 in ``scripts/lab_compose_reserve_temporal.py`` so this module stays
 unit-testable without live Temporal.
 
+Also classifies and dry-runs the thinner recoverability smoke:
+admit → cancel/fail → ``POST /v0/jobs/{id}/re-admit`` → new job id
+on the existing hook seam. Fail-closed without hook or payload
+(no silent stub). Not resume-from-failed.
+
 Honesty: fail-closed without env. Not guest→mesh ctl. Not SIEM.
 Not IFRS17. Pin 0.5. WorkHandoff triple only. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not stamp north_star_done.
@@ -38,10 +43,22 @@ HONESTY_LINES = (
     "not IFRS17",
     "pin 0.5",
     "WorkHandoff triple only",
+    "re-admit is a new admit (not resume-from-failed)",
+    "no silent stub re-admit",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
     "north_star_done false",
 )
+
+READMIT_JOURNEY = ("admit", "cancel_or_fail", "re-admit", "new_job_id")
+READMIT_FAIL_CLOSED = ("hook_inert", "payload_unknown", "hook_refused")
+OPAQUE_HANDOFF_BODY: dict[str, Any] = {
+    "kind": "job",
+    "class": "cpu",
+    "payload_digest": "sha256:" + ("ab" * 32),
+}
+_FAILED_OR_CANCELED = frozenset({"failed", "canceled"})
+LIVE_JOB_STATUSES = frozenset({"queued", "running", "paused"})
 
 
 @dataclass(frozen=True)
@@ -78,6 +95,7 @@ class ComposePlan:
             "runtime_serve_pin": self.runtime_serve_pin,
             "north_star_done": self.north_star_done,
             "guest_to_mesh_ctl": False,
+            "readmit": readmit_plan(),
         }
 
 
@@ -112,6 +130,26 @@ def guest_base_url(port: int = DEFAULT_GUEST_PORT) -> str:
 
 def recorded_reserve_body() -> dict[str, Any]:
     return dict(RECORDED_RESERVE_BODY)
+
+
+def readmit_plan() -> dict[str, Any]:
+    """Dry-run description of the re-admit smoke. No Temporal."""
+    return {
+        "path": "POST /v0/jobs/{id}/re-admit",
+        "journey": list(READMIT_JOURNEY),
+        "when": "PANORAMIX_CTL_HTTP (preferred) or PANORAMIX_RUNTIME_ROOT",
+        "fail_closed": list(READMIT_FAIL_CLOSED),
+        "resume_from_failed": False,
+        "silent_stub": False,
+        "new_admit": True,
+        "north_star_done": False,
+        "guest_to_mesh_ctl": False,
+        "note": (
+            "admit → cancel/fail → one-click re-admit → new job id. "
+            "Fail-closed without hook or payload (no silent stub). "
+            "Not resume-from-failed. Not #70 Done."
+        ),
+    }
 
 
 def runtime_root_usable(root: str | Path | None) -> Path | None:
@@ -229,6 +267,219 @@ def classify_lab_evidence(
     }
 
 
+class LabComposeReadmitHook:
+    """Injected hook for compose re-admit smoke. Not Temporal.
+
+    Same seam as ``PANORAMIX_CTL_HTTP`` / ``PANORAMIX_RUNTIME_ROOT``.
+    Not a second control plane. Not guest→mesh ctl.
+    """
+
+    def admit(
+        self, handoff: dict[str, str], payload_bytes: bytes | None
+    ) -> dict[str, Any] | None:
+        return {"accepted": True, "lab_compose": True, "id": handoff.get("id")}
+
+    def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
+        return True
+
+    def status(self, job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
+        return None
+
+
+def classify_readmit_evidence(
+    source: Mapping[str, Any],
+    readmit: Mapping[str, Any] | None = None,
+    *,
+    http_status: int | None = None,
+    error: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify admit→cancel/fail→re-admit. No Temporal. No silent stub."""
+    source_id = source.get("id")
+    source_status = source.get("status")
+    rec = source.get("recoverability")
+    recover = rec if isinstance(rec, Mapping) else {}
+    resume_from_failed = recover.get("resume_from_failed") is True
+    new_admit = recover.get("new_admit") is True
+    one_click = recover.get("one_click") is True
+    err = dict(error) if isinstance(error, Mapping) else {}
+    if (
+        not err
+        and http_status is not None
+        and http_status >= 400
+        and isinstance(readmit, Mapping)
+    ):
+        err = dict(readmit)
+    reason = err.get("reason")
+    fail_closed = (
+        http_status == 409
+        and err.get("error") == "re_admit_unavailable"
+        and reason in READMIT_FAIL_CLOSED
+    )
+    new_id = None
+    from_id = None
+    backed = None
+    if isinstance(readmit, Mapping) and http_status in {None, 200, 201}:
+        new_id = readmit.get("id")
+        local = readmit.get("local") if isinstance(readmit.get("local"), dict) else {}
+        from_id = local.get("re_admit_from")
+        backed = local.get("backed")
+    silent_stub = bool(
+        new_id
+        and backed == "stub"
+        and http_status in {None, 200, 201}
+    )
+    ok = (
+        source_status in _FAILED_OR_CANCELED
+        and new_id is not None
+        and new_id != source_id
+        and from_id == source_id
+        and backed == "runtime"
+        and not resume_from_failed
+        and not silent_stub
+        and not fail_closed
+        and http_status in {None, 200, 201}
+    )
+    return {
+        "ok": ok,
+        "fail_closed": fail_closed,
+        "fail_closed_reason": reason if fail_closed else None,
+        "silent_stub": silent_stub,
+        "source_id": source_id,
+        "source_status": source_status,
+        "new_id": new_id,
+        "re_admit_from": from_id,
+        "backed": backed,
+        "one_click": one_click,
+        "new_admit": new_admit,
+        "resume_from_failed": resume_from_failed,
+        "http_status": http_status,
+        "north_star_done": False,
+        "guest_to_mesh_ctl": False,
+        "note": (
+            "admit → cancel/fail → POST .../re-admit → new job id when hooked. "
+            "Fail-closed without hook or payload (no silent stub). "
+            "Not resume-from-failed. Not #70 Done."
+        ),
+    }
+
+
+def exercise_readmit_smoke(
+    *,
+    runtime_hook: Any | None = None,
+    submit_body: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """In-process admit → cancel → re-admit. No Temporal. No sockets.
+
+    Uses the jobs HTTP table (``SosApp``) on the existing hook seam.
+    Default hook is inert (fail-closed). Inject ``LabComposeReadmitHook``
+    (or any durable hook) for the new-job-id path.
+    """
+    from sos.http import SosApp
+    from sos.jobs import JobStore
+    from sos.runtime_hook import InertRuntimeHandoffHook
+
+    hook = runtime_hook if runtime_hook is not None else InertRuntimeHandoffHook()
+    store = JobStore(step_seconds=0.02, runtime_hook=hook, persist_dir=None)
+    app = SosApp(store)
+    body = dict(submit_body) if submit_body is not None else recorded_reserve_body()
+    if body.get("demo") is not None:
+        body.setdefault("seconds", 8)
+    created = app.handle(
+        "POST", "/v0/jobs", (json.dumps(body, separators=(",", ":")) + "\n").encode()
+    )
+    created_payload = json.loads(created.body.decode("utf-8")) if created.body else {}
+    job_id = created_payload.get("id")
+    if created.status not in {200, 201} or not job_id:
+        evidence = classify_readmit_evidence(
+            created_payload,
+            None,
+            http_status=int(created.status),
+            error=created_payload if created.status >= 400 else None,
+        )
+        return {
+            "source": created_payload,
+            "readmit_status": None,
+            "readmit": None,
+            "error": created_payload if created.status >= 400 else None,
+            "evidence": evidence,
+            "north_star_done": False,
+            "guest_to_mesh_ctl": False,
+        }
+    canceled = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+    source = json.loads(canceled.body.decode("utf-8")) if canceled.body else {}
+    readmit = app.handle("POST", f"/v0/jobs/{job_id}/re-admit")
+    payload = json.loads(readmit.body.decode("utf-8")) if readmit.body else {}
+    ok_http = readmit.status in {200, 201}
+    evidence = classify_readmit_evidence(
+        source,
+        payload if ok_http else None,
+        http_status=int(readmit.status),
+        error=None if ok_http else payload,
+    )
+    return {
+        "source": source,
+        "readmit_status": int(readmit.status),
+        "readmit": payload if ok_http else None,
+        "error": None if ok_http else payload,
+        "evidence": evidence,
+        "north_star_done": False,
+        "guest_to_mesh_ctl": False,
+    }
+
+
+def dry_run_readmit_smokes() -> dict[str, Any]:
+    """Hooked + fail-closed smokes for ``--dry-run``. No Temporal."""
+    hooked = exercise_readmit_smoke(runtime_hook=LabComposeReadmitHook())
+    inert = exercise_readmit_smoke()
+    missing = exercise_readmit_smoke(
+        runtime_hook=LabComposeReadmitHook(),
+        submit_body=OPAQUE_HANDOFF_BODY,
+    )
+    return {
+        "hooked": hooked["evidence"],
+        "inert": inert["evidence"],
+        "payload_unknown": missing["evidence"],
+        "north_star_done": False,
+        "guest_to_mesh_ctl": False,
+        "resume_from_failed": False,
+        "silent_stub": False,
+        "note": (
+            "In-process SosApp re-admit smoke. No Temporal. "
+            "Fail-closed without hook or payload (no silent stub). "
+            "Not resume-from-failed. Not #70 Done."
+        ),
+    }
+
+
+def readmit_smokes_honest(smokes: Mapping[str, Any]) -> bool:
+    """True when dry-run smokes show hooked ok + fail-closed, no silent stub."""
+    hooked = smokes.get("hooked") if isinstance(smokes.get("hooked"), Mapping) else {}
+    inert = smokes.get("inert") if isinstance(smokes.get("inert"), Mapping) else {}
+    missing = (
+        smokes.get("payload_unknown")
+        if isinstance(smokes.get("payload_unknown"), Mapping)
+        else {}
+    )
+    return bool(
+        hooked.get("ok") is True
+        and hooked.get("silent_stub") is False
+        and hooked.get("resume_from_failed") is False
+        and hooked.get("new_id")
+        and hooked.get("new_id") != hooked.get("source_id")
+        and inert.get("fail_closed") is True
+        and inert.get("fail_closed_reason") == "hook_inert"
+        and inert.get("silent_stub") is False
+        and inert.get("ok") is False
+        and missing.get("fail_closed") is True
+        and missing.get("fail_closed_reason") == "payload_unknown"
+        and missing.get("silent_stub") is False
+        and missing.get("ok") is False
+        and smokes.get("north_star_done") is False
+        and smokes.get("guest_to_mesh_ctl") is False
+        and smokes.get("resume_from_failed") is False
+    )
+
+
 def wait_loopback_port(
     port: int,
     *,
@@ -283,6 +534,7 @@ def job_paths(plan: ComposePlan, job_id: str) -> dict[str, str]:
         "pause": f"{root}/pause",
         "resume": f"{root}/resume",
         "cancel": f"{root}/cancel",
+        "readmit": f"{root}/re-admit",
     }
 
 

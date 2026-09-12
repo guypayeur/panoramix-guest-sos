@@ -195,7 +195,7 @@ When `PANORAMIX_CTL_HTTP` is unset, the subprocess path below still works. When 
 
 #### Lab compose (one-shot serve + CTL_HTTP)
 
-One-shot local lab (script + [docs/lab-compose.md](docs/lab-compose.md)): start `runtime.serve` with [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (ctl **19215**), start this guest with `PANORAMIX_CTL_HTTP=http://127.0.0.1:19215` and `PLATFORM_LISTEN_HTTP`, POST a recorded reserve demo, show `local.backed=runtime` plus durable progress/events/`pause_resume`, tear down. Fail-closed without env. Not guest→mesh ctl. Not SIEM. Not IFRS17. Pin **0.5**. Does **not** close runtime #70 / #78; does **not** unlock #61 / #29; `north_star_done` stays false.
+One-shot local lab (script + [docs/lab-compose.md](docs/lab-compose.md)): start `runtime.serve` with [`bindings/local-reserve-temporal.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-reserve-temporal.example.yaml) (ctl **19215**), start this guest with `PANORAMIX_CTL_HTTP=http://127.0.0.1:19215` and `PLATFORM_LISTEN_HTTP`, POST a recorded reserve demo, show `local.backed=runtime` plus durable progress/events/`pause_resume`, then cancel/fail → one-click `POST /v0/jobs/{id}/re-admit` (new job id). `--dry-run` covers hooked + fail-closed without Temporal (no silent stub; not resume-from-failed). Fail-closed without env. Not guest→mesh ctl. Not SIEM. Not IFRS17. Pin **0.5**. Does **not** close runtime #70 / #78; does **not** unlock #61 / #29; `north_star_done` stays false.
 
 ```bash
 # Plan only (no processes, no Temporal — CI):

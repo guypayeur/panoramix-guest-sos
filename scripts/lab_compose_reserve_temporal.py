@@ -5,11 +5,13 @@ Starts ``python3 -m runtime.serve --binding bindings/local-reserve-temporal.exam
 (ctl **19215**), starts this guest with ``PANORAMIX_CTL_HTTP`` +
 ``PLATFORM_LISTEN_HTTP``, POSTs ``{"demo":"reserve","catalog":"recorded"}``,
 prints ``local.backed=runtime`` / durable progress+events / ``pause_resume``,
-then tears down.
+then cancel/fail → one-click ``POST /v0/jobs/{id}/re-admit`` → new job id
+when the durable hook is active. Fail-closed without hook or payload
+(no silent stub). Not resume-from-failed.
 
 Requires ``PANORAMIX_RUNTIME_ROOT`` for the live path. ``--dry-run`` prints
-the plan only (CI / no Temporal). Fail closed without a usable runtime
-checkout on the live path.
+the plan plus in-process re-admit smokes (CI / no Temporal). Fail closed
+without a usable runtime checkout on the live path.
 
 Honesty: not guest→mesh ctl. Not SIEM. Not IFRS17. Pin 0.5.
 Does not close runtime #70 / #78. Does not unlock #61 / #29.
@@ -37,12 +39,16 @@ if str(GUEST_ROOT) not in sys.path:
 from sos.lab_compose import (  # noqa: E402
     DEFAULT_CTL_PORT,
     DEFAULT_GUEST_PORT,
+    LIVE_JOB_STATUSES,
     build_compose_plan,
     classify_lab_evidence,
+    classify_readmit_evidence,
+    dry_run_readmit_smokes,
     guest_paths,
     job_paths,
     plan_json,
     port_from_origin,
+    readmit_smokes_honest,
     runtime_root_usable,
     wait_loopback_port,
 )
@@ -115,7 +121,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the plan JSON and exit (no processes, no Temporal)",
+        help=(
+            "Print the plan JSON plus in-process re-admit smokes "
+            "(no processes, no Temporal)"
+        ),
     )
     parser.add_argument(
         "--runtime-root",
@@ -148,7 +157,16 @@ def dry_run(args: argparse.Namespace) -> int:
         binding=args.binding or None,
         bearer=args.bearer or None,
     )
-    sys.stdout.write(plan_json(plan))
+    blob = json.loads(plan_json(plan))
+    smokes = dry_run_readmit_smokes()
+    blob["readmit_smoke"] = smokes
+    sys.stdout.write(json.dumps(blob, indent=2, sort_keys=True) + "\n")
+    if not readmit_smokes_honest(smokes):
+        sys.stderr.write(
+            "fail closed: dry-run re-admit smoke did not show hooked new job id "
+            "plus inert/payload fail-closed (no silent stub; not resume-from-failed).\n"
+        )
+        return 1
     return 0
 
 
@@ -260,6 +278,35 @@ def live(args: argparse.Namespace) -> int:
                     _http("POST", jp["resume"])
                     _code, job = _http("GET", jp["job"])
                     evidence = classify_lab_evidence(job, progress, events)
+        readmit_job: dict = {}
+        if job.get("status") in LIVE_JOB_STATUSES:
+            cancel_code, canceled = _http("POST", jp["cancel"])
+            if cancel_code == 200:
+                job = canceled
+        if job.get("status") in {"failed", "canceled"}:
+            readmit_code, fresh = _http("POST", jp["readmit"])
+            readmit_ok = readmit_code in {200, 201}
+            readmit_job = fresh if readmit_ok else {}
+            readmit_evidence = classify_readmit_evidence(
+                job,
+                fresh if readmit_ok else None,
+                http_status=readmit_code,
+                error=None if readmit_ok else fresh,
+            )
+        else:
+            readmit_evidence = classify_readmit_evidence(
+                job,
+                None,
+                http_status=409,
+                error={
+                    "error": "illegal_transition",
+                    "reason": "not_failed_or_canceled",
+                    "detail": (
+                        "re-admit needs failed/canceled; job already terminal "
+                        "without cancel/fail (not resume-from-failed)"
+                    ),
+                },
+            )
         report = {
             "id": job_id,
             "status": job.get("status"),
@@ -278,6 +325,13 @@ def live(args: argparse.Namespace) -> int:
                 "events_durable": events.get("events_durable"),
                 "events_n": events.get("events_n"),
             },
+            "readmit": {
+                "source_id": job_id,
+                "source_status": job.get("status"),
+                "new_id": readmit_job.get("id"),
+                "re_admit_from": (readmit_job.get("local") or {}).get("re_admit_from"),
+                "evidence": readmit_evidence,
+            },
             "north_star_done": False,
             "honesty": list(plan.honesty),
         }
@@ -288,7 +342,17 @@ def live(args: argparse.Namespace) -> int:
                 "progress/events and pause_resume (no pretend).\n"
             )
             return 1
-        print("OK lab compose: local.backed=runtime, durable progress/events, pause_resume", flush=True)
+        if not readmit_evidence["ok"]:
+            sys.stderr.write(
+                "compose did not observe admit → cancel/fail → re-admit → "
+                "new job id (no silent stub; not resume-from-failed).\n"
+            )
+            return 1
+        print(
+            "OK lab compose: local.backed=runtime, durable progress/events, "
+            "pause_resume, re-admit new job id",
+            flush=True,
+        )
         return 0
     finally:
         _stop(guest_proc, guest_log)
