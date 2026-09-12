@@ -236,6 +236,23 @@ def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
                 "Not #70 Done. north_star_done false."
             ),
         }
+    from sos.lab_compose_iec import IecLocalComposeHook
+
+    if isinstance(hook, IecLocalComposeHook):
+        return {
+            "kind": HOOK_KIND_CTL_HTTP,
+            "durable_path": True,
+            "adapter": "IecLocalComposeHook",
+            "ctl": "iec-local",
+            "guest_to_mesh_ctl": False,
+            "ifrs17_guest": False,
+            "north_star_done": False,
+            "note": (
+                "Durable path via iec-local compose hook (dry-run / lab). "
+                "Guest does not run IFRS17 math. Not guest→mesh ctl. "
+                "Not SIEM. Not IFRS17. Not #70 Done. north_star_done false."
+            ),
+        }
     return {
         "kind": HOOK_KIND_INERT,
         "durable_path": False,
