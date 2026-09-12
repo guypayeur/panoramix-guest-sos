@@ -21,9 +21,13 @@ Calls only ``/reserve-temporal/{admit,status,progress,events,pause,resume,cancel
 Never ``runtime.apply compute-work``. Does not import the runtime package.
 
 When the origin is valid but runtime.serve is down (connection
-refused / timeout), admit/status/progress fail closed with
+refused), admit/status/progress fail closed with
 ``ctl_http_unreachable`` (lab-serve down). Short timeout — not a
-hung poll. HTTP 4xx/5xx stay the existing stub fallback.
+hung poll. HTTP admit that exceeds ``CTL_HTTP_TIMEOUT_SEC`` is
+``ctl_admit_timeout`` (runtime still blocking; needs #143 for
+live|parity) — fail closed, not stub progress. Guest polls
+progress/events mid-flight once a running id exists. HTTP 4xx/5xx on
+recorded stay the existing stub fallback; live|parity refuse stub.
 
 Does not close runtime #70. Does not close #78. Does not unlock
 #61 / #29. Does not stamp north_star_done. Cloud stays locked.
@@ -41,15 +45,16 @@ from urllib.request import Request, urlopen
 
 from sos.errors import (
     CTL_HTTP_UNREACHABLE_REASON,
+    CtlAdmitTimeout,
     CtlHttpUnreachable,
 )
 from sos.lab_ctl import (
     ENV_LIVE,
     _admit_handoff,
     _ctl_id,
-    _extract_work_id,
     _lifecycle_status,
     _parse_json,
+    _runtime_ref_from_admit,
     _truthy,
 )
 
@@ -60,6 +65,8 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 CTL_HTTP_TIMEOUT_SEC = 1.5
 CTL_HTTP_UNREACHABLE_COOLDOWN_SEC = 2.0
 CTL_HTTP_UNREACHABLE_CODE = 0
+# Distinct from connection-refused so admit timeout is not "lab serve down".
+CTL_HTTP_TIMEOUT_CODE = -1
 RESERVE_TEMPORAL_PREFIX = "/reserve-temporal"
 GET_VERBS = frozenset({"status", "progress", "events"})
 POST_VERBS = frozenset({"admit", "pause", "resume", "cancel"})
@@ -124,7 +131,14 @@ def urllib_request_ctl(
         except OSError:
             raw = b""
         return int(exc.code), raw.decode("utf-8", errors="replace")
-    except (OSError, URLError, TimeoutError, ValueError):
+    except TimeoutError:
+        return CTL_HTTP_TIMEOUT_CODE, ""
+    except URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError):
+            return CTL_HTTP_TIMEOUT_CODE, ""
+        return CTL_HTTP_UNREACHABLE_CODE, ""
+    except (OSError, ValueError):
         return CTL_HTTP_UNREACHABLE_CODE, ""
 
 
@@ -213,6 +227,14 @@ class LabReserveTemporalHttpHook:
             raise
         except Exception:
             return None
+        if int(code) == CTL_HTTP_TIMEOUT_CODE:
+            if action == "admit":
+                raise CtlAdmitTimeout(
+                    action="admit",
+                    origin=self.base_url,
+                    transport="http",
+                )
+            self._raise_unreachable(action)
         if int(code) == CTL_HTTP_UNREACHABLE_CODE:
             self._raise_unreachable(action)
         if not (200 <= int(code) < 300):
@@ -246,10 +268,7 @@ class LabReserveTemporalHttpHook:
         )
         if payload is None:
             return None
-        work_id = _extract_work_id(payload, handoff.get("id"))
-        if work_id is None:
-            return None
-        return {"id": work_id, "ctl": "reserve-temporal"}
+        return _runtime_ref_from_admit(payload, handoff.get("id"))
 
     def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)

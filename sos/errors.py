@@ -187,6 +187,23 @@ CTL_HTTP_UNREACHABLE_DETAIL = (
     "(connection refused / timeout). Fail closed — not durable. "
     "Start runtime.serve or unset PANORAMIX_CTL_HTTP. Not #70 Done."
 )
+ERROR_CTL_ADMIT_TIMEOUT = "ctl_admit_timeout"
+CTL_ADMIT_TIMEOUT_REASON = "admit exceeded guest timeout"
+CTL_ADMIT_TIMEOUT_DETAIL = (
+    "durable admit exceeded guest timeout "
+    "(HTTP 1.5s / subprocess admit 2s) before a running id returned. "
+    "live|parity is minutes-class — admit must return running while "
+    "work continues (runtime #143). Fail closed — not durable, "
+    "not stub progress. Poll GET /progress and GET /events mid-flight "
+    "once a running id exists. Not #70 Done. north_star_done false."
+)
+ERROR_DURABLE_ADMIT_FAILED = "durable_admit_failed"
+DURABLE_ADMIT_FAILED_DETAIL = (
+    "live|parity durable admit did not return a running id. "
+    "Fail closed — no stub fallback (would fake minutes-class progress). "
+    "Depends on runtime #143 async admit. Not #70 Done. "
+    "north_star_done false."
+)
 
 
 def lab_serve_affordance(*, origin: str | None = None) -> dict[str, Any]:
@@ -227,3 +244,60 @@ class CtlHttpUnreachable(SosError):
         if job_id:
             fields["id"] = job_id
         super().__init__(ERROR_CTL_HTTP_UNREACHABLE, **fields)
+
+
+class CtlAdmitTimeout(SosError):
+    """Durable admit blocked past the guest timeout.
+
+    Distinct from lab-serve-down. live|parity needs runtime #143
+    so admit returns a running id. Fail closed — not stub progress.
+    """
+
+    http_status = 503
+
+    def __init__(
+        self,
+        *,
+        action: str = "admit",
+        origin: str | None = None,
+        transport: str | None = None,
+        job_id: str | None = None,
+        reason: str = CTL_ADMIT_TIMEOUT_REASON,
+    ) -> None:
+        fields: dict[str, Any] = {
+            "action": action,
+            "reason": reason,
+            "detail": CTL_ADMIT_TIMEOUT_DETAIL,
+            "runtime_issue": 143,
+            "north_star_done": False,
+        }
+        if origin:
+            fields["origin"] = origin
+        if transport:
+            fields["transport"] = transport
+        if job_id:
+            fields["id"] = job_id
+        super().__init__(ERROR_CTL_ADMIT_TIMEOUT, **fields)
+
+
+class DurableAdmitFailed(SosError):
+    """live|parity hook admit returned nothing. No stub fallback."""
+
+    http_status = 409
+
+    def __init__(
+        self,
+        job_id: str,
+        *,
+        reason: str = "hook_refused",
+        detail: str = DURABLE_ADMIT_FAILED_DETAIL,
+    ) -> None:
+        super().__init__(
+            ERROR_DURABLE_ADMIT_FAILED,
+            id=job_id,
+            action="admit",
+            reason=reason,
+            detail=detail,
+            runtime_issue=143,
+            north_star_done=False,
+        )

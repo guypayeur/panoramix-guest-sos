@@ -66,6 +66,10 @@ stamp north_star_done or #70 UX Done. Cloud stays locked.
 Default reserve POST is catalog recorded (CI / --dry-run
 unchanged). Opt-in ``--catalog live|parity`` (alias
 parity-scale) / ``LAB_COMPOSE_CATALOG`` selects that catalog.
+live|parity durable admit must return a running id (runtime
+#143) so the guest UI can poll; timeout fail-closes (no stub
+progress). ``--catalog parity`` smoke is mid-flight poll +
+cancel — not wait-for-succeed, not invented walls.
 Parity is still not IFRS17 / not ADSL. Opt-in does not stamp
 north_star_done, does not unlock cloud, does not invent walls,
 and does not flip comparison flags.
@@ -84,8 +88,13 @@ from sos.handoff_vocab import (
     RESERVE_CATALOG_PARITY,
     RESERVE_CATALOG_RECORDED,
 )
-from sos.lab_ctl import APPLY_REL
-from sos.lab_ctl_http import ENV_CTL_BEARER, ENV_CTL_HTTP, normalize_ctl_http_base
+from sos.lab_ctl import APPLY_REL, CTL_ADMIT_TIMEOUT_SEC
+from sos.lab_ctl_http import (
+    CTL_HTTP_TIMEOUT_SEC,
+    ENV_CTL_BEARER,
+    ENV_CTL_HTTP,
+    normalize_ctl_http_base,
+)
 from sos.stage_elapsed import (
     elapsed_ms_from_mapping,
     wall_elapsed_ms_from_durable,
@@ -209,6 +218,10 @@ HONESTY_LINES = (
     "opt-in catalog does not stamp north_star_done",
     "opt-in catalog does not unlock #61 / #29",
     "opt-in catalog does not invent walls or flip comparison flags",
+    "live|parity durable admit must return a running id within guest timeouts (HTTP 1.5s / ctl-apply admit 2s)",
+    "async admit depends on runtime #143 (serve/CLI); guest polls progress/events once running",
+    "admit timeout is ctl_admit_timeout (not lab-serve-down); fail closed — no stub progress",
+    "lab-compose --catalog parity is mid-flight poll + cancel (not wait-for-succeed; not invented walls)",
 )
 
 READMIT_JOURNEY = ("admit", "cancel_or_fail", "re-admit", "new_job_id")
@@ -257,6 +270,7 @@ class ComposePlan:
             "north_star_done": self.north_star_done,
             "guest_to_mesh_ctl": False,
             "readmit": readmit_plan(),
+            "async_admit": async_admit_plan(self.reserve_body.get("catalog")),
             "timeline_elapsed": elapsed_plan(),
             "wall_elapsed": wall_plan(),
             "handoff_docs": handoff_docs_plan(),
@@ -316,6 +330,50 @@ def reserve_body_for_catalog(catalog: str | None = None) -> dict[str, Any]:
 
 def recorded_reserve_body() -> dict[str, Any]:
     return reserve_body_for_catalog(DEFAULT_COMPOSE_CATALOG)
+
+
+def async_admit_plan(catalog: str | None = None) -> dict[str, Any]:
+    """Dry-run honesty for async durable admit. Depends on runtime #143."""
+    name = resolve_compose_catalog(catalog)
+    minutes_class = name in {RESERVE_CATALOG_LIVE, RESERVE_CATALOG_PARITY}
+    return {
+        "catalog": name,
+        "minutes_class": minutes_class,
+        "when": "catalog live|parity (minutes-class); recorded stays sync-fast",
+        "depends_on": "panoramix-runtime#143",
+        "guest_http_timeout_sec": CTL_HTTP_TIMEOUT_SEC,
+        "guest_ctl_apply_admit_timeout_sec": CTL_ADMIT_TIMEOUT_SEC,
+        "returns": "running id (cw_…) while work continues",
+        "poll": (
+            "GET /v0/jobs/{id}",
+            "GET /v0/jobs/{id}/progress",
+            "GET /v0/jobs/{id}/events",
+        ),
+        "stub_fallback": False if minutes_class else "recorded HTTP 4xx/5xx only",
+        "timeout_error": "ctl_admit_timeout",
+        "unreachable_error": "ctl_http_unreachable",
+        "compose": (
+            "mid-flight poll + cancel — not wait-for-succeed"
+            if minutes_class
+            else "recorded may finish before first poll"
+        ),
+        "invent": False,
+        "forecast": False,
+        "ifrs17": False,
+        "north_star_done": False,
+        "closes_runtime_70": False,
+        "closes_runtime_78": False,
+        "note": (
+            "Durable admit via PANORAMIX_CTL_HTTP / PANORAMIX_RUNTIME_ROOT "
+            "must return a running id within guest timeouts so :18280 can "
+            "poll path-slice progress / events mid-flight. live|parity is "
+            "minutes-class. Recorded stays sync-fast. Guest does not fake "
+            "durable progress on the stub. Runtime #143 owns serve/CLI "
+            "admit-return-running; this guest documents that dependency "
+            "and fail-closes on timeout / missing id. Omit walls when "
+            "missing; never invent. Not #70 Done. Not #78 Done."
+        ),
+    }
 
 
 def elapsed_plan() -> dict[str, Any]:

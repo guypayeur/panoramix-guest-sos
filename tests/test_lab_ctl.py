@@ -366,6 +366,9 @@ class OptInFakeCtlTests(unittest.TestCase):
         self.assertIn("Cloud stays locked", text)
         self.assertIn("fail closed", text)
         self.assertIn("Not guest-callable ctl HTTP", text)
+        self.assertIn("#143", text)
+        self.assertIn("CTL_ADMIT_TIMEOUT_SEC", text)
+        self.assertIn("running", text)
         self.assertNotIn("Fixes #70", text)
         self.assertNotIn("Fixes #78", text)
         imports = [

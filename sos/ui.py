@@ -401,6 +401,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>runtime.serve</code> is down, admit/status/progress fail
     closed with <code>ctl_http_unreachable</code> (lab serve down) —
     not a hung poll, not pretend durable.
+    Admit that exceeds guest timeout before a running id is
+    <code>ctl_admit_timeout</code> (runtime #143; live|parity is
+    minutes-class) — fail closed, not stub progress, not lab-serve-down.
+    Once admit returns a running id the UI polls
+    <code>GET /progress</code> / <code>GET /events</code> mid-flight.
     Not a SPA framework. Not Slack.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
@@ -931,6 +936,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
           (job && job.error === "ctl_http_unreachable")) {
         line.textContent = "lab serve down — PANORAMIX_CTL_HTTP unreachable "
           + "(ctl_http_unreachable). Fail closed — not durable. Not iec chunk progress.";
+        wrap.appendChild(line);
+        return wrap;
+      }
+      if (job && job.error === "ctl_admit_timeout") {
+        line.textContent = "durable admit timed out before a running id "
+          + "(ctl_admit_timeout). live|parity is minutes-class — needs "
+          + "runtime #143 admit-return-running. Fail closed — not stub "
+          + "progress, not lab-serve-down. Not iec chunk progress.";
         wrap.appendChild(line);
         return wrap;
       }
