@@ -21,12 +21,17 @@ from sos.lab_compose import (
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
     RUNTIME_PACK_DOCS_PIN,
+    RUNTIME_PACK_GAP_REPORT_DOCS_PIN,
     RUNTIME_PACK_GAP_REPORT_PIN,
     RUNTIME_PACK_TIP,
+    GAP_REPORT_CMD,
+    OFFBOX_IEC_PARITY_PACK,
+    RUNTIME_ROOT_TEMPLATE,
     elapsed_plan,
     git_head_sha,
     handoff_docs_plan,
     looks_like_git_tip,
+    gap_report_plan,
     pack_fill_fragment,
     pack_fill_plan,
     skeleton_handoff_plan,
@@ -93,6 +98,13 @@ class ComposePlanTests(unittest.TestCase):
         self.assertTrue(RUNTIME_PACK_TIP.startswith("b81130f"))
         self.assertEqual(RUNTIME_PACK_DOCS_PIN, "63a168d")
         self.assertEqual(RUNTIME_PACK_GAP_REPORT_PIN, "84cb202")
+        self.assertEqual(RUNTIME_PACK_GAP_REPORT_DOCS_PIN, "aa4f09e")
+        self.assertEqual(GAP_REPORT_CMD, "python3 -m runtime.iec_parity_pack gap-report")
+        self.assertEqual(
+            OFFBOX_IEC_PARITY_PACK,
+            "~/panoramix-lab/evidence-70/iec-parity/iec-parity.json",
+        )
+        self.assertEqual(RUNTIME_ROOT_TEMPLATE, "/path/to/panoramix-runtime")
         self.assertEqual(GUEST_PACK_TIP, "b859466dcd079eb063b615728b258a686f79749a")
         self.assertTrue(GUEST_PACK_TIP.startswith("b859466"))
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
@@ -208,8 +220,21 @@ class ComposePlanTests(unittest.TestCase):
             "pack-fill gap-report tip 84cb202 / PR #124 names WSL gap-report stamp lineage (gap-report ≠ Done; assist ≠ fill)",
             plan.honesty,
         )
+        self.assertIn(
+            "pack-fill gap-report docs tip aa4f09e / PR #126 (or main) links WSL gap-report stamp (gap-report ≠ Done)",
+            plan.honesty,
+        )
+        self.assertIn(
+            "pack-fill gap-report hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run gap-report; gap-report ≠ Done)",
+            plan.honesty,
+        )
+        self.assertIn(
+            "pack-fill merge+gap-report pairing (hint only; assist ≠ fill; gap-report ≠ Done)",
+            plan.honesty,
+        )
         self.assertIn("never invent metrics.wall_time_sec", plan.honesty)
         self.assertIn("assist ≠ fill; assist ≠ Done", plan.honesty)
+        self.assertIn("gap-report ≠ Done", plan.honesty)
         fill = parsed["pack_fill"]
         self.assertIs(fill["omit_when_missing"], True)
         self.assertIs(fill["invent"], False)
@@ -226,9 +251,12 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(fill["docs_pr"], 122)
         self.assertEqual(fill["gap_report_tip"], "84cb202")
         self.assertEqual(fill["gap_report_pr"], 124)
+        self.assertEqual(fill["gap_report_docs_tip"], "aa4f09e")
+        self.assertEqual(fill["gap_report_docs_pr"], 126)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["assist_ne_fill"], True)
+        self.assertIs(fill["gap_report_ne_done"], True)
         self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
         self.assertEqual(fill["assist"], "runtime #78 D fill checklist")
         handoff = fill["skeleton_handoff"]
@@ -238,11 +266,35 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(handoff["docs_pr"], 122)
         self.assertEqual(handoff["gap_report_tip"], "84cb202")
         self.assertEqual(handoff["gap_report_pr"], 124)
+        self.assertEqual(handoff["gap_report_docs_tip"], "aa4f09e")
+        self.assertEqual(handoff["gap_report_docs_pr"], 126)
         self.assertEqual(handoff["guest_emit_tip"], GUEST_PACK_TIP)
         self.assertIs(handoff["from_json"], True)
         self.assertIs(handoff["invent_wall_time_sec"], False)
         self.assertIs(handoff["north_star_done"], False)
         self.assertEqual(skeleton_handoff_plan()["note"], handoff["note"])
+        gap = fill["gap_report"]
+        self.assertEqual(gap["cmd"], GAP_REPORT_CMD)
+        self.assertEqual(gap["pack"], OFFBOX_IEC_PARITY_PACK)
+        self.assertIs(gap["template"], True)
+        self.assertIs(gap["runtime_root_known"], False)
+        self.assertIs(gap["executes"], False)
+        self.assertIs(gap["executes_in_ci"], False)
+        self.assertIs(gap["invent"], False)
+        self.assertIs(gap["invent_wall_time_sec"], False)
+        self.assertIs(gap["writes_live_pack"], False)
+        self.assertIs(gap["gap_report_ne_done"], True)
+        self.assertIs(gap["north_star_done"], False)
+        self.assertEqual(gap["runtime_tip"], "aa4f09e")
+        self.assertEqual(gap["or"], "main")
+        self.assertEqual(gap["runtime_pr"], 126)
+        self.assertEqual(gap["gap_report_tip"], "84cb202")
+        self.assertEqual(gap["wall_feature_tip"], "9b6646e8")
+        self.assertIn("cd /path/to/panoramix-runtime", gap["hint"])
+        self.assertIn(GAP_REPORT_CMD, gap["hint"])
+        self.assertIn(OFFBOX_IEC_PARITY_PACK, gap["hint"])
+        self.assertNotIn("wall_time_sec", json.dumps(gap["hint"]))
+        self.assertEqual(gap_report_plan()["note"], gap["note"])
         fragment = fill["fragment"]
         self.assertIn("tips", fragment)
         self.assertEqual(
@@ -554,6 +606,8 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertEqual(fill["docs_pr"], 122)
         self.assertEqual(fill["gap_report_tip"], "84cb202")
         self.assertEqual(fill["gap_report_pr"], 124)
+        self.assertEqual(fill["gap_report_docs_tip"], "aa4f09e")
+        self.assertEqual(fill["gap_report_docs_pr"], 126)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertEqual(
@@ -561,6 +615,27 @@ class ScriptDryRunTests(unittest.TestCase):
             "python3 -m runtime.iec_parity_pack skeleton",
         )
         self.assertIs(fill["skeleton_handoff"]["invent_wall_time_sec"], False)
+        gap = fill["gap_report"]
+        self.assertEqual(gap["cmd"], GAP_REPORT_CMD)
+        self.assertIs(gap["executes"], False)
+        self.assertIs(gap["executes_in_ci"], False)
+        self.assertIs(gap["invent"], False)
+        self.assertIs(gap["invent_wall_time_sec"], False)
+        self.assertIs(gap["writes_live_pack"], False)
+        self.assertIs(gap["gap_report_ne_done"], True)
+        self.assertEqual(gap["runtime_tip"], "aa4f09e")
+        self.assertEqual(gap["gap_report_tip"], "84cb202")
+        self.assertEqual(gap["wall_feature_tip"], "9b6646e8")
+        if plan.get("runtime_root"):
+            self.assertIs(gap["runtime_root_known"], True)
+            self.assertIs(gap["template"], False)
+            self.assertIn(f"cd {plan['runtime_root']}", gap["hint"])
+        else:
+            self.assertIs(gap["template"], True)
+            self.assertIs(gap["runtime_root_known"], False)
+            self.assertIn("cd /path/to/panoramix-runtime", gap["hint"])
+        self.assertIn(GAP_REPORT_CMD, gap["hint"])
+        self.assertIn(OFFBOX_IEC_PARITY_PACK, gap["hint"])
         self.assertNotIn("durable", fill["fragment"])
         self.assertTrue(
             looks_like_git_tip(fill["fragment"]["tips"]["panoramix_runtime_tip"])
@@ -664,11 +739,24 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(fill["docs_pr"], 122)
         self.assertEqual(fill["gap_report_tip"], "84cb202")
         self.assertEqual(fill["gap_report_pr"], 124)
+        self.assertEqual(fill["gap_report_docs_tip"], "aa4f09e")
+        self.assertEqual(fill["gap_report_docs_pr"], 126)
+        self.assertIs(fill["gap_report_ne_done"], True)
         self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
         self.assertEqual(
             fill["skeleton_handoff"]["cmd"],
             "python3 -m runtime.iec_parity_pack skeleton",
         )
+        gap = fill["gap_report"]
+        self.assertEqual(gap["cmd"], GAP_REPORT_CMD)
+        self.assertIs(gap["template"], True)
+        self.assertIs(gap["executes"], False)
+        self.assertIs(gap["invent"], False)
+        self.assertIs(gap["invent_wall_time_sec"], False)
+        self.assertEqual(gap["runtime_tip"], "aa4f09e")
+        self.assertEqual(gap["gap_report_tip"], "84cb202")
+        self.assertEqual(gap["wall_feature_tip"], "9b6646e8")
+        self.assertIn("cd /path/to/panoramix-runtime", gap["hint"])
         self.assertEqual(fill["tip_sources"]["panoramix_runtime_tip"], "documented")
         self.assertEqual(fill["tip_sources"]["guest_tip"], "checkout")
         fragment = fill["fragment"]
@@ -807,6 +895,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(handoff["docs_pr"], 122)
         self.assertEqual(handoff["gap_report_tip"], "84cb202")
         self.assertEqual(handoff["gap_report_pr"], 124)
+        self.assertEqual(handoff["gap_report_docs_tip"], "aa4f09e")
+        self.assertEqual(handoff["gap_report_docs_pr"], 126)
         self.assertTrue(handoff["guest_emit_tip"].startswith("b859466"))
         self.assertIn("--from-json", handoff["flags"])
         self.assertIs(handoff["durable_only_when_measured"], True)
@@ -821,6 +911,71 @@ class PackFillTests(unittest.TestCase):
         self.assertNotIn("Fixes #70", handoff["note"])
         self.assertNotIn("Fixes #78", handoff["note"])
 
+    def test_gap_report_hint_template_and_known_root(self) -> None:
+        hint = gap_report_plan()
+        self.assertEqual(hint["cmd"], GAP_REPORT_CMD)
+        self.assertEqual(hint["pack"], OFFBOX_IEC_PARITY_PACK)
+        self.assertEqual(hint["cd"], RUNTIME_ROOT_TEMPLATE)
+        self.assertIs(hint["template"], True)
+        self.assertIs(hint["runtime_root_known"], False)
+        self.assertIs(hint["executes"], False)
+        self.assertIs(hint["executes_in_ci"], False)
+        self.assertIs(hint["invent"], False)
+        self.assertIs(hint["invent_wall_time_sec"], False)
+        self.assertIs(hint["forecast"], False)
+        self.assertIs(hint["ifrs17"], False)
+        self.assertIs(hint["iec_spa"], False)
+        self.assertIs(hint["writes_live_pack"], False)
+        self.assertIs(hint["assist_ne_fill"], True)
+        self.assertIs(hint["gap_report_ne_done"], True)
+        self.assertIs(hint["north_star_done"], False)
+        self.assertEqual(hint["runtime_tip"], "aa4f09e")
+        self.assertEqual(hint["or"], "main")
+        self.assertEqual(hint["runtime_pr"], 126)
+        self.assertEqual(hint["gap_report_tip"], "84cb202")
+        self.assertEqual(hint["gap_report_pr"], 124)
+        self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
+        self.assertEqual(
+            hint["hint"],
+            f"cd {RUNTIME_ROOT_TEMPLATE} && {GAP_REPORT_CMD} {OFFBOX_IEC_PARITY_PACK}",
+        )
+        self.assertIn("merge+gap-report", hint["note"])
+        self.assertIn("gap-report ≠ Done", hint["note"])
+        self.assertIn("assist ≠ fill", hint["note"])
+        self.assertIn("does not run gap-report", hint["note"])
+        self.assertNotIn("Fixes #70", hint["note"])
+        self.assertNotIn("Fixes #78", hint["note"])
+        self.assertNotIn("wall_time_sec", hint["hint"])
+        blob = json.dumps(hint)
+        self.assertNotIn("Fixes #70", blob)
+        self.assertNotIn("Fixes #78", blob)
+
+        known = gap_report_plan(runtime_root="/opt/panoramix-runtime")
+        self.assertIs(known["template"], False)
+        self.assertIs(known["runtime_root_known"], True)
+        self.assertEqual(known["cd"], "/opt/panoramix-runtime")
+        self.assertEqual(
+            known["hint"],
+            f"cd /opt/panoramix-runtime && {GAP_REPORT_CMD} {OFFBOX_IEC_PARITY_PACK}",
+        )
+        self.assertIs(known["executes"], False)
+        self.assertIs(known["invent"], False)
+        self.assertIs(known["invent_wall_time_sec"], False)
+        self.assertEqual(known["runtime_tip"], "aa4f09e")
+        self.assertEqual(known["gap_report_tip"], "84cb202")
+        self.assertEqual(known["wall_feature_tip"], "9b6646e8")
+
+        fill = pack_fill_plan(
+            guest_root=ROOT,
+            runtime_root="/opt/panoramix-runtime",
+            environ={},
+            hooked=False,
+        )
+        self.assertEqual(fill["gap_report"]["hint"], known["hint"])
+        self.assertIs(fill["gap_report"]["runtime_root_known"], True)
+        self.assertNotIn("durable", fill["fragment"])
+        self.assertNotIn("wall_time_sec", json.dumps(fill["fragment"]))
+
 
 class HonestyTests(unittest.TestCase):
     def test_helpers_and_docs(self) -> None:
@@ -831,9 +986,13 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("b81130f", helper)
         self.assertIn("63a168d", helper)
         self.assertIn("84cb202", helper)
+        self.assertIn("aa4f09e", helper)
         self.assertIn("b859466", helper)
         self.assertIn("iec_parity_pack", helper)
         self.assertIn("skeleton", helper)
+        self.assertIn("gap-report", helper)
+        self.assertIn("gap_report", helper)
+        self.assertIn("merge+gap-report", helper)
         self.assertIn("metrics.wall_time_sec", helper)
         self.assertIn("pack-fill", helper)
         self.assertIn("does not write the full live pack", helper.lower())
@@ -887,9 +1046,11 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("b81130f", text, name)
             self.assertIn("63a168d", text, name)
             self.assertIn("84cb202", text, name)
+            self.assertIn("aa4f09e", text, name)
             self.assertIn("b859466", text, name)
             self.assertIn("iec_parity_pack", text, name)
             self.assertIn("skeleton", text, name)
+            self.assertIn("gap-report", text, name)
             self.assertIn("metrics.wall_time_sec", text, name)
             self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("compare prefers", text.lower(), name)
@@ -911,10 +1072,15 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("b81130f", lab)
         self.assertIn("63a168d", lab)
         self.assertIn("84cb202", lab)
+        self.assertIn("aa4f09e", lab)
         self.assertIn("b859466", lab)
         self.assertIn("PR #122", lab)
         self.assertIn("PR #124", lab)
+        self.assertIn("PR #126", lab)
         self.assertIn("gap-report ≠ Done", lab)
+        self.assertIn("merge+gap-report", lab)
+        self.assertIn("pack_fill.gap_report", lab)
+        self.assertIn("runtime.iec_parity_pack gap-report", lab)
         self.assertIn("runtime.iec_parity_pack skeleton", lab)
         self.assertIn("--from-json", lab)
         self.assertIn("metrics.wall_time_sec", lab)
@@ -945,9 +1111,11 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] Thinner lab-compose pack-fill fragment", ux)
         self.assertIn("- [x] Overnight assist smoke stamp is assist ≠ fill", ux)
         self.assertIn("- [x] Overnight gap-report smoke stamp is gap-report ≠ Done / assist ≠ fill", ux)
+        self.assertIn("- [x] Lab-compose pack_fill.gap_report hint", ux)
         self.assertIn("b81130f", ux)
         self.assertIn("63a168d", ux)
         self.assertIn("84cb202", ux)
+        self.assertIn("aa4f09e", ux)
         self.assertIn("b859466", ux)
         self.assertIn("iec_parity_pack skeleton", ux)
         self.assertIn("metrics.wall_time_sec", ux)
