@@ -18,6 +18,10 @@ fails closed (caller keeps the inert stub). Optional
 Invokes ``python3 -m runtime.apply reserve-temporal`` only — never
 ``runtime.apply compute-work``. Does not import the runtime package.
 
+Admit must return a running ``cw_…`` id within ``CTL_ADMIT_TIMEOUT_SEC``
+so the guest UI can poll progress/events mid-flight. live|parity walls are
+minutes-class — that return depends on runtime #143. Admit timeout
+is ctl_admit_timeout and fails closed (not stub progress).
 Does not close runtime #70. Does not close #78. Does not unlock
 #61 / #29. Does not stamp north_star_done. Cloud stays locked.
 """
@@ -32,6 +36,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from sos.errors import CtlAdmitTimeout
 from sos.handoff_vocab import WORK_STATUSES
 
 ENV_RUNTIME_ROOT = "PANORAMIX_RUNTIME_ROOT"
@@ -41,6 +46,10 @@ APPLY_REL = Path("runtime") / "apply.py"
 CTL_PREFIX = ("python3", "-m", "runtime.apply", "reserve-temporal")
 WORK_ID_RE = re.compile(r"^cw_[0-9a-f]{16}$")
 CTL_TIMEOUT_SEC = 120.0
+# Admit must return a running id. live|parity walls are minutes-class
+# (runtime #143). Do not wait 120s then stub.
+CTL_ADMIT_TIMEOUT_SEC = 2.0
+CTL_SUBPROCESS_TIMEOUT_CODE = 124
 
 CtlRunner = Callable[..., tuple[int, str, str]]
 
@@ -89,7 +98,7 @@ def subprocess_run_ctl(
     *,
     cwd: Path,
     env: Mapping[str, str],
-    timeout: float = CTL_TIMEOUT_SEC,
+    timeout: float | None = None,
 ) -> tuple[int, str, str]:
     """Local subprocess only. Not HTTP. Not a mesh destination."""
     merged = dict(os.environ)
@@ -99,6 +108,9 @@ def subprocess_run_ctl(
     if existing:
         pythonpath = pythonpath + os.pathsep + existing
     merged["PYTHONPATH"] = pythonpath
+    if timeout is None:
+        action = argv[4] if len(argv) > 4 else ""
+        timeout = CTL_ADMIT_TIMEOUT_SEC if action == "admit" else CTL_TIMEOUT_SEC
     try:
         proc = subprocess.run(
             argv,
@@ -109,7 +121,9 @@ def subprocess_run_ctl(
             timeout=timeout,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        return CTL_SUBPROCESS_TIMEOUT_CODE, "", "ctl subprocess timed out"
+    except OSError:
         return 1, "", "ctl subprocess failed"
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
@@ -164,6 +178,20 @@ def _extract_work_id(payload: dict[str, Any], fallback: str | None) -> str | Non
         if WORK_ID_RE.fullmatch(raw):
             return raw
     return None
+
+
+def _runtime_ref_from_admit(
+    payload: dict[str, Any], fallback: str | None
+) -> dict[str, Any] | None:
+    """Running id (+ optional admit status). Work continues after return."""
+    work_id = _extract_work_id(payload, fallback)
+    if work_id is None:
+        return None
+    ref: dict[str, Any] = {"id": work_id, "ctl": "reserve-temporal"}
+    status = _lifecycle_status(payload)
+    if status:
+        ref["status"] = status
+    return ref
 
 
 def _admit_handoff(handoff: dict[str, str]) -> dict[str, str]:
@@ -243,6 +271,10 @@ class LabReserveTemporalHook:
                     tmp_path.unlink()
                 except OSError:
                     pass
+        if int(code) == CTL_SUBPROCESS_TIMEOUT_CODE:
+            if action == "admit":
+                raise CtlAdmitTimeout(action="admit", transport="subprocess")
+            return None
         if code != 0:
             return None
         return _parse_json(stdout)
@@ -258,10 +290,7 @@ class LabReserveTemporalHook:
         )
         if payload is None:
             return None
-        work_id = _extract_work_id(payload, handoff.get("id"))
-        if work_id is None:
-            return None
-        return {"id": work_id, "ctl": "reserve-temporal"}
+        return _runtime_ref_from_admit(payload, handoff.get("id"))
 
     def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)

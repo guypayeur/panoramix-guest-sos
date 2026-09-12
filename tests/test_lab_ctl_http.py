@@ -653,7 +653,10 @@ class LoopbackServerTests(unittest.TestCase):
                 },
                 None,
             )
-            self.assertEqual(admitted, {"id": CTL_ID, "ctl": "reserve-temporal"})
+            self.assertEqual(
+                admitted,
+                {"id": CTL_ID, "ctl": "reserve-temporal", "status": "running"},
+            )
             self.assertEqual(state["admitted"], 1)
             self.assertEqual(hook.status(CTL_ID, admitted), "running")
         finally:
@@ -677,6 +680,9 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("fb901542", text)
         self.assertIn("ctl_http_unreachable", text)
         self.assertIn("lab-serve down", text)
+        self.assertIn("ctl_admit_timeout", text)
+        self.assertIn("#143", text)
+        self.assertIn("live|parity", text)
         self.assertNotIn("Fixes #70", text)
         self.assertNotIn("Fixes #78", text)
         imports = [

@@ -115,6 +115,10 @@ INFO_PAYLOAD = {
                 "When PANORAMIX_CTL_HTTP is set but runtime.serve is down, "
                 "admit/status/progress fail closed with ctl_http_unreachable "
                 "(lab-serve down) — not a hung poll, not pretend durable. "
+                "Admit that exceeds guest timeout before a running id is "
+                "ctl_admit_timeout (runtime #143; live|parity is minutes-class) "
+                "— fail closed, not stub progress. Poll GET /progress and "
+                "GET /events once admit returns running. "
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
@@ -125,6 +129,15 @@ INFO_PAYLOAD = {
             "ctl_http_unreachable (lab-serve down). Not a hung poll. "
             "Not pretend durable. Without the env, inert stub is "
             "unchanged. Not #70 Done."
+        ),
+        "ctl_admit_timeout": (
+            "Durable admit that exceeds guest timeout (HTTP 1.5s / "
+            "ctl-apply admit 2s) before a running id is ctl_admit_timeout "
+            "— not lab-serve-down. live|parity is minutes-class and "
+            "depends on runtime #143 admit-return-running. Fail closed; "
+            "no stub progress. Poll GET /progress and GET /events "
+            "mid-flight once a running id exists. Not #70 Done. "
+            "north_star_done false."
         ),
         "list": "GET /v0/jobs",
         "list_status": "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",

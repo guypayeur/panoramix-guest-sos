@@ -15,7 +15,9 @@ lab files when persisted) and prefers durable wall_elapsed_ms when
 the hook (or a persisted job field) includes it. One-click re-admit posts the existing
 handoff/payload through the same hook seam as a new admit when a
 durable hook is active; fail-closed without hook or payload (no
-silent stub). Default hook stays inert. Does not close
+silent stub). Default hook stays inert. live|parity admit must return a
+running id (runtime #143) so UI can poll mid-flight; timeout is
+ctl_admit_timeout / missing id fail closed — no stub progress. Does not close
 #70. Does not close #78.
 """
 
@@ -36,10 +38,16 @@ from sos.stage_elapsed import (
     wall_elapsed_ms_from_durable,
 )
 from sos.errors import (
+    CTL_ADMIT_TIMEOUT_DETAIL,
     CTL_HTTP_UNREACHABLE_DETAIL,
+    DURABLE_ADMIT_FAILED_DETAIL,
+    ERROR_CTL_ADMIT_TIMEOUT,
     ERROR_CTL_HTTP_UNREACHABLE,
+    ERROR_DURABLE_ADMIT_FAILED,
     AlreadyTerminal,
+    CtlAdmitTimeout,
     CtlHttpUnreachable,
+    DurableAdmitFailed,
     IllegalTransition,
     JobNotFound,
     PayloadUnknown,
@@ -61,6 +69,7 @@ from sos.handoff_vocab import (
     BACKED_RUNTIME,
     BACKED_STUB,
     CATALOG_CROSSCHECK_NOTE,
+    LIVE_PAYLOAD_DIGEST,
     CTL_ADMIT,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
@@ -72,8 +81,11 @@ from sos.handoff_vocab import (
     LAB_COMPOSE_SCRIPT,
     LAST_EVENTS_N,
     OWNERSHIP_NOTE,
+    PARITY_PAYLOAD_DIGEST,
     PATH_SLICE_OWNERS,
     RECOVERABILITY_NOTE,
+    RESERVE_CATALOG_LIVE,
+    RESERVE_CATALOG_PARITY,
     STATUS_CANCELED,
     STATUS_FAILED,
     STATUS_PAUSED,
@@ -137,6 +149,10 @@ INVESTIGATE_NOTE = (
     "Thinner investigate — catalog identity + static path-slice owners "
     "when hooked; not Slack; not a data-catalog product; not a SIEM"
 )
+MINUTES_CLASS_CATALOGS = frozenset(
+    {RESERVE_CATALOG_LIVE, RESERVE_CATALOG_PARITY}
+)
+MINUTES_CLASS_DIGESTS = frozenset({LIVE_PAYLOAD_DIGEST, PARITY_PAYLOAD_DIGEST})
 
 
 def utcnow() -> str:
@@ -430,6 +446,14 @@ def _is_runtime_backed(job: Job) -> bool:
     """True when a runtime ref / runtime-backed path exists."""
     backed = (job.local or {}).get("backed")
     return backed == BACKED_RUNTIME or job.runtime_ref is not None
+
+
+def _minutes_class(job: Job) -> bool:
+    """live|parity catalogs (or matching digests). Minutes-class walls."""
+    catalog = (job.local or {}).get("catalog")
+    if catalog in MINUTES_CLASS_CATALOGS:
+        return True
+    return job.payload_digest in MINUTES_CLASS_DIGESTS
 
 
 def _pause_resume_honest(job: Job) -> bool:
@@ -822,24 +846,35 @@ class JobStore:
         try:
             runtime_ref = self._try_admit(job)
         except CtlHttpUnreachable as exc:
-            self._fail_admit_unreachable(job_id, exc)
+            self._fail_admit_closed(
+                job_id,
+                error=ERROR_CTL_HTTP_UNREACHABLE,
+                message=CTL_HTTP_UNREACHABLE_DETAIL,
+            )
+            exc.fields["id"] = job_id
+            raise
+        except CtlAdmitTimeout as exc:
+            self._fail_admit_closed(
+                job_id,
+                error=ERROR_CTL_ADMIT_TIMEOUT,
+                message=CTL_ADMIT_TIMEOUT_DETAIL,
+            )
             exc.fields["id"] = job_id
             raise
         if runtime_ref is not None:
             with self._lock:
                 live = self._jobs.get(job_id)
                 if live is not None and live.status not in TERMINAL:
-                    live.runtime_ref = runtime_ref
-                    live.message = (
-                        "admitted via runtime hook (operator/ctl; no local stub)"
-                    )
-                    live.updated_at = self._clock()
-                    merged = dict(live.local) if live.local else {}
-                    merged["backed"] = BACKED_RUNTIME
-                    live.local = merged
-                    self._append_event_locked(live, "backed", BACKED_RUNTIME)
-                    self._persist_locked(live)
+                    self._bind_runtime_locked(live, runtime_ref)
             return self.get(job_id)
+        if _minutes_class(job) and durable_hook_active(self.runtime_hook):
+            exc = DurableAdmitFailed(job_id, reason="hook_refused")
+            self._fail_admit_closed(
+                job_id,
+                error=ERROR_DURABLE_ADMIT_FAILED,
+                message=DURABLE_ADMIT_FAILED_DETAIL,
+            )
+            raise exc
 
         with self._lock:
             live = self._jobs.get(job_id)
@@ -861,29 +896,62 @@ class JobStore:
     def _try_admit(self, job: Job) -> dict[str, Any] | None:
         try:
             return self.runtime_hook.admit(job.to_handoff(), job.payload_bytes)
-        except CtlHttpUnreachable:
+        except (CtlHttpUnreachable, CtlAdmitTimeout, DurableAdmitFailed):
             raise
         except Exception:
             return None
+
+    def _bind_runtime_locked(
+        self, job: Job, runtime_ref: dict[str, Any]
+    ) -> None:
+        """Caller holds ``_lock``. Apply running id from admit; work continues."""
+        status = runtime_ref.get("status")
+        job.runtime_ref = {
+            key: value for key, value in runtime_ref.items() if key != "status"
+        }
+        if isinstance(status, str) and status in WORK_STATUSES:
+            previous = job.status
+            job.status = status
+            if status == STATUS_RUNNING and previous != STATUS_RUNNING:
+                self._append_event_locked(
+                    job, "running", "admit returned running"
+                )
+        job.message = "admitted via runtime hook (operator/ctl; no local stub)"
+        job.updated_at = self._clock()
+        merged = dict(job.local) if job.local else {}
+        merged["backed"] = BACKED_RUNTIME
+        job.local = merged
+        self._append_event_locked(job, "backed", BACKED_RUNTIME)
+        self._persist_locked(job)
+
+    def _fail_admit_closed(
+        self, job_id: str, *, error: str, message: str
+    ) -> None:
+        """Record a failed job. Do not start the stub. Not durable."""
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None:
+                return
+            live.status = STATUS_FAILED
+            live.error = error
+            live.message = message
+            live.updated_at = self._clock()
+            merged = dict(live.local) if live.local else {}
+            merged["backed"] = BACKED_STUB
+            live.local = merged
+            self._append_event_locked(live, "failed", message)
+            self._persist_locked(live)
 
     def _fail_admit_unreachable(
         self, job_id: str, exc: CtlHttpUnreachable
     ) -> None:
         """Record a failed job. Do not start the stub. Not durable."""
         del exc
-        with self._lock:
-            live = self._jobs.get(job_id)
-            if live is None:
-                return
-            live.status = STATUS_FAILED
-            live.error = ERROR_CTL_HTTP_UNREACHABLE
-            live.message = CTL_HTTP_UNREACHABLE_DETAIL
-            live.updated_at = self._clock()
-            merged = dict(live.local) if live.local else {}
-            merged["backed"] = BACKED_STUB
-            live.local = merged
-            self._append_event_locked(live, "failed", CTL_HTTP_UNREACHABLE_DETAIL)
-            self._persist_locked(live)
+        self._fail_admit_closed(
+            job_id,
+            error=ERROR_CTL_HTTP_UNREACHABLE,
+            message=CTL_HTTP_UNREACHABLE_DETAIL,
+        )
 
     def _apply_unreachable(self, job_id: str, exc: CtlHttpUnreachable) -> None:
         """Attach the lab-serve-down affordance. Do not invent ctl status."""
@@ -977,6 +1045,10 @@ class JobStore:
                 new_job.to_handoff(), new_job.payload_bytes
             )
         except CtlHttpUnreachable as exc:
+            exc.fields["id"] = job_id
+            exc.fields.setdefault("action", "re-admit")
+            raise
+        except CtlAdmitTimeout as exc:
             exc.fields["id"] = job_id
             exc.fields.setdefault("action", "re-admit")
             raise

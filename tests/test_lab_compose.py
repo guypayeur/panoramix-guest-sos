@@ -211,6 +211,22 @@ class ComposePlanTests(unittest.TestCase):
             "opt-in catalog does not invent walls or flip comparison flags",
             plan.honesty,
         )
+        self.assertIn(
+            "live|parity durable admit must return a running id within guest timeouts (HTTP 1.5s / ctl-apply admit 2s)",
+            plan.honesty,
+        )
+        self.assertIn(
+            "async admit depends on runtime #143 (serve/CLI); guest polls progress/events once running",
+            plan.honesty,
+        )
+        self.assertIn(
+            "admit timeout is ctl_admit_timeout (not lab-serve-down); fail closed — no stub progress",
+            plan.honesty,
+        )
+        self.assertIn(
+            "lab-compose --catalog parity is mid-flight poll + cancel (not wait-for-succeed; not invented walls)",
+            plan.honesty,
+        )
         self.assertIn("pin 0.5", plan.honesty)
         blob = plan_json(plan)
         parsed = json.loads(blob)
@@ -237,6 +253,15 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(readmit["silent_stub"], False)
         self.assertIs(readmit["north_star_done"], False)
         self.assertEqual(readmit_plan()["when"], readmit["when"])
+        async_admit = parsed["async_admit"]
+        self.assertEqual(async_admit["catalog"], "recorded")
+        self.assertIs(async_admit["minutes_class"], False)
+        self.assertEqual(async_admit["depends_on"], "panoramix-runtime#143")
+        self.assertEqual(async_admit["timeout_error"], "ctl_admit_timeout")
+        self.assertIs(async_admit["invent"], False)
+        self.assertIs(async_admit["north_star_done"], False)
+        self.assertIs(async_admit["closes_runtime_70"], False)
+        self.assertIs(async_admit["closes_runtime_78"], False)
         elapsed = parsed["timeline_elapsed"]
         self.assertIs(elapsed["omit_when_missing"], True)
         self.assertIs(elapsed["invent"], False)
@@ -633,6 +658,14 @@ class ComposeCatalogTests(unittest.TestCase):
         self.assertEqual(parsed["reserve_body"]["catalog"], "parity")
         self.assertIs(parsed["north_star_done"], False)
         self.assertIs(parsed["pack_fill"]["operator_live_pack"]["comparable"], False)
+        async_admit = parsed["async_admit"]
+        self.assertEqual(async_admit["catalog"], "parity")
+        self.assertIs(async_admit["minutes_class"], True)
+        self.assertIs(async_admit["stub_fallback"], False)
+        self.assertEqual(async_admit["depends_on"], "panoramix-runtime#143")
+        self.assertIn("mid-flight", async_admit["compose"])
+        self.assertIs(async_admit["invent"], False)
+        self.assertIs(async_admit["north_star_done"], False)
         with self.assertRaises(ValueError):
             build_compose_plan(guest_root=ROOT, catalog="ifrs17")
 
@@ -1887,6 +1920,10 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("does not invent walls", helper)
         self.assertIn("does not flip comparison flags", helper)
         self.assertIn("north_star_done", helper)
+        self.assertIn("#143", helper)
+        self.assertIn("async_admit", helper)
+        self.assertIn("ctl_admit_timeout", helper)
+        self.assertIn("mid-flight", helper)
         self.assertIn("Not guest→mesh ctl", helper)
         self.assertIn("Not SIEM", helper)
         self.assertIn("Not IFRS17", helper)
@@ -1970,6 +2007,9 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("ADSL", text, name)
             self.assertIn("does not invent walls", text.lower(), name)
             self.assertIn("comparison flags", text.lower(), name)
+            self.assertIn("#143", text, name)
+            self.assertIn("ctl_admit_timeout", text, name)
+            self.assertIn("mid-flight", text, name)
             self.assertNotIn("Fixes #70", text)
             self.assertNotIn("Fixes #78", text)
             self.assertNotIn("may not yet expose", text.lower(), name)
@@ -2045,6 +2085,10 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("**not** ADSL", lab)
         self.assertIn("does **not** invent walls", lab)
         self.assertIn("does **not** flip comparison flags", lab)
+        self.assertIn("async_admit", lab)
+        self.assertIn("#143", lab)
+        self.assertIn("ctl_admit_timeout", lab)
+        self.assertIn("mid-flight", lab)
         self.assertNotIn("may not yet expose", lab.lower())
 
         for line in HONESTY_LINES:
@@ -2078,6 +2122,9 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] Lab-compose pack_fill.apply_notes hint", ux)
         self.assertIn("- [x] Operator live #78 D pack is off-box", ux)
         self.assertIn("- [x] Lab-compose opt-in catalog live|parity", ux)
+        self.assertIn("- [x] Async durable admit / mid-flight poll", ux)
+        self.assertIn("ctl_admit_timeout", ux)
+        self.assertIn("#143", ux)
         self.assertIn("LAB_COMPOSE_CATALOG", ux)
         self.assertIn("sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102", ux)
         self.assertIn("parity ≠ IFRS17 / ≠ ADSL", ux)

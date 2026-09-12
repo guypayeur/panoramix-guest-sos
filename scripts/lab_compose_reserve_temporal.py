@@ -67,6 +67,12 @@ second control plane. Does not close runtime
 Cloud stays locked. Opt-in catalog does not stamp
 north_star_done, does not unlock cloud, does not invent walls,
 and does not flip comparison flags.
+live|parity durable admit must return a running id (runtime #143)
+so :18280 can poll progress/events mid-flight. Admit timeout is
+ctl_admit_timeout (not lab-serve-down); fail closed — no stub
+progress. --catalog parity smoke is mid-flight poll + cancel,
+not wait-for-succeed, not invented walls. Does not close
+runtime #70 / #78.
 """
 
 from __future__ import annotations
@@ -206,6 +212,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Reserve catalog recorded|live|parity (alias parity-scale). "
             "Default recorded so CI / --dry-run stay unchanged. "
+            "live|parity is minutes-class: admit must return a running "
+            "id (runtime #143) so the guest polls mid-flight; timeout "
+            "is ctl_admit_timeout (no stub progress). "
+            "parity smoke is mid-flight poll + cancel, not "
+            "wait-for-succeed. "
             f"Or {ENV_COMPOSE_CATALOG}."
         ),
     )
