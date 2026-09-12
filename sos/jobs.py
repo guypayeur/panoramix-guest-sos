@@ -132,6 +132,28 @@ _PROGRESS_COUNTER_KEYS = (
     "inner_steps",
     "inner_steps_expected",
 )
+# iec-local / Platform extras. Surface when the hook supplies them.
+# Do not invent a chunk / ETA / heartbeat panel from these.
+_IEC_PROGRESS_EXTRA_KEYS = (
+    "current_scenario",
+    "total_scenarios",
+    "scenarios_completed",
+    "kernel_time_s",
+    "chunk_idx",
+    "n_chunks",
+    "updated_at",
+    "heartbeat_interval_s",
+)
+# Platform GET /v1/jobs/{id}/progress zeros these when the blob is empty.
+_IEC_PLATFORM_ZERO_DEFAULTS = frozenset(
+    {
+        "pct",
+        "current_scenario",
+        "total_scenarios",
+        "scenarios_completed",
+        "kernel_time_s",
+    }
+)
 STUB_PROGRESS_NOTE = (
     "Stub stage metadata derived from job fields — "
     "not iec chunk progress or parallelism"
@@ -153,9 +175,12 @@ DURABLE_WALL_NOTE = (
 SAME_JOB_PROGRESS_NOTE = (
     "iec-local same-job progress from the runtime binding "
     "(operator iec checkout / POST /v1/jobs). Guest does not run "
-    "IFRS17 math. Phase/fraction when the hook supplies them. "
-    "Walls (api_e2e_ms / wall_elapsed_ms) omitted when missing — "
-    "never invented. Not #70 Done. north_star_done false"
+    "IFRS17 math. Phase/fraction when the hook supplies them — "
+    "omit Platform unknown/0 defaults (runtime #149 / #150); never "
+    "invent. Richer hook fields surface when present (no invented "
+    "SPA chunk/ETA/heartbeat chrome). Walls (api_e2e_ms / "
+    "wall_elapsed_ms) omitted when missing — never invented. "
+    "Not #70 Done. north_star_done false"
 )
 TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
@@ -504,6 +529,40 @@ def _copy_progress_counters(src: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _progress_number(value: Any) -> float | None:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _honest_phase(value: Any) -> str | None:
+    """Pass through hook phase/event only when present. Omit unknown."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == "unknown":
+        return None
+    return text
+
+
+def _progress_field_blobs(data: dict[str, Any]) -> list[dict[str, Any]]:
+    blobs: list[dict[str, Any]] = [data]
+    nested = data.get("progress")
+    if isinstance(nested, dict):
+        blobs.append(nested)
+    return blobs
+
+
+def _first_progress_value(data: dict[str, Any], key: str) -> Any:
+    for blob in _progress_field_blobs(data):
+        if key in blob and blob[key] not in (None, ""):
+            return blob[key]
+    return None
+
+
 def _as_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -631,11 +690,112 @@ def _progress_timeline(
 
 
 def _has_progress_counters(data: dict[str, Any]) -> bool:
-    nested = data.get("progress")
-    blobs = [data]
+    return any(
+        key in blob
+        for blob in _progress_field_blobs(data)
+        for key in _PROGRESS_COUNTER_KEYS
+    )
+
+
+def _has_iec_progress_fields(data: dict[str, Any]) -> bool:
+    """True when iec-local supplied phase/extras/walls — counters optional.
+
+    Runtime #149 / #150 may omit phase/fraction (Platform unknown/0).
+    Walls-only or same_job blobs stay durable — do not fall back to stub.
+    """
+    if data.get("same_job") is True or data.get("iec_job_id"):
+        return True
+    walls = data.get("walls")
+    if isinstance(walls, dict) and walls.get("invented") is not True:
+        return True
+    for blob in _progress_field_blobs(data):
+        if blob.get("same_job") is True:
+            return True
+        if _honest_phase(blob.get("phase")) or _honest_phase(blob.get("event")):
+            return True
+        for key in _IEC_PROGRESS_EXTRA_KEYS:
+            if blob.get(key) not in (None, ""):
+                return True
+        messages = blob.get("messages")
+        if isinstance(messages, list) and messages:
+            return True
+    return False
+
+
+def _has_durable_progress(data: dict[str, Any]) -> bool:
+    """Path-slice counters, or iec-local fields/walls without invented zeros."""
+    return _has_progress_counters(data) or _has_iec_progress_fields(data)
+
+
+def _sanitize_same_job_progress(
+    payload: dict[str, Any],
+    *,
+    durable: dict[str, Any],
+    nested_raw: dict[str, Any] | None,
+) -> None:
+    """Omit Platform unknown/0 defaults. Keep hook-supplied honest fields."""
+    phase = _honest_phase(payload.get("phase")) or _honest_phase(
+        payload.get("event")
+        or _first_progress_value(durable, "event")
+        or (nested_raw or {}).get("event")
+    )
+    if phase is None:
+        payload.pop("phase", None)
+        payload.pop("event", None)
+    else:
+        payload["phase"] = phase
+
+    frac = _progress_number(payload.get("fraction"))
+    pct = _progress_number(payload.get("pct"))
+    if phase is None:
+        if frac is None or frac == 0.0:
+            payload.pop("fraction", None)
+        if pct is None or pct == 0.0:
+            payload.pop("pct", None)
+    elif frac is None and pct is not None:
+        payload["fraction"] = pct if 0.0 <= pct <= 1.0 else pct / 100.0
+
+    nested = payload.get("progress")
     if isinstance(nested, dict):
-        blobs.append(nested)
-    return any(key in blob for blob in blobs for key in _PROGRESS_COUNTER_KEYS)
+        if "fraction" not in payload:
+            nested.pop("fraction", None)
+        if "phase" not in payload:
+            nested.pop("phase", None)
+        if not nested:
+            payload.pop("progress", None)
+
+
+def _attach_iec_progress_extras(
+    payload: dict[str, Any],
+    *,
+    durable: dict[str, Any],
+    nested_raw: dict[str, Any] | None,
+) -> None:
+    """Copy richer hook fields when present. No invented chrome."""
+    blobs: list[dict[str, Any]] = [durable]
+    if isinstance(nested_raw, dict):
+        blobs.append(nested_raw)
+    for key in _IEC_PROGRESS_EXTRA_KEYS:
+        if key in payload:
+            continue
+        value = None
+        for blob in blobs:
+            if key in blob and blob[key] not in (None, ""):
+                value = blob[key]
+                break
+        if value is None:
+            continue
+        if key in _IEC_PLATFORM_ZERO_DEFAULTS and _progress_number(value) == 0.0:
+            continue
+        payload[key] = value
+    messages = None
+    for blob in blobs:
+        raw = blob.get("messages")
+        if isinstance(raw, list) and raw:
+            messages = raw[-10:]
+            break
+    if messages:
+        payload["messages"] = messages
 
 
 def _attach_wall_elapsed(
@@ -690,7 +850,7 @@ def _progress_from_durable(
             payload[key] = top[key]
         elif key in nested:
             payload[key] = nested[key]
-    for key in ("phase", "pct"):
+    for key in ("phase", "pct", "event"):
         if durable.get(key) is not None:
             payload[key] = durable[key]
         elif isinstance(nested_raw, dict) and nested_raw.get(key) is not None:
@@ -718,8 +878,18 @@ def _progress_from_durable(
         payload["note"] = SAME_JOB_PROGRESS_NOTE
     if nested:
         payload["progress"] = nested
-    elif isinstance(nested_raw, dict):
+    elif isinstance(nested_raw, dict) and nested_raw and not (
+        _same_job(job) or durable.get("same_job") is True
+    ):
         payload["progress"] = {}
+    if _same_job(job) or durable.get("same_job") is True:
+        nested_dict = nested_raw if isinstance(nested_raw, dict) else None
+        _sanitize_same_job_progress(
+            payload, durable=durable, nested_raw=nested_dict
+        )
+        _attach_iec_progress_extras(
+            payload, durable=durable, nested_raw=nested_dict
+        )
     timeline = _progress_timeline(durable, payload)
     if timeline:
         elapsed_source = attach_timeline_elapsed(
@@ -1412,9 +1582,13 @@ class JobStore:
             return None
         if not isinstance(reported, dict) or not reported:
             return None
-        if not _has_progress_counters(reported):
-            return None
-        return reported
+        if _has_durable_progress(reported):
+            return reported
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is not None and _same_job(job):
+            return reported
+        return None
 
     def _try_runtime_events(
         self, job_id: str, runtime_ref: dict[str, Any] | None

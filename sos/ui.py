@@ -426,7 +426,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Guest does <strong>not</strong> run IFRS17 math — the runtime
     binding wraps the operator iec checkout
     (<code>POST /v1/jobs</code>). Durable progress is phase/fraction
-    (no invented path-slices). Walls
+    <strong>when the hook supplies them</strong> — omit Platform
+    <code>unknown</code>/<code>0</code> defaults (runtime #149 / #150);
+    never invent. Richer hook fields surface when present (no invented
+    SPA chunk/ETA/heartbeat chrome). Walls
     (<code>api_e2e_ms</code>) omit when missing; never invented.
     Lab-compose: <code>docs/lab-compose-iec-local.md</code>.
     Does not close runtime #70 / #78. Cloud stays locked.
@@ -900,6 +903,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return digest === "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c";
     }
 
+    function honestPhase(prog) {
+      if (!prog) return null;
+      const raw = (prog.phase != null && prog.phase !== "") ? prog.phase : prog.event;
+      if (raw == null || raw === "") return null;
+      const text = String(raw).trim();
+      if (!text || text.toLowerCase() === "unknown") return null;
+      return text;
+    }
+
+    function honestNumber(raw) {
+      if (raw == null || raw === "") return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    }
+
     function fmtSecs(s) {
       if (s == null || !Number.isFinite(Number(s))) return "—";
       s = Number(s);
@@ -996,26 +1014,41 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const title = document.createElement("h3");
         title.textContent = "iec-local same-job (runtime binding)";
         wrap.appendChild(title);
-        const phase = prog && prog.phase;
-        const frac = Number(prog && (prog.fraction != null ? prog.fraction : null));
-        const pct = Number(prog && (prog.pct != null ? prog.pct : null));
+        const phase = honestPhase(prog);
+        const frac = honestNumber(prog && prog.fraction);
+        const pct = honestNumber(prog && prog.pct);
         let text = "Guest does not run IFRS17 math. Runtime binding wraps the operator iec checkout (POST /v1/jobs).";
-        if (phase != null && String(phase)) {
+        if (phase) {
           text = "Phase " + phase + " — " + text;
         }
-        if (Number.isFinite(frac)) {
+        if (frac != null) {
           text += " Fraction " + frac + ".";
-        } else if (Number.isFinite(pct)) {
+        } else if (pct != null) {
           text += " pct " + pct + ".";
         }
         if (source === "durable") {
-          text += " Durable phase/fraction when the hook supplies them — no invented path-slices.";
+          text += " Durable phase/fraction only when the hook supplies them — omit unknown/0; no invented path-slices.";
         } else if (job && job.error === "durable_admit_failed") {
           text += " Fail-closed without iec-local ctl — no stub progress.";
         }
         text += " Not #70 Done. north_star_done false.";
         line.textContent = text;
         wrap.appendChild(line);
+        const extras = [];
+        if (prog && prog.scenarios_completed != null && prog.total_scenarios != null) {
+          extras.push("scenarios " + prog.scenarios_completed + " / " + prog.total_scenarios);
+        }
+        if (prog && prog.chunk_idx != null && prog.n_chunks != null) {
+          extras.push("chunk " + prog.chunk_idx + " / " + prog.n_chunks);
+        }
+        if (prog && prog.updated_at) extras.push("updated " + fmtTs(prog.updated_at));
+        if (extras.length) {
+          const extra = document.createElement("p");
+          extra.className = "hint";
+          extra.textContent = extras.join(" · ")
+            + " — hook fields when present; not a SPA chunk/ETA/heartbeat panel.";
+          wrap.appendChild(extra);
+        }
         const wallMs = durableWallMs(prog);
         if (wallMs != null) {
           const wall = document.createElement("p");
@@ -1555,6 +1588,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
       if (prog && prog.source) {
         rows.push(...dlRow("progress source", prog.source));
+      }
+      const phase = honestPhase(prog);
+      if (phase) {
+        rows.push(...dlRow("phase", phase));
       }
       if (prog && prog.stages_completed != null) {
         const tot = prog.stages_total != null ? (" / " + prog.stages_total) : "";

@@ -100,6 +100,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertIs(iec["ifrs17_guest"], False)
         self.assertIs(iec["north_star_done"], False)
         self.assertIn("does not run IFRS17", iec["note"])
+        self.assertIn("Phase/fraction omit when", iec["note"])
         self.assertEqual(
             body["jobs"]["reserve_digest_parity"],
             "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
@@ -182,6 +183,9 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("elapsed", body["jobs"]["progress_honesty"])
         self.assertIn("omitted when missing", body["jobs"]["progress_honesty"])
         self.assertIn("never invented", body["jobs"]["progress_honesty"])
+        self.assertIn("iec-local same-job prefers phase/fraction", body["jobs"]["progress_honesty"])
+        self.assertIn("unknown/0", body["jobs"]["progress_honesty"])
+        self.assertIn("no invented SPA chunk/ETA/", body["jobs"]["progress_honesty"])
         self.assertIn("9ba95bbb", body["jobs"]["progress_honesty"])
         self.assertIn("5dc191cb", body["jobs"]["progress_honesty"])
         self.assertIn("9b6646e8", body["jobs"]["progress_honesty"])
@@ -299,6 +303,9 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn('value="reserve_ifrs17"', html)
             self.assertIn("iec-local same-job", html)
             self.assertIn("lab-compose-iec-local.md", html)
+            self.assertIn("honestPhase", html)
+            self.assertIn("omit unknown/0", html)
+            self.assertIn("SPA chunk/ETA/heartbeat chrome", html)
             self.assertIn("parity-scale", html)
             self.assertNotIn("north-star Done", html)
             self.assertIn("Job detail", html)

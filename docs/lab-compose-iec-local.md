@@ -1,10 +1,10 @@
 # Lab compose: iec-local same-job admit + UI watch
 
-Thin local lab so an operator can start **runtime.serve** (binding [`bindings/local-iec.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-iec.example.yaml), ctl **19216**) and this guest with `PANORAMIX_CTL_HTTP`, POST the pinned iec **same-job**, and watch durable phase/fraction on `:18280`.
+Thin local lab so an operator can start **runtime.serve** (binding [`bindings/local-iec.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-iec.example.yaml), ctl **19216**) and this guest with `PANORAMIX_CTL_HTTP`, POST the pinned iec **same-job**, and watch durable progress on `:18280` (phase/fraction **when the hook supplies them**).
 
 This is the guest follow-up for runtime [#146](https://github.com/guypayeur/panoramix-runtime/issues/146) / [PR #148](https://github.com/guypayeur/panoramix-runtime/pull/148) (`docs/iec-local.md` @ `d480dc8`) so [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) north-star compare can admit the **same** `reserve_ifrs17` job iec measures. Sibling reserve-temporal compose stays [`docs/lab-compose.md`](lab-compose.md) (ctl **19215**).
 
-**Honesty:** guest does **not** run IFRS17 math. The runtime binding wraps the operator iec checkout (`POST /v1/jobs`). Fail-closed without env. Not guest→mesh ctl. Not a second control plane. Not SIEM. Pin **0.5**. Walls (`api_e2e_ms` / `wall_elapsed_ms`) **omit when missing — never invent**. Recorded fixture **omits** measured walls. Does **not** stamp `north_star_done`. Does **not** close runtime [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) / [#78](https://github.com/guypayeur/panoramix-runtime/issues/78). Does **not** unlock cloud [#61](https://github.com/guypayeur/panoramix-runtime/issues/61) / [#29](https://github.com/guypayeur/panoramix-runtime/issues/29). This page does **not** grow pack_fill.
+**Honesty:** guest does **not** run IFRS17 math. The runtime binding wraps the operator iec checkout (`POST /v1/jobs`). Fail-closed without env. Not guest→mesh ctl. Not a second control plane. Not SIEM. Pin **0.5**. Phase/fraction **omit when missing** — guest matches runtime [#149](https://github.com/guypayeur/panoramix-runtime/issues/149) / [PR #150](https://github.com/guypayeur/panoramix-runtime/pull/150) (`docs/iec-local.md`: omit Platform `unknown`/`0` defaults; map only when present). Walls (`api_e2e_ms` / `wall_elapsed_ms`) **omit when missing — never invent**. Recorded fixture **omits** measured walls. Does **not** invent SPA chunk/ETA/heartbeat chrome. Does **not** stamp `north_star_done`. Does **not** close runtime [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) / [#78](https://github.com/guypayeur/panoramix-runtime/issues/78). Does **not** unlock cloud [#61](https://github.com/guypayeur/panoramix-runtime/issues/61) / [#29](https://github.com/guypayeur/panoramix-runtime/issues/29). This page does **not** grow pack_fill.
 
 ## Same-job identity
 
@@ -31,7 +31,7 @@ This is **not** the thinner recorded / live / parity kernel. `class: gpu` is ref
 1. `python3 -m runtime.serve --binding bindings/local-iec.example.yaml` from a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout (**main** @ `d480dc8`, PR #148). Binding `publish.ctl_port` is **19216**.
 2. This guest: `PLATFORM_LISTEN_HTTP=18280`, `PANORAMIX_CTL_HTTP=http://127.0.0.1:19216`, `PANORAMIX_CTL_KIND=iec-local` (port **19216** also selects iec-local when kind is unset).
 3. `POST /v0/jobs` with `{"demo":"reserve","catalog":"reserve_ifrs17"}`.
-4. Show `local.backed=runtime` and durable `GET /progress` (`phase` / `fraction`; `source: durable`). **Events are not required** (iec-local has no events verb). **pause_resume is not required** (iec pause is pause-before-start only). Walls only when the hook supplies them (`walls.api_e2e_ms` per runtime [#145](https://github.com/guypayeur/panoramix-runtime/issues/145)) — omit when missing.
+4. Show `local.backed=runtime` and durable `GET /progress` (`source: durable`). `phase` / `fraction` only when the hook supplies them — **omit** Platform `unknown` / `0` defaults (runtime [#149](https://github.com/guypayeur/panoramix-runtime/issues/149) / [PR #150](https://github.com/guypayeur/panoramix-runtime/pull/150)). Richer hook fields surface when present (no invented SPA chunk/ETA/heartbeat chrome). **Events are not required** (iec-local has no events verb). **pause_resume is not required** (iec pause is pause-before-start only). Walls only when the hook supplies them (`walls.api_e2e_ms` per runtime [#145](https://github.com/guypayeur/panoramix-runtime/issues/145)) — omit when missing.
 5. Operator UI `:18280` polls mid-flight once admit returns a running id. Honesty labels: guest does not run IFRS17; runtime binding runs the iec checkout.
 6. Tear down both processes.
 
@@ -95,7 +95,8 @@ No events verb. CLI: `python3 -m runtime.apply iec-local admit|status|progress|c
 ## Not this page
 
 - IFRS17 math in the guest
-- Invented walls / `comparable=true` / `north_star_done`
+- Invented walls / invented `phase=unknown` / `fraction=0.0` / `comparable=true` / `north_star_done`
+- SPA chunk / ETA / heartbeat chrome to chase the UX gate
 - Closing runtime #70 / #78
 - Cloud unlock (#61 / #29)
 - Growing pack_fill / apply-notes / gap-report

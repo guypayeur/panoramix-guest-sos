@@ -111,9 +111,10 @@ INFO_PAYLOAD = {
             "note": (
                 "Pinned iec reserve_ifrs17 same-job. Guest does not "
                 "run IFRS17 math. Runtime binding wraps the operator "
-                "iec checkout (POST /v1/jobs). Walls (api_e2e_ms) omit "
-                "when missing — never invent. Not #70 Done. "
-                "north_star_done false. Cloud locked."
+                "iec checkout (POST /v1/jobs). Phase/fraction omit when "
+                "missing (Platform unknown/0 defaults) — never invent. "
+                "Walls (api_e2e_ms) omit when missing — never invent. "
+                "Not #70 Done. north_star_done false. Cloud locked."
             ),
         },
         "runtime_reserve": "docs/reserve.md",
@@ -199,8 +200,10 @@ INFO_PAYLOAD = {
             "(named stages admit/project/fold/complete or hook-provided, "
             "plus investigate ownership tags, completed vs current vs pending); "
             "fraction / stages_completed stay the hook counters; "
-            "iec-local same-job prefers phase/fraction (no invented "
-            "path-slices); guest does not run IFRS17 math; "
+            "iec-local same-job prefers phase/fraction when the hook "
+            "supplies them (runtime #149 / #150 omit Platform unknown/0 "
+            "defaults — never invent; no invented SPA chunk/ETA/"
+            "heartbeat chrome); guest does not run IFRS17 math; "
             "optional per-stage elapsed from durable progress "
             "stages[].elapsed_ms (runtime tip 9ba95bbb / docs tip 5dc191cb / "
             "main) or GET /events timestamps when present; "

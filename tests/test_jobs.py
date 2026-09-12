@@ -1728,6 +1728,9 @@ class JobStoreTests(unittest.TestCase):
             "- [x] Honest thinner progress endpoint + named path-slice timeline",
             ux,
         )
+        self.assertIn("- [x] iec-local phase/fraction omit-when-missing", ux)
+        self.assertIn("Platform `unknown` / `0`", ux)
+        self.assertIn("ux_match_or_better` stays **false**", ux)
         self.assertIn("- [x] Optional path-slice stage elapsed", ux)
         self.assertIn("- [x] Optional durable wall_elapsed_ms", ux)
         self.assertIn("9ba95bbb", ux)
