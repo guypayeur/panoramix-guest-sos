@@ -30,20 +30,25 @@ aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
 6ecb645 (PR #130 stamp link, or main); apply-metrics tip
 5d399f7 (PR #132 iec_parity_pack apply-metrics, or main);
 apply-metrics docs tip 3904ee4 (PR #134 stamp link, or
-main); guest emit tip b859466 (#52); guest gap-report tip eb48605
-(#60); guest merge tip 39064d5 (#64). Wall feature tip
+main); apply-notes tip 48a8645 (PR #136 iec_parity_pack
+apply-notes, or main); guest emit tip b859466 (#52); guest
+gap-report tip eb48605 (#60); guest merge tip 39064d5 (#64);
+guest apply-metrics tip 7c09f32 (#68). Wall feature tip
 remains 9b6646e8. Guest fragment can feed optional tips /
 measured durable into python3 -m runtime.iec_parity_pack
 skeleton via --from-json (file or stdin) or flags; omit
 durable when missing. Dry-run / live record
-pack_fill.apply_metrics (cd+cmd when PANORAMIX_RUNTIME_ROOT
+pack_fill.apply_notes (cd+cmd when PANORAMIX_RUNTIME_ROOT
 known, else a copy-paste template) for python3 -m
-runtime.iec_parity_pack apply-metrics … --from-durable-panoramix
-(does not supply wall numbers), pack_fill.merge for merge …
---from-json, then pack_fill.gap_report for gap-report
-(apply-metrics+merge+gap-report pairing). Hint only — does
-not run apply-metrics, merge, or gap-report. Never invent
-metrics.wall_time_sec. assist ≠ fill; assist ≠ Done;
+runtime.iec_parity_pack apply-notes … (does not supply wall
+numbers; does not invent UX strings), pack_fill.apply_metrics
+for apply-metrics … --from-durable-panoramix, pack_fill.merge
+for merge … --from-json, then pack_fill.gap_report for
+gap-report (apply-notes+apply-metrics+merge+gap-report pairing).
+Hint only — does not run apply-notes, apply-metrics, merge,
+or gap-report. Never invent metrics.wall_time_sec. Never
+invent UX strings. assist ≠ fill; assist ≠ Done;
+apply-notes ≠ fill; apply-notes ≠ Done;
 apply-metrics ≠ fill; apply-metrics ≠ Done; merge ≠ fill;
 merge ≠ Done; gap-report ≠ Done.
 Does not write the full live pack. Not a forecast. Not IFRS17.
