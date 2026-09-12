@@ -41,9 +41,19 @@ from sos.handoff_vocab import WORK_STATUSES
 
 ENV_RUNTIME_ROOT = "PANORAMIX_RUNTIME_ROOT"
 ENV_BINDING = "PANORAMIX_RESERVE_TEMPORAL_BINDING"
+ENV_IEC_BINDING = "PANORAMIX_IEC_LOCAL_BINDING"
 ENV_LIVE = "PANORAMIX_RESERVE_TEMPORAL_LIVE"
+ENV_CTL_KIND = "PANORAMIX_CTL_KIND"
 APPLY_REL = Path("runtime") / "apply.py"
+CTL_KIND_RESERVE_TEMPORAL = "reserve-temporal"
+CTL_KIND_IEC_LOCAL = "iec-local"
+CTL_KINDS = frozenset({CTL_KIND_RESERVE_TEMPORAL, CTL_KIND_IEC_LOCAL})
+DEFAULT_IEC_LOCAL_PORT = 19216
 CTL_PREFIX = ("python3", "-m", "runtime.apply", "reserve-temporal")
+CTL_PREFIX_BY_KIND = {
+    CTL_KIND_RESERVE_TEMPORAL: ("python3", "-m", "runtime.apply", "reserve-temporal"),
+    CTL_KIND_IEC_LOCAL: ("python3", "-m", "runtime.apply", "iec-local"),
+}
 WORK_ID_RE = re.compile(r"^cw_[0-9a-f]{16}$")
 CTL_TIMEOUT_SEC = 120.0
 # Admit must return a running id. live|parity walls are minutes-class
@@ -56,6 +66,30 @@ CtlRunner = Callable[..., tuple[int, str, str]]
 
 def _truthy(raw: str | None) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_ctl_kind(
+    env: Mapping[str, str] | None = None,
+    *,
+    origin: str | None = None,
+) -> str:
+    """reserve-temporal (default) or iec-local.
+
+    Explicit ``PANORAMIX_CTL_KIND`` wins. Else ctl port **19216**
+    selects iec-local (bindings/local-iec.example.yaml). Fail closed
+    to reserve-temporal when unset — existing lab compose unchanged.
+    """
+    source = os.environ if env is None else env
+    raw = str(source.get(ENV_CTL_KIND) or "").strip().lower()
+    if raw in CTL_KINDS:
+        return raw
+    if origin:
+        from urllib.parse import urlsplit
+
+        port = urlsplit(str(origin)).port
+        if port == DEFAULT_IEC_LOCAL_PORT:
+            return CTL_KIND_IEC_LOCAL
+    return CTL_KIND_RESERVE_TEMPORAL
 
 
 def runtime_root_from_env(
@@ -80,17 +114,20 @@ def runtime_root_from_env(
 
 def binding_from_env(env: Mapping[str, str] | None = None) -> Path | None:
     source = os.environ if env is None else env
-    raw = str(source.get(ENV_BINDING) or "").strip()
-    if not raw:
-        return None
-    path = Path(raw).expanduser()
-    try:
-        path = path.resolve()
-    except OSError:
-        return None
-    if not path.is_file():
-        return None
-    return path
+    kind = resolve_ctl_kind(source)
+    names = (ENV_IEC_BINDING, ENV_BINDING) if kind == CTL_KIND_IEC_LOCAL else (ENV_BINDING,)
+    for name in names:
+        raw = str(source.get(name) or "").strip()
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        try:
+            path = path.resolve()
+        except OSError:
+            continue
+        if path.is_file():
+            return path
+    return None
 
 
 def subprocess_run_ctl(
@@ -181,13 +218,17 @@ def _extract_work_id(payload: dict[str, Any], fallback: str | None) -> str | Non
 
 
 def _runtime_ref_from_admit(
-    payload: dict[str, Any], fallback: str | None
+    payload: dict[str, Any],
+    fallback: str | None,
+    *,
+    ctl: str = CTL_KIND_RESERVE_TEMPORAL,
 ) -> dict[str, Any] | None:
     """Running id (+ optional admit status). Work continues after return."""
     work_id = _extract_work_id(payload, fallback)
     if work_id is None:
         return None
-    ref: dict[str, Any] = {"id": work_id, "ctl": "reserve-temporal"}
+    kind = str(ctl or CTL_KIND_RESERVE_TEMPORAL).strip() or CTL_KIND_RESERVE_TEMPORAL
+    ref: dict[str, Any] = {"id": work_id, "ctl": kind}
     status = _lifecycle_status(payload)
     if status:
         ref["status"] = status
@@ -220,11 +261,17 @@ class LabReserveTemporalHook:
         runner: CtlRunner | None = None,
         binding: Path | None = None,
         live: bool = False,
+        ctl: str = CTL_KIND_RESERVE_TEMPORAL,
     ) -> None:
         self.root = Path(root)
         self.runner = runner or subprocess_run_ctl
         self.binding = Path(binding) if binding is not None else None
         self.live = bool(live)
+        self.ctl = (
+            str(ctl).strip()
+            if ctl in CTL_KINDS
+            else CTL_KIND_RESERVE_TEMPORAL
+        )
         self.last_status_payload: dict[str, Any] | None = None
 
     def _invoke(
@@ -235,7 +282,10 @@ class LabReserveTemporalHook:
         handoff: dict[str, str] | None = None,
         resource_class: str | None = None,
     ) -> dict[str, Any] | None:
-        argv = list(CTL_PREFIX) + [action]
+        if self.ctl == CTL_KIND_IEC_LOCAL and action == "events":
+            return None
+        prefix = CTL_PREFIX_BY_KIND.get(self.ctl, CTL_PREFIX)
+        argv = list(prefix) + [action]
         if self.binding is not None:
             argv.extend(["--binding", str(self.binding)])
         if self.live:
@@ -290,7 +340,7 @@ class LabReserveTemporalHook:
         )
         if payload is None:
             return None
-        return _runtime_ref_from_admit(payload, handoff.get("id"))
+        return _runtime_ref_from_admit(payload, handoff.get("id"), ctl=self.ctl)
 
     def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)
@@ -353,4 +403,5 @@ def lab_hook_from_env(
         runner=runner,
         binding=binding_from_env(source),
         live=_truthy(source.get(ENV_LIVE)),
+        ctl=resolve_ctl_kind(source),
     )

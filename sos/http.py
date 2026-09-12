@@ -37,12 +37,20 @@ from sos.handoff_vocab import (
     CTL_ADMIT,
     CTL_CANCEL,
     CTL_EVENTS,
+    CTL_IEC_LOCAL_ADMIT,
+    CTL_IEC_LOCAL_PORT,
     CTL_PAUSE_RESUME,
     CTL_PROGRESS,
+    IEC_METHOD_PIN,
+    IEC_SOURCE_FILE,
+    LAB_COMPOSE_IEC_DOCS,
+    LAB_COMPOSE_IEC_SCRIPT,
     LOCAL_DEMOS,
     PARITY_PAYLOAD_DIGEST,
     RECORDED_PAYLOAD_DIGEST,
+    RESERVE_CATALOG_SAME_JOB,
     RESOURCE_CLASSES,
+    SAME_JOB_PAYLOAD_DIGEST,
     WORK_KINDS,
     WORK_STATUSES,
 )
@@ -84,6 +92,30 @@ INFO_PAYLOAD = {
         "reserve_catalogs": ["recorded", "live", "parity"],
         "reserve_digest_recorded": RECORDED_PAYLOAD_DIGEST,
         "reserve_digest_parity": PARITY_PAYLOAD_DIGEST,
+        "iec_local": {
+            "ctl": "iec-local",
+            "ctl_port": CTL_IEC_LOCAL_PORT,
+            "binding": "bindings/local-iec.example.yaml",
+            "catalog": RESERVE_CATALOG_SAME_JOB,
+            "catalog_alias": "same-job",
+            "digest": SAME_JOB_PAYLOAD_DIGEST,
+            "revision": IEC_METHOD_PIN,
+            "source_file": IEC_SOURCE_FILE,
+            "ifrs17_guest": False,
+            "lab_compose": LAB_COMPOSE_IEC_DOCS,
+            "script": LAB_COMPOSE_IEC_SCRIPT,
+            "runtime_docs": "docs/iec-local.md",
+            "runtime_tip": "d480dc8",
+            "admit": CTL_IEC_LOCAL_ADMIT,
+            "north_star_done": False,
+            "note": (
+                "Pinned iec reserve_ifrs17 same-job. Guest does not "
+                "run IFRS17 math. Runtime binding wraps the operator "
+                "iec checkout (POST /v1/jobs). Walls (api_e2e_ms) omit "
+                "when missing — never invent. Not #70 Done. "
+                "north_star_done false. Cloud locked."
+            ),
+        },
         "runtime_reserve": "docs/reserve.md",
         "runtime_reserve_helpers": [
             "runtime.reserve.digest_for",
@@ -112,6 +144,10 @@ INFO_PAYLOAD = {
                 "seam (not mesh HTTP; not guest→mesh ctl). "
                 "One-shot lab: scripts/lab_compose_reserve_temporal.py "
                 "(runtime.serve + PANORAMIX_CTL_HTTP). "
+                "Sibling iec-local same-job: "
+                "scripts/lab_compose_iec_local.py (ctl 19216, catalog "
+                "reserve_ifrs17 / same-job). Guest does not run IFRS17 "
+                "math — runtime binding wraps the operator iec checkout. "
                 "When PANORAMIX_CTL_HTTP is set but runtime.serve is down, "
                 "admit/status/progress fail closed with ctl_http_unreachable "
                 "(lab-serve down) — not a hung poll, not pretend durable. "
@@ -163,11 +199,14 @@ INFO_PAYLOAD = {
             "(named stages admit/project/fold/complete or hook-provided, "
             "plus investigate ownership tags, completed vs current vs pending); "
             "fraction / stages_completed stay the hook counters; "
+            "iec-local same-job prefers phase/fraction (no invented "
+            "path-slices); guest does not run IFRS17 math; "
             "optional per-stage elapsed from durable progress "
             "stages[].elapsed_ms (runtime tip 9ba95bbb / docs tip 5dc191cb / "
             "main) or GET /events timestamps when present; "
-            "optional wall_elapsed_ms / started_at from durable "
-            "progress/status (runtime tip 9b6646e8 / main, PR #114) when "
+            "optional wall_elapsed_ms / api_e2e_ms / started_at from durable "
+            "progress/status/walls (runtime tip 9b6646e8 / main, PR #114; "
+            "iec-local #145 api_e2e) when "
             "the hook JSON includes it — omitted when missing — never invented; "
             "not a forecast; not IFRS17; not iec SPA; "
             "else stub stage i of n without fake names; "
@@ -177,8 +216,10 @@ INFO_PAYLOAD = {
         "handoff_docs": (
             "Job-detail compact reminders for handoff + payload export, "
             "recoverability / re-admit, and lab-compose "
-            "(docs/lab-compose.md). Operator clarity — not a second "
-            "control plane. Not #70 Done. Not SIEM. Not IFRS17."
+            "(docs/lab-compose.md; iec-local docs/lab-compose-iec-local.md). "
+            "Operator clarity — not a second "
+            "control plane. Guest does not run IFRS17 math. "
+            "Not #70 Done. Not SIEM. Not IFRS17."
         ),
         "events_honesty": (
             "durable reserve-temporal JSONL trail when a hook provides it; "
