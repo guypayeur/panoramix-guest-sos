@@ -206,6 +206,18 @@ class TimeoutHonestyTests(unittest.TestCase):
             store.submit({"demo": "reserve", "seconds": 8})
         self.assertEqual(ctx.exception.error, ERROR_CTL_HTTP_UNREACHABLE)
 
+    def test_http_admit_timeout_not_listening_is_unreachable(self) -> None:
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK,
+            transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, ""),
+            listen_probe=lambda: False,
+        )
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        with self.assertRaises(CtlHttpUnreachable) as ctx:
+            store.submit({"demo": "reserve", "catalog": "parity"})
+        self.assertEqual(ctx.exception.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertNotEqual(ctx.exception.error, ERROR_CTL_ADMIT_TIMEOUT)
+
     def test_http_admit_timeout_returns_503(self) -> None:
         hook = LabReserveTemporalHttpHook(
             LOOPBACK, transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, "")

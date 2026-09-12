@@ -78,6 +78,8 @@ curl -sS "http://127.0.0.1:18280/v0/jobs/${JOB}/progress"
 
 Without `PANORAMIX_CTL_HTTP` the same-job POST is **409** `durable_admit_failed` (`same_job_stub`). That is fail-closed — **no stub IFRS17**.
 
+When ctl is listening but admit is slow, guest fail-closes with **`ctl_admit_timeout`** — not **`ctl_http_unreachable`** / lab-serve-down. A later progress poll may still show durable running (nested iec job created). True serve-down (origin not listening) stays **`ctl_http_unreachable`**. Does not invent UX progress. `north_star_done` false.
+
 Ctl verbs (runtime `docs/iec-local.md` @ `d480dc8`):
 
 ```text

@@ -24,13 +24,18 @@ verb — iec-local has none). Never ``runtime.apply compute-work``.
 Does not import the runtime package.
 
 When the origin is valid but runtime.serve is down (connection
-refused), admit/status/progress fail closed with
-``ctl_http_unreachable`` (lab-serve down). Short timeout — not a
-hung poll. HTTP admit that exceeds ``CTL_HTTP_TIMEOUT_SEC`` is
-``ctl_admit_timeout`` (runtime still blocking; needs #143 for
-live|parity) — fail closed, not stub progress. Guest polls
-progress/events mid-flight once a running id exists. HTTP 4xx/5xx on
-recorded stay the existing stub fallback; live|parity refuse stub.
+refused / not listening), admit/status/progress fail closed with
+``ctl_http_unreachable`` (lab-serve down). Poll timeout stays short
+(``CTL_HTTP_TIMEOUT_SEC``) so list/detail do not hang. HTTP admit
+uses a longer ``CTL_HTTP_ADMIT_TIMEOUT_SEC`` so a slow-but-up
+iec-local admit is not raced. If admit still exceeds that window
+while the origin is listening, the error is ``ctl_admit_timeout``
+(runtime still blocking; needs #143 for live|parity) — fail closed,
+not stub progress, not lab-serve-down. Status/progress HTTP timeout
+while the origin is listening is a missed poll (return None) — not
+``ctl_http_unreachable``. Guest polls progress/events mid-flight
+once a running id exists. HTTP 4xx/5xx on recorded stay the
+existing stub fallback; live|parity refuse stub.
 
 Does not close runtime #70. Does not close #78. Does not unlock
 #61 / #29. Does not stamp north_star_done. Cloud stays locked.
@@ -38,8 +43,10 @@ Does not close runtime #70. Does not close #78. Does not unlock
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import socket
 import time
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -72,6 +79,10 @@ CTL_KINDS = frozenset({CTL_KIND_RESERVE_TEMPORAL, CTL_KIND_IEC_LOCAL})
 DEFAULT_IEC_LOCAL_PORT = 19216
 # Short so operator list/detail polls do not hang when serve is down.
 CTL_HTTP_TIMEOUT_SEC = 1.5
+# Admit (especially iec-local live wrap of POST /v1/jobs) can exceed the
+# poll window while ctl is still listening. Compose guest POST waits 8s.
+CTL_HTTP_ADMIT_TIMEOUT_SEC = 8.0
+CTL_HTTP_LISTEN_PROBE_SEC = 0.25
 CTL_HTTP_UNREACHABLE_COOLDOWN_SEC = 2.0
 CTL_HTTP_UNREACHABLE_CODE = 0
 # Distinct from connection-refused so admit timeout is not "lab serve down".
@@ -123,6 +134,33 @@ def bearer_from_env(env: Mapping[str, str] | None = None) -> str | None:
     return raw or None
 
 
+def is_http_timeout(exc: BaseException) -> bool:
+    """True when urllib/socket timed out — not connection refused."""
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ETIMEDOUT:
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, BaseException) and is_http_timeout(reason):
+        return True
+    text = str(reason if reason is not None else exc).lower()
+    return "timed out" in text
+
+
+def origin_listening(origin: str, *, timeout: float = CTL_HTTP_LISTEN_PROBE_SEC) -> bool:
+    """True when the loopback ctl origin accepts TCP (slow-but-up)."""
+    parsed = urlsplit(str(origin or "").strip())
+    host = parsed.hostname
+    port = parsed.port or 80
+    if not host or not (1 <= int(port) <= 65535):
+        return False
+    try:
+        with socket.create_connection((host, int(port)), timeout=float(timeout)):
+            return True
+    except OSError:
+        return False
+
+
 def urllib_request_ctl(
     method: str,
     url: str,
@@ -146,11 +184,14 @@ def urllib_request_ctl(
     except TimeoutError:
         return CTL_HTTP_TIMEOUT_CODE, ""
     except URLError as exc:
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, TimeoutError):
+        if is_http_timeout(exc):
             return CTL_HTTP_TIMEOUT_CODE, ""
         return CTL_HTTP_UNREACHABLE_CODE, ""
-    except (OSError, ValueError):
+    except OSError as exc:
+        if is_http_timeout(exc):
+            return CTL_HTTP_TIMEOUT_CODE, ""
+        return CTL_HTTP_UNREACHABLE_CODE, ""
+    except ValueError:
         return CTL_HTTP_UNREACHABLE_CODE, ""
 
 
@@ -172,6 +213,9 @@ class LabReserveTemporalHttpHook:
         bearer: str | None = None,
         live: bool = False,
         ctl: str = CTL_KIND_RESERVE_TEMPORAL,
+        listen_probe: Callable[[], bool] | None = None,
+        admit_timeout_sec: float | None = None,
+        request_timeout_sec: float | None = None,
     ) -> None:
         origin = normalize_ctl_http_base(base_url)
         if origin is None:
@@ -189,6 +233,17 @@ class LabReserveTemporalHttpHook:
             IEC_LOCAL_PREFIX
             if self.ctl == CTL_KIND_IEC_LOCAL
             else RESERVE_TEMPORAL_PREFIX
+        )
+        self.listen_probe = listen_probe
+        self.admit_timeout_sec = (
+            CTL_HTTP_ADMIT_TIMEOUT_SEC
+            if admit_timeout_sec is None
+            else float(admit_timeout_sec)
+        )
+        self.request_timeout_sec = (
+            CTL_HTTP_TIMEOUT_SEC
+            if request_timeout_sec is None
+            else float(request_timeout_sec)
         )
         self.last_unreachable: CtlHttpUnreachable | None = None
         self.last_status_payload: dict[str, Any] | None = None
@@ -247,25 +302,23 @@ class LabReserveTemporalHttpHook:
             and time.monotonic() < self._unreachable_until
         ):
             self._raise_unreachable(action)
+        timeout = (
+            self.admit_timeout_sec if action == "admit" else self.request_timeout_sec
+        )
         try:
-            code, stdout = self.transport(
+            code, stdout = self._call_transport(
                 method,
                 url,
                 self._headers(has_body=raw_body is not None),
                 raw_body,
+                timeout=timeout,
             )
         except CtlHttpUnreachable:
             raise
         except Exception:
             return None
         if int(code) == CTL_HTTP_TIMEOUT_CODE:
-            if action == "admit":
-                raise CtlAdmitTimeout(
-                    action="admit",
-                    origin=self.base_url,
-                    transport="http",
-                )
-            self._raise_unreachable(action)
+            return self._on_http_timeout(action)
         if int(code) == CTL_HTTP_UNREACHABLE_CODE:
             self._raise_unreachable(action)
         if not (200 <= int(code) < 300):
@@ -273,6 +326,47 @@ class LabReserveTemporalHttpHook:
             return None
         self._clear_unreachable()
         return _parse_json(stdout)
+
+    def _call_transport(
+        self,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        *,
+        timeout: float,
+    ) -> tuple[int, str]:
+        try:
+            return self.transport(
+                method, url, headers, body, timeout=timeout
+            )
+        except TypeError:
+            return self.transport(method, url, headers, body)
+
+    def _origin_is_listening(self) -> bool:
+        """True when ctl accepts TCP (or a test probe says so).
+
+        Injected transports that return a timeout code are treated as
+        listening unless ``listen_probe`` says otherwise — that keeps
+        recorded fixtures from probing a closed lab port.
+        """
+        if self.listen_probe is not None:
+            return bool(self.listen_probe())
+        if self.transport is not urllib_request_ctl:
+            return True
+        return origin_listening(self.base_url)
+
+    def _on_http_timeout(self, action: str) -> dict[str, Any] | None:
+        """Listening + slow ≠ lab-serve-down. Down origin fails closed."""
+        if not self._origin_is_listening():
+            self._raise_unreachable(action)
+        if action == "admit":
+            raise CtlAdmitTimeout(
+                action="admit",
+                origin=self.base_url,
+                transport="http",
+            )
+        return None
 
     def _raise_unreachable(self, action: str) -> None:
         err = CtlHttpUnreachable(

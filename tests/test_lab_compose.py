@@ -212,7 +212,7 @@ class ComposePlanTests(unittest.TestCase):
             plan.honesty,
         )
         self.assertIn(
-            "live|parity durable admit must return a running id within guest timeouts (HTTP 1.5s / ctl-apply admit 2s)",
+            "live|parity durable admit must return a running id within guest timeouts (HTTP admit 8s / poll 1.5s / ctl-apply admit 2s)",
             plan.honesty,
         )
         self.assertIn(
