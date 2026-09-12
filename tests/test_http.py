@@ -66,7 +66,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["kind"], INFO_PAYLOAD["kind"])
         self.assertEqual(body["jobs"]["kinds"], ["chunk", "job", "stage"])
         self.assertEqual(body["jobs"]["classes"], ["cpu", "gpu"])
-        self.assertEqual(body["jobs"]["statuses"], ["queued", "running", "paused", "succeeded", "failed", "canceled"])
+        self.assertEqual(
+            body["jobs"]["statuses"],
+            ["queued", "running", "paused", "held", "succeeded", "failed", "canceled"],
+        )
         self.assertNotIn("accepted", body["jobs"]["statuses"])
         self.assertNotIn("cancelled", body["jobs"]["statuses"])
         self.assertEqual(body["jobs"]["local_demo"], ["echo", "reserve", "sleep"])
@@ -148,7 +151,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["jobs"]["list"], "GET /v0/jobs")
         self.assertEqual(
             body["jobs"]["list_status"],
-            "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",
+            "GET /v0/jobs?status=queued|running|paused|held|succeeded|failed|canceled",
         )
         self.assertIn("real job.status", body["jobs"]["list_status_honesty"])
         self.assertIn("invalid_status", body["jobs"]["list_status_honesty"])
@@ -188,6 +191,8 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("no invented SPA chunk/ETA/", body["jobs"]["progress_honesty"])
         self.assertIn("iec_job_id", body["jobs"]["progress_honesty"])
         self.assertIn("cw_id", body["jobs"]["progress_honesty"])
+        self.assertIn("pause_limit", body["jobs"]["progress_honesty"])
+        self.assertIn("d9b9948", body["jobs"]["progress_honesty"])
         self.assertIn("9ba95bbb", body["jobs"]["progress_honesty"])
         self.assertIn("5dc191cb", body["jobs"]["progress_honesty"])
         self.assertIn("9b6646e8", body["jobs"]["progress_honesty"])
@@ -240,6 +245,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("ctl-mediated", body["jobs"]["cancel_note"])
         self.assertIn("Fail-closed without hook", body["jobs"]["cancel_note"])
         self.assertIn("PANORAMIX_CTL_HTTP", body["jobs"]["cancel_note"])
+        self.assertIn("already_canceled", body["jobs"]["cancel_note"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal cancel",
             body["jobs"]["cancel_note"],
@@ -1074,8 +1080,9 @@ class HttpAppTests(unittest.TestCase):
         self.assertIs(body["recoverability"]["auto_retry"], False)
         conflict = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
         self.assertEqual(conflict.status, 409)
-        self.assertEqual(_json(conflict)["error"], "already_terminal")
-        self.assertIn("ctl-mediated", _json(conflict)["note"])
+        self.assertEqual(_json(conflict)["error"], "already_canceled")
+        self.assertIs(_json(conflict)["already_canceled"], True)
+        self.assertIn("already canceled", _json(conflict)["note"].lower())
 
     def test_readmit_hooked_http_and_inert_fail_closed(self) -> None:
         class RecordingHook:

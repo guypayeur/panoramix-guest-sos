@@ -290,7 +290,7 @@ def live(args: argparse.Namespace) -> int:
             if job.get("error") == "durable_admit_failed":
                 break
             time.sleep(0.2)
-        if job.get("status") in {"queued", "running", "paused"}:
+        if job.get("status") in {"queued", "running", "paused", "held"}:
             _http("POST", jp["cancel"])
             _code, job = _http("GET", jp["job"])
             _pcode, latest = _http("GET", jp["progress"])

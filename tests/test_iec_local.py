@@ -13,7 +13,9 @@ from sos.errors import (
     ERROR_CTL_HTTP_UNREACHABLE,
     ERROR_DURABLE_ADMIT_FAILED,
     SAME_JOB_STUB_DETAIL,
+    AlreadyCanceled,
     DurableAdmitFailed,
+    IllegalTransition,
     InvalidClass,
     InvalidDemo,
 )
@@ -23,6 +25,7 @@ from sos.handoff_vocab import (
     IEC_SOURCE_FILE,
     SAME_JOB_CANONICAL_JSON,
     SAME_JOB_PAYLOAD_DIGEST,
+    extract_lifecycle_overlay,
 )
 from sos.http import SosApp
 from sos.jobs import PROGRESS_SOURCE_DURABLE, JobStore
@@ -733,6 +736,142 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIn("cw_id", html)
         self.assertIn("omit unknown/0", html)
         self.assertIn("19216", html)
+        self.assertIn("already_canceled", html)
+        self.assertIn("pause_limit", html)
+        self.assertIn("can_pause", html)
+        self.assertIn("next_action", html)
+        self.assertIn('value="held"', html)
+        self.assertIn("st-held", html)
+
+
+class DayOneHonestyTests(unittest.TestCase):
+    """Pause/held/FAILED/already_canceled omit-when-missing plumbing."""
+
+    def test_extract_overlay_omits_unknown(self) -> None:
+        overlay = extract_lifecycle_overlay(
+            {
+                "pause_limit": "iec pause-before-start",
+                "can_pause": False,
+                "next_action": "unknown",
+                "nextAction": "retry fold",
+                "valuation": "",
+                "held_reason": "operator hold",
+                "error": {"error_code": "VALUATION_FAILED"},
+            }
+        )
+        self.assertEqual(overlay["pause_limit"], "iec pause-before-start")
+        self.assertIs(overlay["can_pause"], False)
+        self.assertEqual(overlay["next_action"], "retry fold")
+        self.assertEqual(overlay["held_reason"], "operator hold")
+        self.assertEqual(overlay["error_code"], "VALUATION_FAILED")
+        self.assertNotIn("valuation", overlay)
+        from sos.lab_ctl import _lifecycle_status
+
+        self.assertEqual(_lifecycle_status({"status": "HELD"}), "held")
+        self.assertEqual(_lifecycle_status({"status": "HOLD"}), "held")
+        self.assertEqual(_lifecycle_status({"status": "COMPLETED"}), "succeeded")
+
+    def test_same_job_omits_pause_until_hook_supplies_it(self) -> None:
+        hook = IecLocalComposeHook()
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        public = store.public_dict(store.get(job.id))
+        self.assertEqual(public["status"], "running")
+        self.assertIs(public["pause_resume"], False)
+        self.assertNotIn("can_pause", public)
+        self.assertNotIn("pause_limit", public)
+        self.assertNotIn("pause_resume", store.handoff(job.id))
+        self.assertNotIn("can_pause", store.handoff(job.id))
+        with self.assertRaises(IllegalTransition) as ctx:
+            store.pause(job.id)
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["error"], "illegal_transition")
+        self.assertIn("pause_limit", body)
+
+        hook.last_status_payload = {
+            "status": "running",
+            "can_pause": True,
+            "pause_limit": "pause-before-start only unless can_pause",
+        }
+        got = store.public_dict(store.get(job.id))
+        self.assertIs(got["pause_resume"], True)
+        self.assertIs(got["can_pause"], True)
+        self.assertEqual(got["pause_limit"], "pause-before-start only unless can_pause")
+        paused = store.pause(job.id)
+        self.assertEqual(paused.status, "paused")
+        self.assertNotIn("can_pause", store.handoff(job.id))
+
+    def test_held_and_failure_fields_pass_through(self) -> None:
+        hook = IecLocalComposeHook()
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        hook.last_status_payload = {
+            "status": "HELD",
+            "held_reason": "operator hold",
+            "can_resume": True,
+            "pause_limit": "iec pause-before-start (single-activity)",
+        }
+        held = store.public_dict(store.get(job.id))
+        self.assertEqual(held["status"], "held")
+        self.assertIs(held["pause_resume"], True)
+        self.assertIs(held["can_resume"], True)
+        self.assertEqual(held["held_reason"], "operator hold")
+        self.assertIn("held", [item["event"] for item in held["events"]])
+        resumed = store.resume(job.id)
+        self.assertEqual(resumed.status, "running")
+
+        hook.last_status_payload = {
+            "status": "FAILED",
+            "next_action": "re-admit with revised params",
+            "valuation": "FAILED",
+            "stage_name": "fold",
+            "error_code": "VALUATION_FAILED",
+        }
+        failed = store.public_dict(store.get(job.id))
+        self.assertEqual(failed["status"], "failed")
+        term = failed["terminal"]
+        self.assertEqual(term["next_action"], "re-admit with revised params")
+        self.assertEqual(term["valuation"], "FAILED")
+        self.assertEqual(term["stage_name"], "fold")
+        self.assertEqual(term["stage"], "fold")
+        self.assertEqual(term["error_code"], "VALUATION_FAILED")
+        self.assertNotIn("next_action", store.handoff(job.id))
+
+        hook.last_status_payload = {
+            "status": "failed",
+            "next_action": "unknown",
+            "valuation": "",
+        }
+        omitted = store.public_dict(store.get(job.id))
+        self.assertNotIn("next_action", omitted)
+        self.assertNotIn("valuation", omitted.get("terminal") or {})
+
+    def test_same_job_cancel_already_canceled(self) -> None:
+        hook = IecLocalComposeHook()
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        canceled = store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+        with self.assertRaises(AlreadyCanceled) as ctx:
+            store.cancel(job.id)
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["error"], "already_canceled")
+        self.assertIs(body["already_canceled"], True)
+
+        app = SosApp(JobStore(runtime_hook=IecLocalComposeHook(), step_seconds=0.01))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "reserve_ifrs17"}).encode(),
+        )
+        job_id = _json(created)["id"]
+        first = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(first.status, 200)
+        conflict = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+        self.assertEqual(conflict.status, 409)
+        payload = _json(conflict)
+        self.assertEqual(payload["error"], "already_canceled")
+        self.assertIs(payload["already_canceled"], True)
 
 
 if __name__ == "__main__":

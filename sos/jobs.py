@@ -45,6 +45,7 @@ from sos.errors import (
     ERROR_CTL_HTTP_UNREACHABLE,
     ERROR_DURABLE_ADMIT_FAILED,
     SAME_JOB_STUB_DETAIL,
+    AlreadyCanceled,
     AlreadyTerminal,
     CtlAdmitTimeout,
     CtlHttpUnreachable,
@@ -79,6 +80,9 @@ from sos.handoff_vocab import (
     DEMO_SLEEP,
     FAILED_OR_CANCELED,
     HANDOFF_DOCS_NOTE,
+    HELD_OR_PAUSED,
+    HONESTY_PASSTHROUGH_KEYS,
+    IEC_PAUSE_LIMIT_NOTE,
     LAB_COMPOSE_DOCS,
     LAB_COMPOSE_IEC_DOCS,
     LAB_COMPOSE_IEC_SCRIPT,
@@ -95,6 +99,7 @@ from sos.handoff_vocab import (
     SAME_JOB_PAYLOAD_DIGEST,
     STATUS_CANCELED,
     STATUS_FAILED,
+    STATUS_HELD,
     STATUS_PAUSED,
     STATUS_QUEUED,
     STATUS_RUNNING,
@@ -102,6 +107,7 @@ from sos.handoff_vocab import (
     TERMINAL,
     TERMINAL_NOTE,
     WORK_STATUSES,
+    extract_lifecycle_overlay,
     reserve_stage_names,
     short_digest,
 )
@@ -256,13 +262,17 @@ class Job:
             "events": _copy_events(self.events),
             "pause_resume": _pause_resume_honest(self),
         }
+        overlay = _lifecycle_overlay(self)
+        payload["pause_resume"] = _pause_resume_honest(self, overlay)
         if self.events_source:
             payload["events_source"] = self.events_source
         if self.events_durable is not None:
             payload["events_durable"] = self.events_durable
         if self.events_n is not None:
             payload["events_n"] = self.events_n
-        investigate = _investigate_payload(self, hooked=_pause_resume_honest(self))
+        investigate = _investigate_payload(
+            self, hooked=_pause_resume_honest(self, overlay)
+        )
         if investigate:
             payload["investigate"] = investigate
         terminal = _terminal_payload(self)
@@ -275,6 +285,7 @@ class Job:
         if self.error == ERROR_CTL_HTTP_UNREACHABLE:
             payload["lab_serve"] = lab_serve_affordance()
         _attach_nested_identities(payload, self.runtime_ref)
+        _attach_lifecycle_overlay(payload, overlay)
         return payload
 
     def to_progress(self) -> dict[str, Any]:
@@ -290,6 +301,8 @@ class Job:
             "source": PROGRESS_SOURCE_STUB,
             "note": STUB_PROGRESS_NOTE,
         }
+        overlay = _lifecycle_overlay(self)
+        payload["pause_resume"] = _pause_resume_honest(self, overlay)
         stages_total = local.get("stages")
         if stages_total is not None:
             payload["stages_total"] = stages_total
@@ -298,6 +311,7 @@ class Job:
             payload["stage_index"] = stage_index
         _attach_investigate(payload, self, hooked=False)
         _attach_nested_identities(payload, self.runtime_ref)
+        _attach_lifecycle_overlay(payload, overlay)
         return payload
 
     def to_events(self, kinds: list[str] | None = None) -> dict[str, Any]:
@@ -422,6 +436,12 @@ def _terminal_payload(job: Job) -> dict[str, Any] | None:
     last = _last_events(job.events)
     if last:
         payload["last_events"] = last
+    overlay = _lifecycle_overlay(job)
+    _attach_lifecycle_overlay(payload, overlay)
+    if "stage" not in payload or not payload.get("stage"):
+        stage_name = overlay.get("stage_name") or overlay.get("failure_stage")
+        if stage_name:
+            payload["stage"] = stage_name
     return payload
 
 
@@ -517,15 +537,42 @@ def _same_job(job: Job) -> bool:
     return job.payload_digest == SAME_JOB_PAYLOAD_DIGEST
 
 
-def _pause_resume_honest(job: Job) -> bool:
-    """True only when a live durable path exists.
+def _lifecycle_overlay(job: Job, *blobs: Any) -> dict[str, Any]:
+    """Honesty fields from runtime_ref + optional ctl blobs. Omit when missing."""
+    return extract_lifecycle_overlay(job.runtime_ref, *blobs)
 
-    Fail closed when CTL_HTTP is opted in but lab serve is down —
-    do not pretend pause/resume still works.
+
+def _attach_lifecycle_overlay(payload: dict[str, Any], overlay: dict[str, Any]) -> None:
+    """Copy pause/held/failure honesty fields. Omit when missing. Never invent."""
+    for key, value in overlay.items():
+        if key not in payload and key in HONESTY_PASSTHROUGH_KEYS:
+            payload[key] = value
+
+
+def _pause_resume_honest(
+    job: Job, overlay: dict[str, Any] | None = None
+) -> bool:
+    """True when pause/resume is honest for this job.
+
+    Fail closed when CTL_HTTP is opted in but lab serve is down.
+    Same-job iec-local defaults false unless the hook supplies
+    can_pause / can_resume / pause_resume, or the job is held/paused.
+    Reserve-temporal runtime-backed stays true (existing durable path).
     """
     if job.error == ERROR_CTL_HTTP_UNREACHABLE:
         return False
-    return _is_runtime_backed(job)
+    if not _is_runtime_backed(job):
+        return False
+    fields = overlay if overlay is not None else _lifecycle_overlay(job)
+    if fields.get("can_pause") is True or fields.get("can_resume") is True:
+        return True
+    if fields.get("pause_resume") is True:
+        return True
+    if fields.get("held") is True or job.status in HELD_OR_PAUSED:
+        return True
+    if _same_job(job):
+        return False
+    return True
 
 
 def _copy_progress_counters(src: dict[str, Any]) -> dict[str, Any]:
@@ -921,6 +968,8 @@ def _progress_from_durable(
         "source": PROGRESS_SOURCE_DURABLE,
         "note": DURABLE_PROGRESS_NOTE,
     }
+    overlay = _lifecycle_overlay(job, durable, status)
+    payload["pause_resume"] = _pause_resume_honest(job, overlay)
     for key in _PROGRESS_COUNTER_KEYS:
         if key in top:
             payload[key] = top[key]
@@ -980,6 +1029,7 @@ def _progress_from_durable(
     _attach_wall_elapsed(payload, durable=durable, status=status)
     _attach_investigate(payload, job, hooked=True)
     _attach_nested_identities(payload, job.runtime_ref, durable, status)
+    _attach_lifecycle_overlay(payload, overlay)
     return payload
 
 
@@ -1432,6 +1482,16 @@ class JobStore:
                 self._store_nested_identities(
                     job.id, job.runtime_ref, durable, _hook_status_payload(self.runtime_hook)
                 )
+                extras = [
+                    blob
+                    for blob in (
+                        _hook_status_payload(self.runtime_hook),
+                        durable,
+                    )
+                    if isinstance(blob, dict) and blob
+                ]
+                if extras:
+                    self._store_lifecycle_overlay(job.id, *extras)
                 return payload
         return job.to_progress()
 
@@ -1485,6 +1545,8 @@ class JobStore:
             job = self._jobs.get(job_id)
             if job is None:
                 raise JobNotFound(job_id)
+            if job.status == STATUS_CANCELED:
+                raise AlreadyCanceled(job_id)
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
             runtime_ref = job.runtime_ref
@@ -1521,6 +1583,31 @@ class JobStore:
 
     def _is_durable(self, job: Job) -> bool:
         return _is_runtime_backed(job)
+
+    def _store_lifecycle_overlay(self, job_id: str, *blobs: Any) -> None:
+        """Remember hook/ctl pause/held/failure honesty. Omit missing."""
+        overlay = extract_lifecycle_overlay(*blobs)
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None:
+                return
+            ref = dict(live.runtime_ref) if live.runtime_ref else {}
+            changed = False
+            for key in HONESTY_PASSTHROUGH_KEYS:
+                if key in overlay:
+                    if ref.get(key) != overlay[key]:
+                        ref[key] = overlay[key]
+                        changed = True
+                elif key in ref:
+                    del ref[key]
+                    changed = True
+            if not changed:
+                return
+            if not ref:
+                live.runtime_ref = None
+            else:
+                live.runtime_ref = ref
+            self._persist_locked(live)
 
     def _store_nested_identities(self, job_id: str, *blobs: Any) -> None:
         """Remember hook/ctl iec_job_id / cw_id. Omit missing. Never invent."""
@@ -1608,8 +1695,33 @@ class JobStore:
                 return job
             return self._snapshot(live)
 
+    def _pause_allowed(self, job: Job, overlay: dict[str, Any]) -> None:
+        if job.status != STATUS_RUNNING:
+            raise IllegalTransition(job.id, job.status, "pause")
+        if _same_job(job) and overlay.get("can_pause") is not True:
+            note = str(overlay.get("pause_limit") or IEC_PAUSE_LIMIT_NOTE)
+            raise IllegalTransition(
+                job.id,
+                job.status,
+                "pause",
+                detail=note,
+                pause_limit=note,
+            )
+
+    def _resume_allowed(self, job: Job, overlay: dict[str, Any]) -> None:
+        if job.status not in HELD_OR_PAUSED:
+            raise IllegalTransition(job.id, job.status, "resume")
+        if _same_job(job) and overlay.get("can_resume") is False:
+            note = str(overlay.get("pause_limit") or IEC_PAUSE_LIMIT_NOTE)
+            raise IllegalTransition(
+                job.id,
+                job.status,
+                "resume",
+                detail=note,
+                pause_limit=note,
+            )
+
     def _pause_or_resume(self, job_id: str, action: str) -> Job:
-        wanted = STATUS_RUNNING if action == "pause" else STATUS_PAUSED
         next_status = STATUS_PAUSED if action == "pause" else STATUS_RUNNING
         with self._lock:
             job = self._jobs.get(job_id)
@@ -1619,9 +1731,13 @@ class JobStore:
                 raise StubOnly(job_id, action)
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
-            if job.status != wanted:
-                raise IllegalTransition(job_id, job.status, action)
+            overlay = _lifecycle_overlay(job)
+            if action == "pause":
+                self._pause_allowed(job, overlay)
+            else:
+                self._resume_allowed(job, overlay)
             runtime_ref = job.runtime_ref
+            same_job = _same_job(job)
         signaled = self._try_runtime_signal(action, job_id, runtime_ref)
         with self._lock:
             job = self._jobs.get(job_id)
@@ -1631,8 +1747,20 @@ class JobStore:
                 raise StubOnly(job_id, action)
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
-            if job.status != wanted:
-                raise IllegalTransition(job_id, job.status, action)
+            overlay = _lifecycle_overlay(job)
+            if action == "pause":
+                self._pause_allowed(job, overlay)
+            else:
+                self._resume_allowed(job, overlay)
+            if same_job and not signaled:
+                note = str(overlay.get("pause_limit") or IEC_PAUSE_LIMIT_NOTE)
+                raise IllegalTransition(
+                    job.id,
+                    job.status,
+                    action,
+                    detail=note,
+                    pause_limit=note,
+                )
             if not signaled and job.runtime_ref is None:
                 raise StubOnly(job_id, action)
             now = self._clock()
@@ -1716,12 +1844,14 @@ class JobStore:
 
         Temporal-backed runs show paused/running/terminal from ctl,
         not a stale stub clock. No-op without runtime_ref (stub /
-        inert). Terminal guest jobs are left alone.
+        inert). Terminal status is not overwritten; honesty overlay
+        still refreshes so FAILED next_action can arrive late.
         """
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.runtime_ref is None or job.status in TERMINAL:
+            if job is None or job.runtime_ref is None:
                 return
+            already_terminal = job.status in TERMINAL
             runtime_ref = job.runtime_ref
         try:
             reported = self.runtime_hook.status(job_id, runtime_ref)
@@ -1730,13 +1860,18 @@ class JobStore:
             return
         except Exception:
             return
-        self._store_wall_ms(
-            job_id, wall_elapsed_ms_from_durable(_hook_status_payload(self.runtime_hook))
-        )
-        self._store_nested_identities(
-            job_id, runtime_ref, _hook_status_payload(self.runtime_hook)
-        )
-        if not reported or reported not in WORK_STATUSES:
+        status_payload = _hook_status_payload(self.runtime_hook)
+        self._store_wall_ms(job_id, wall_elapsed_ms_from_durable(status_payload))
+        self._store_nested_identities(job_id, runtime_ref, status_payload)
+        if status_payload:
+            self._store_lifecycle_overlay(job_id, status_payload)
+        if already_terminal:
+            return
+        overlay = extract_lifecycle_overlay(status_payload)
+        mapped = reported
+        if overlay.get("held") is True and mapped not in TERMINAL:
+            mapped = STATUS_HELD
+        if not mapped or mapped not in WORK_STATUSES:
             return
         with self._lock:
             live = self._jobs.get(job_id)
@@ -1748,11 +1883,11 @@ class JobStore:
                     live.message = "status via runtime hook"
                 live.updated_at = self._clock()
                 self._persist_locked(live)
-            if live.status == reported:
+            if live.status == mapped:
                 return
         self._advance(
             job_id,
-            reported,
+            mapped,
             message="status via runtime hook",
         )
 
@@ -1818,6 +1953,8 @@ class JobStore:
                     self._append_event_locked(job, "running", message or "running")
                 elif status == STATUS_PAUSED:
                     self._append_event_locked(job, "paused", message or "paused")
+                elif status == STATUS_HELD:
+                    self._append_event_locked(job, "held", message or "held")
             self._persist_locked(job)
             return True
 

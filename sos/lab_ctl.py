@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from sos.errors import CtlAdmitTimeout
-from sos.handoff_vocab import WORK_STATUSES
+from sos.handoff_vocab import WORK_STATUSES, extract_lifecycle_overlay
 
 ENV_RUNTIME_ROOT = "PANORAMIX_RUNTIME_ROOT"
 ENV_BINDING = "PANORAMIX_RESERVE_TEMPORAL_BINDING"
@@ -191,16 +191,42 @@ def _ctl_id(job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
     return None
 
 
+_LIFECYCLE_ALIASES = {
+    "queued": "queued",
+    "running": "running",
+    "paused": "paused",
+    "held": "held",
+    "hold": "held",
+    "succeeded": "succeeded",
+    "completed": "succeeded",
+    "complete": "succeeded",
+    "failed": "failed",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+}
+
+
+def _map_lifecycle_token(raw: object) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+    if text in WORK_STATUSES:
+        return text
+    return _LIFECYCLE_ALIASES.get(text)
+
+
 def _lifecycle_status(payload: dict[str, Any]) -> str | None:
     handoff = payload.get("handoff")
     if isinstance(handoff, dict):
-        reported = str(handoff.get("status") or "").strip()
-        if reported in WORK_STATUSES:
-            return reported
-    reported = payload.get("status")
-    if isinstance(reported, str) and reported in WORK_STATUSES:
-        return reported
-    return None
+        mapped = _map_lifecycle_token(handoff.get("status"))
+        if mapped:
+            return mapped
+    mapped = _map_lifecycle_token(payload.get("status"))
+    if mapped:
+        return mapped
+    return _map_lifecycle_token(payload.get("lifecycle"))
 
 
 def _extract_work_id(payload: dict[str, Any], fallback: str | None) -> str | None:
@@ -237,6 +263,11 @@ def _runtime_ref_from_admit(
         iec_job_id = _honest_nested_id(payload["handoff"].get("iec_job_id"))
     if iec_job_id:
         ref["iec_job_id"] = iec_job_id
+    overlay = extract_lifecycle_overlay(
+        payload, payload.get("handoff"), payload.get("progress")
+    )
+    for key, value in overlay.items():
+        ref[key] = value
     return ref
 
 

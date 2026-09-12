@@ -40,6 +40,9 @@ from sos.handoff_vocab import (
     LAB_COMPOSE_IEC_SCRIPT,
     RESERVE_CATALOG_SAME_JOB,
     SAME_JOB_PAYLOAD_DIGEST,
+    STATUS_HELD,
+    TERMINAL,
+    extract_lifecycle_overlay,
 )
 from sos.jobs import JobStore
 from sos.lab_compose import (
@@ -56,6 +59,7 @@ from sos.lab_ctl import (
     ENV_CTL_KIND,
     ENV_IEC_BINDING,
     ENV_LIVE,
+    _lifecycle_status,
 )
 from sos.lab_ctl_http import ENV_CTL_BEARER, ENV_CTL_HTTP, normalize_ctl_http_base
 
@@ -63,6 +67,9 @@ DEFAULT_IEC_CTL_PORT = 19216
 DEFAULT_IEC_BINDING_REL = "bindings/local-iec.example.yaml"
 # panoramix-runtime main tip for #146 / PR #148 (docs/iec-local.md).
 RUNTIME_IEC_PIN = "d480dc826e2f8e98502224c3230ab561f48c8114"
+# iec-local UX honesty (pause_limit / already_canceled). Held + FAILED
+# next_action stay omit-when-missing until ctl supplies them.
+RUNTIME_IEC_UX_TIP = "d9b9948"
 SAME_JOB_BODY: dict[str, Any] = {
     "demo": "reserve",
     "catalog": RESERVE_CATALOG_SAME_JOB,
@@ -84,6 +91,7 @@ HONESTY_LINES = (
     "phase/fraction omit Platform unknown/0 (runtime #149 / #150)",
     "iec-local has no events verb",
     "pause is pause-before-start only (iec single-activity limit)",
+    "pause/held/failure honesty fields omit when missing (runtime d9b9948+)",
     "recorded fixture needs no iec checkout",
     "opt-in --live wraps operator Platform API",
     "pin 0.5",
@@ -292,6 +300,9 @@ def classify_iec_evidence(
 class IecLocalComposeHook:
     """Injected hook for iec-local dry-run smoke. Not a live iec checkout."""
 
+    def __init__(self) -> None:
+        self.last_status_payload: dict[str, Any] | None = None
+
     def admit(
         self, handoff: dict[str, str], payload_bytes: bytes | None
     ) -> dict[str, Any] | None:
@@ -309,22 +320,36 @@ class IecLocalComposeHook:
         return True
 
     def status(self, job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
-        del job_id, runtime_ref
+        del job_id
+        payload = self.last_status_payload
+        overlay = extract_lifecycle_overlay(payload, runtime_ref)
+        mapped = _lifecycle_status(payload) if isinstance(payload, dict) else None
+        if overlay.get("held") is True and (mapped is None or mapped not in TERMINAL):
+            return STATUS_HELD
+        if mapped:
+            return mapped
         return "running"
 
     def pause(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         del job_id, runtime_ref
-        return False
+        overlay = extract_lifecycle_overlay(self.last_status_payload)
+        return overlay.get("can_pause") is True
 
     def resume(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         del job_id, runtime_ref
-        return False
+        overlay = extract_lifecycle_overlay(self.last_status_payload)
+        return overlay.get("can_resume") is True
 
     def progress(
         self, job_id: str, runtime_ref: dict[str, Any] | None
     ) -> dict[str, Any] | None:
         del job_id, runtime_ref
-        return {"phase": "admitted", "fraction": 0.0, "pct": 0}
+        out: dict[str, Any] = {"phase": "admitted", "fraction": 0.0, "pct": 0}
+        payload = self.last_status_payload
+        if isinstance(payload, dict):
+            overlay = extract_lifecycle_overlay(payload, payload.get("progress"))
+            out.update(overlay)
+        return out
 
     def events(
         self, job_id: str, runtime_ref: dict[str, Any] | None
