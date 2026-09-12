@@ -50,6 +50,13 @@ RECOVERABILITY_NOTE = (
     "(no silent stub re-admit). Pause/resume remains durable-only "
     "(stub 409 stub_only). Not SIEM. Not IFRS17."
 )
+HANDOFF_DOCS_NOTE = (
+    "Operator reminders for handoff + payload export, recoverability / "
+    "re-admit, and lab-compose. Clarity only — not a second control plane. "
+    "Not #70 Done. Not SIEM. Not IFRS17."
+)
+LAB_COMPOSE_DOCS = "docs/lab-compose.md"
+LAB_COMPOSE_SCRIPT = "scripts/lab_compose_reserve_temporal.py"
 
 DEMO_ECHO = "echo"
 DEMO_SLEEP = "sleep"

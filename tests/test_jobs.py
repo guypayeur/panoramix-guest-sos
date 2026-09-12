@@ -1224,7 +1224,11 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("path-slices", body["note"].lower())
         self.assertIn("not iec planner", body["note"].lower())
         self.assertIn("not iec chunk progress", body["note"])
+        self.assertIn("omitted when missing", body["note"])
         self.assertNotIn("parallelism claimed", body["note"])
+        self.assertNotIn("elapsed_source", body)
+        for item in body["timeline"]:
+            self.assertNotIn("elapsed_ms", item)
         catalog = body["investigate"]["catalog"]
         self.assertEqual(catalog["name"], "recorded")
         self.assertEqual(catalog["digest_short"], "sha256:77e9299f…")
@@ -1618,6 +1622,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertNotIn("awaiting runtime stamp", text.lower(), name)
             self.assertIn("not #70 done", text.lower(), name)
             self.assertIn("/progress", text, name)
+            self.assertIn("omitted when missing", text, name)
+            self.assertIn("not a second control plane", text, name)
             self.assertIn("/events", text, name)
             self.assertIn("?kind=", text, name)
             self.assertIn("format=jsonl", text, name)
@@ -1698,10 +1704,16 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("completed vs current vs pending", ux)
         self.assertIn("without fake names", ux)
         self.assertIn("stage i of n", ux)
+        self.assertIn("omitted when missing", ux)
+        self.assertIn("never invented", ux)
+        self.assertIn("Handoff docs", ux)
+        self.assertIn("not a second control plane", ux)
         self.assertIn(
             "- [x] Honest thinner progress endpoint + named path-slice timeline",
             ux,
         )
+        self.assertIn("- [x] Optional path-slice stage elapsed", ux)
+        self.assertIn("- [x] Compact handoff docs affordance", ux)
         self.assertIn(
             "| 2.2 Investigate | SPA progress + catalog + Slack | **match** (thinner) |",
             ux,

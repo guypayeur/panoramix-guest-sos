@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sos.compare import compare_vs_priors
+from sos.stage_elapsed import attach_timeline_elapsed
 from sos.errors import (
     CTL_HTTP_UNREACHABLE_DETAIL,
     ERROR_CTL_HTTP_UNREACHABLE,
@@ -60,6 +61,9 @@ from sos.handoff_vocab import (
     DEMO_RESERVE,
     DEMO_SLEEP,
     FAILED_OR_CANCELED,
+    HANDOFF_DOCS_NOTE,
+    LAB_COMPOSE_DOCS,
+    LAB_COMPOSE_SCRIPT,
     LAST_EVENTS_N,
     OWNERSHIP_NOTE,
     PATH_SLICE_OWNERS,
@@ -109,7 +113,9 @@ STUB_PROGRESS_NOTE = (
 )
 DURABLE_PROGRESS_NOTE = (
     "Durable reserve-temporal path-slices — "
-    "not iec planner parallelism; not iec chunk progress"
+    "not iec planner parallelism; not iec chunk progress. "
+    "Optional per-stage elapsed from progress or event timestamps "
+    "when present; omitted when missing — never invented"
 )
 TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
@@ -190,6 +196,7 @@ class Job:
         recoverability = _recoverability_payload(self, durable_hook=durable_hook)
         if recoverability:
             payload["recoverability"] = recoverability
+        payload["handoff_docs"] = _handoff_docs_payload(self)
         if self.error == ERROR_CTL_HTTP_UNREACHABLE:
             payload["lab_serve"] = lab_serve_affordance()
         return payload
@@ -372,6 +379,21 @@ def _recoverability_payload(
     if reason:
         payload["one_click_reason"] = reason
     return payload
+
+
+def _handoff_docs_payload(job: Job) -> dict[str, Any]:
+    """Compact operator reminders. Not a second control plane."""
+    return {
+        "note": HANDOFF_DOCS_NOTE,
+        "handoff": f"GET /v0/jobs/{job.id}/handoff",
+        "payload": f"GET /v0/jobs/{job.id}/payload",
+        "re_admit": CTL_ADMIT,
+        "re_admit_http": f"POST /v0/jobs/{job.id}/re-admit",
+        "lab_compose": LAB_COMPOSE_DOCS,
+        "lab_compose_script": LAB_COMPOSE_SCRIPT,
+        "not_control_plane": True,
+        "north_star_done": False,
+    }
 
 
 def _local_for_readmit(source: Job) -> dict[str, Any] | None:
@@ -575,7 +597,15 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
         payload["progress"] = {}
     timeline = _progress_timeline(durable, payload)
     if timeline:
+        elapsed_source = attach_timeline_elapsed(
+            timeline,
+            durable=durable,
+            events=job.events if job.events_source == EVENTS_SOURCE_DURABLE else None,
+            events_durable=job.events_source == EVENTS_SOURCE_DURABLE,
+        )
         payload["timeline"] = timeline
+        if elapsed_source:
+            payload["elapsed_source"] = elapsed_source
     _attach_investigate(payload, job, hooked=True)
     return payload
 

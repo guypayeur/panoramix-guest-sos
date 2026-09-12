@@ -45,6 +45,7 @@ HONESTY_LINES = (
     "WorkHandoff triple only",
     "re-admit is a new admit (not resume-from-failed)",
     "no silent stub re-admit",
+    "path-slice elapsed omitted when timestamps missing (never invent)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
     "north_star_done false",
@@ -96,6 +97,7 @@ class ComposePlan:
             "north_star_done": self.north_star_done,
             "guest_to_mesh_ctl": False,
             "readmit": readmit_plan(),
+            "timeline_elapsed": elapsed_plan(),
         }
 
 
@@ -130,6 +132,22 @@ def guest_base_url(port: int = DEFAULT_GUEST_PORT) -> str:
 
 def recorded_reserve_body() -> dict[str, Any]:
     return dict(RECORDED_RESERVE_BODY)
+
+
+def elapsed_plan() -> dict[str, Any]:
+    """Dry-run honesty for optional path-slice elapsed. No invented numbers."""
+    return {
+        "when": "durable progress stages[].elapsed_ms and/or GET /events timestamps",
+        "omit_when_missing": True,
+        "invent": False,
+        "north_star_done": False,
+        "note": (
+            "Optional per-stage elapsed on the path-slice timeline. "
+            "Prefer progress elapsed_ms when present; else derive from "
+            "durable event timestamps. Omit when missing. Never invent. "
+            "Not iec planner. Not #70 Done."
+        ),
+    }
 
 
 def readmit_plan() -> dict[str, Any]:

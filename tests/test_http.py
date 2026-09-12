@@ -161,6 +161,11 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("completed vs current vs pending", body["jobs"]["progress_honesty"])
         self.assertIn("without fake names", body["jobs"]["progress_honesty"])
         self.assertIn("stage i of n", body["jobs"]["progress_honesty"])
+        self.assertIn("elapsed", body["jobs"]["progress_honesty"])
+        self.assertIn("omitted when missing", body["jobs"]["progress_honesty"])
+        self.assertIn("never invented", body["jobs"]["progress_honesty"])
+        self.assertIn("not a second control plane", body["jobs"]["handoff_docs"])
+        self.assertIn("lab-compose", body["jobs"]["handoff_docs"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal progress",
             body["jobs"]["progress_honesty"],
@@ -277,6 +282,12 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("path-slices", html)
             self.assertIn("Path-slice timeline (thinner)", html)
             self.assertIn("progressTimeline", html)
+            self.assertIn("elapsed_ms", html)
+            self.assertIn("omitted when missing", html)
+            self.assertIn("Handoff docs (thinner)", html)
+            self.assertIn("not a second control plane", html)
+            self.assertIn("docs/lab-compose.md", html)
+            self.assertIn("renderHandoffDocs", html)
             self.assertIn("without fake names", html)
             self.assertIn('"Stage " + index + " of "', html)
             self.assertIn("step.pending", html)
@@ -588,6 +599,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn("stages_completed", body)
         self.assertNotIn("fraction", body)
         self.assertNotIn("timeline", body)
+        self.assertNotIn("elapsed_source", body)
         self.assertEqual(body["investigate"]["catalog"]["name"], "recorded")
         self.assertEqual(body["investigate"]["catalog"]["digest_short"], "sha256:77e9299f…")
         self.assertIn("not a data-catalog product", body["investigate"]["catalog"]["note"])
@@ -1181,6 +1193,10 @@ class HttpAppTests(unittest.TestCase):
         )
         self.assertIn("path-slices", body["note"].lower())
         self.assertIn("not iec planner", body["note"].lower())
+        self.assertIn("omitted when missing", body["note"])
+        self.assertNotIn("elapsed_source", body)
+        for item in body["timeline"]:
+            self.assertNotIn("elapsed_ms", item)
         self.assertNotIn("temporal_product", body)
         self.assertNotIn("workflow_id", body)
         self.assertEqual(body["investigate"]["catalog"]["name"], "recorded")

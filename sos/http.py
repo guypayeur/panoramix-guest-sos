@@ -150,9 +150,18 @@ INFO_PAYLOAD = {
             "(named stages admit/project/fold/complete or hook-provided, "
             "plus investigate ownership tags, completed vs current vs pending); "
             "fraction / stages_completed stay the hook counters; "
+            "optional per-stage elapsed from durable progress "
+            "stages[].elapsed_ms or GET /events timestamps when present; "
+            "omitted when missing — never invented; "
             "else stub stage i of n without fake names; "
             "not iec planner parallelism; not iec chunk progress. "
             f"Operator/ctl: {CTL_PROGRESS}"
+        ),
+        "handoff_docs": (
+            "Job-detail compact reminders for handoff + payload export, "
+            "recoverability / re-admit, and lab-compose "
+            "(docs/lab-compose.md). Operator clarity — not a second "
+            "control plane. Not #70 Done. Not SIEM. Not IFRS17."
         ),
         "events_honesty": (
             "durable reserve-temporal JSONL trail when a hook provides it; "

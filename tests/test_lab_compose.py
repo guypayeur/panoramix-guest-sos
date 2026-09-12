@@ -17,6 +17,7 @@ from sos.lab_compose import (
     DEFAULT_GUEST_PORT,
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
+    elapsed_plan,
     RECORDED_RESERVE_BODY,
     RUNTIME_SERVE_PIN,
     LabComposeReadmitHook,
@@ -132,6 +133,12 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(readmit["silent_stub"], False)
         self.assertIs(readmit["north_star_done"], False)
         self.assertEqual(readmit_plan()["when"], readmit["when"])
+        elapsed = parsed["timeline_elapsed"]
+        self.assertIs(elapsed["omit_when_missing"], True)
+        self.assertIs(elapsed["invent"], False)
+        self.assertIs(elapsed["north_star_done"], False)
+        self.assertEqual(elapsed_plan()["when"], elapsed["when"])
+        self.assertIn("path-slice elapsed omitted when timestamps missing (never invent)", plan.honesty)
 
     def test_runtime_root_usable_fail_closed(self) -> None:
         self.assertIsNone(runtime_root_usable(None))
