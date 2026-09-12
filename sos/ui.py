@@ -161,6 +161,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .meta dt { color: var(--muted); }
     .meta dd { margin: 0; word-break: break-all; }
     .meta .id { font-size: 0.8rem; }
+    .progress { margin-top: 0.35rem; }
+    .progress h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
     .timeline { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.45rem 0 0.15rem; }
     .step {
       font-size: 0.72rem;
@@ -169,8 +177,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
       border: 1px solid var(--line);
       color: var(--muted);
     }
-    .step.done { color: var(--ok); }
+    .step.done, .step.completed { color: var(--ok); }
     .step.current { color: var(--run); border-color: var(--run); }
+    .step.pending { color: var(--muted); }
+    .step .name { font-weight: 650; }
     .step .owner { display: block; font-size: 0.64rem; font-weight: 500; letter-spacing: 0; }
     .investigate {
       margin-top: 0.65rem;
@@ -284,7 +294,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
     (<code>canceled</code>) from running or paused; cancel is not pause.
     Durable cancel is ctl-mediated. Fail-closed without hook.
     Progress prefers durable path-slice counters when a runtime hook
-    provides them; otherwise stub stage metadata (not iec planner
+    provides them; the job-detail panel shows named stages
+    (admit / project / fold / complete, or hook-provided) with
+    ownership tags and completed vs current vs pending.
+    Fraction / stages_completed stay the hook counters.
+    Stub stays “stage i of n” without fake names (not iec planner
     parallelism / iec chunk progress).
     Event trail prefers durable reserve-temporal JSONL when a hook
     provides it; otherwise process-memory (not a SIEM / not a
@@ -687,8 +701,37 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return { name: name, digest_short: shortDigest(job.payload_digest) };
     }
 
+    function progressTimeline(prog, job) {
+      if (prog && Array.isArray(prog.timeline) && prog.timeline.length) {
+        return prog.timeline;
+      }
+      const total = Number(prog && prog.stages_total);
+      if (!Number.isFinite(total) || total <= 0) return [];
+      const done = Number(prog && prog.stages_completed);
+      const owners = ownershipTags(job);
+      const hookNames = (prog && Array.isArray(prog.stage_names)) ? prog.stage_names : [];
+      const currentRaw = prog && prog.stage;
+      const currentNum = Number(currentRaw);
+      const items = [];
+      for (let i = 1; i <= total; i++) {
+        const tag = owners[i - 1];
+        const hook = hookNames[i - 1];
+        const name = (hook && String(hook)) || (tag && tag.slice) || "";
+        let state = "pending";
+        if (Number.isFinite(done) && i <= done) state = "completed";
+        else if (name && String(currentRaw) === name) state = "current";
+        else if (Number.isFinite(currentNum) && i === currentNum) state = "current";
+        const item = { index: i, state: state };
+        if (name) item.name = name;
+        if (tag && tag.owner) item.owner = tag.owner;
+        items.push(item);
+      }
+      return items;
+    }
+
     function renderProgress(job) {
       const wrap = document.createElement("div");
+      wrap.className = "progress";
       const local = job.local || {};
       const prog = (lastProgress && lastProgress.id === job.id) ? lastProgress : null;
       const line = document.createElement("p");
@@ -699,34 +742,39 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const source = prog && prog.source;
       const durable = source === "durable" ||
         (source !== "stub" && (completed != null || fraction != null));
-      const owners = durable ? ownershipTags(job) : [];
-      if (durable && (completed != null || fraction != null)) {
-        const total = Number(prog.stages_total);
-        const done = Number(completed);
-        const frac = Number(fraction);
-        let text = "";
-        if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
-          text = "Path-slices " + done + " / " + total;
+      if (durable && (completed != null || fraction != null ||
+          (prog && Array.isArray(prog.timeline) && prog.timeline.length))) {
+        const title = document.createElement("h3");
+        title.textContent = "Path-slice timeline (thinner)";
+        wrap.appendChild(title);
+        const slices = progressTimeline(prog, job);
+        if (slices.length) {
           const bar = document.createElement("div");
           bar.className = "timeline";
-          const current = Number(prog.stage);
-          for (let i = 1; i <= total; i++) {
+          for (const slice of slices) {
             const step = document.createElement("span");
-            let cls = "step";
-            if (i <= done) cls += " done";
-            else if (Number.isFinite(current) && i === current) cls += " current";
-            step.className = cls;
-            const tag = owners[i - 1];
-            step.textContent = tag ? (i + " " + tag.slice) : String(i);
-            if (tag && tag.owner) {
+            const state = slice.state || "pending";
+            step.className = "step " + (state === "completed" ? "done completed" : state);
+            const label = document.createElement("span");
+            label.className = "name";
+            label.textContent = slice.name || ("stage " + slice.index);
+            step.appendChild(label);
+            if (slice.owner) {
               const own = document.createElement("span");
               own.className = "owner";
-              own.textContent = tag.owner;
+              own.textContent = slice.owner;
               step.appendChild(own);
             }
             bar.appendChild(step);
           }
           wrap.appendChild(bar);
+        }
+        const total = Number(prog && prog.stages_total);
+        const done = Number(completed);
+        const frac = Number(fraction);
+        let text = "";
+        if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+          text = "Path-slices " + done + " / " + total;
         }
         if (Number.isFinite(frac)) {
           text += (text ? " · " : "") + "fraction " + frac;
@@ -738,16 +786,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       const total = Number((prog && prog.stages_total != null) ? prog.stages_total : local.stages);
       const index = Number((prog && prog.stage_index != null) ? prog.stage_index : local.stage_index);
-      const stage = (prog && prog.stage != null) ? prog.stage : local.stage;
       if (Number.isInteger(total) && total > 0 && Number.isInteger(index)) {
         line.textContent = "Stage " + index + " of " + total +
-          (stage ? (": " + stage) : "") +
           " — stub timeline only, not iec chunk progress.";
         const bar = document.createElement("div");
         bar.className = "timeline";
         for (let i = 1; i <= total; i++) {
           const step = document.createElement("span");
-          step.className = "step" + (i < index ? " done" : (i === index ? " current" : ""));
+          step.className = "step" + (i < index ? " done" : (i === index ? " current" : " pending"));
           step.textContent = String(i);
           bar.appendChild(step);
         }

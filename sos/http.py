@@ -108,9 +108,12 @@ INFO_PAYLOAD = {
         "events": "GET /v0/jobs/{id}/events",
         "compare": "GET /v0/jobs/{id}/compare",
         "progress_honesty": (
-            "durable reserve-temporal path-slices when a hook provides them; "
-            "else stub stage metadata; not iec planner parallelism; "
-            "not iec chunk progress. "
+            "durable reserve-temporal path-slices when a hook provides them "
+            "(named stages admit/project/fold/complete or hook-provided, "
+            "plus investigate ownership tags, completed vs current vs pending); "
+            "fraction / stages_completed stay the hook counters; "
+            "else stub stage i of n without fake names; "
+            "not iec planner parallelism; not iec chunk progress. "
             f"Operator/ctl: {CTL_PROGRESS}"
         ),
         "events_honesty": (

@@ -591,6 +591,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("parallelism claimed", progress["note"])
         self.assertNotIn("stages_completed", progress)
         self.assertNotIn("fraction", progress)
+        self.assertNotIn("timeline", progress)
         catalog = progress["investigate"]["catalog"]
         self.assertEqual(catalog["name"], "recorded")
         self.assertEqual(catalog["digest"], RECORDED_PAYLOAD_DIGEST)
@@ -628,6 +629,9 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn(mid["stage_index"], {1, 2, 3})
         self.assertEqual(mid["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("stub stage metadata", mid["note"].lower())
+        self.assertNotIn("timeline", mid)
+        self.assertNotIn("stages_completed", mid)
+        self.assertNotIn("fraction", mid)
 
         canceled = self.store.cancel(job.id)
         self.assertEqual(canceled.status, "canceled")
@@ -655,6 +659,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("stage_index", progress)
         self.assertNotIn("stages_completed", progress)
         self.assertNotIn("fraction", progress)
+        self.assertNotIn("timeline", progress)
         self.assertEqual(progress["source"], PROGRESS_SOURCE_STUB)
         self.assertIn("not iec chunk progress", progress["note"])
         self.assertNotIn("investigate", progress)
@@ -1079,6 +1084,17 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(body["fraction"], 0.5)
         self.assertEqual(body["inner_steps"], 96)
         self.assertEqual(body["progress"]["stages_completed"], 2)
+        self.assertEqual(
+            [(item["name"], item["state"], item["owner"]) for item in body["timeline"]],
+            [
+                ("admit", "completed", "ctl / admit"),
+                ("project", "completed", "kernel / project"),
+                ("fold", "pending", "kernel / fold"),
+                ("complete", "pending", "ctl / complete"),
+            ],
+        )
+        self.assertEqual(body["fraction"], 0.5)
+        self.assertEqual(body["stages_completed"], 2)
         self.assertIn("path-slices", body["note"].lower())
         self.assertIn("not iec planner", body["note"].lower())
         self.assertIn("not iec chunk progress", body["note"])
@@ -1120,7 +1136,117 @@ class JobStoreTests(unittest.TestCase):
         stubby = fallback.progress(backed.id)
         self.assertEqual(stubby["source"], PROGRESS_SOURCE_STUB)
         self.assertNotIn("stages_completed", stubby)
+        self.assertNotIn("fraction", stubby)
+        self.assertNotIn("timeline", stubby)
         fallback.cancel(backed.id)
+
+    def test_progress_durable_hook_provided_names(self) -> None:
+        class NamedHook:
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return "running"
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def progress(self, job_id, runtime_ref):
+                return {
+                    "stage": "reduce",
+                    "stages_total": 3,
+                    "stages_completed": 1,
+                    "fraction": 0.25,
+                    "stage_names": ["ingest", "reduce", "emit"],
+                }
+
+        store = JobStore(step_seconds=0.02, runtime_hook=NamedHook())
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        body = store.progress(job.id)
+        self.assertEqual(body["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertEqual(body["stage"], "reduce")
+        self.assertEqual(body["stages_completed"], 1)
+        self.assertEqual(body["fraction"], 0.25)
+        self.assertEqual(
+            [(item["name"], item["state"]) for item in body["timeline"]],
+            [
+                ("ingest", "completed"),
+                ("reduce", "current"),
+                ("emit", "pending"),
+            ],
+        )
+        self.assertNotIn("owner", body["timeline"][0])
+        self.assertNotIn("owner", body["timeline"][1])
+        store.cancel(job.id)
+
+    def test_progress_durable_inflight_and_no_fake_extra_names(self) -> None:
+        class InFlightHook:
+            def __init__(self) -> None:
+                self.payload = {
+                    "stage": 3,
+                    "stages_total": 4,
+                    "stages_completed": 2,
+                    "fraction": 0.5,
+                }
+
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return "running"
+
+            def pause(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                return False
+
+            def progress(self, job_id, runtime_ref):
+                return dict(self.payload)
+
+        hook = InFlightHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        body = store.progress(job.id)
+        self.assertEqual(body["stages_completed"], 2)
+        self.assertEqual(body["fraction"], 0.5)
+        self.assertEqual(
+            [(item["name"], item["state"]) for item in body["timeline"]],
+            [
+                ("admit", "completed"),
+                ("project", "completed"),
+                ("fold", "current"),
+                ("complete", "pending"),
+            ],
+        )
+
+        hook.payload = {
+            "stage": 5,
+            "stages_total": 6,
+            "stages_completed": 4,
+            "fraction": 4 / 6,
+        }
+        wide = store.progress(job.id)
+        self.assertEqual(wide["stages_completed"], 4)
+        self.assertEqual(wide["fraction"], 4 / 6)
+        self.assertEqual(len(wide["timeline"]), 6)
+        self.assertEqual(wide["timeline"][3]["name"], "complete")
+        self.assertEqual(wide["timeline"][3]["state"], "completed")
+        self.assertNotIn("name", wide["timeline"][4])
+        self.assertEqual(wide["timeline"][4]["state"], "current")
+        self.assertNotIn("owner", wide["timeline"][4])
+        self.assertNotIn("name", wide["timeline"][5])
+        self.assertEqual(wide["timeline"][5]["state"], "pending")
+        store.cancel(job.id)
 
     def test_events_durable_hook_jsonl(self) -> None:
         class DurableEventsHook:
@@ -1412,6 +1538,15 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("reserve-temporal events --id", ux)
         self.assertIn(
             "| 1.2 Step/chunk progress | `GET /v1/jobs/{id}/progress` | **match** (thinner) |",
+            ux,
+        )
+        self.assertIn("named path-slice timeline", ux)
+        self.assertIn("hook-provided", ux)
+        self.assertIn("completed vs current vs pending", ux)
+        self.assertIn("without fake names", ux)
+        self.assertIn("stage i of n", ux)
+        self.assertIn(
+            "- [x] Honest thinner progress endpoint + named path-slice timeline",
             ux,
         )
         self.assertIn(
