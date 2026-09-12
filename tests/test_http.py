@@ -136,6 +136,10 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("durable", body["jobs"]["progress_honesty"])
         self.assertIn("path-slices", body["jobs"]["progress_honesty"])
         self.assertIn("not iec planner", body["jobs"]["progress_honesty"])
+        self.assertIn("named stages", body["jobs"]["progress_honesty"])
+        self.assertIn("completed vs current vs pending", body["jobs"]["progress_honesty"])
+        self.assertIn("without fake names", body["jobs"]["progress_honesty"])
+        self.assertIn("stage i of n", body["jobs"]["progress_honesty"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal progress",
             body["jobs"]["progress_honesty"],
@@ -244,6 +248,12 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("fraction", html)
             self.assertIn("/progress", html)
             self.assertIn("path-slices", html)
+            self.assertIn("Path-slice timeline (thinner)", html)
+            self.assertIn("progressTimeline", html)
+            self.assertIn("without fake names", html)
+            self.assertIn('"Stage " + index + " of "', html)
+            self.assertIn("step.pending", html)
+            self.assertIn("completed vs current vs pending", html)
             self.assertIn("not a regulatory audit", html)
             self.assertIn("not a SIEM", html)
             self.assertIn("reserve-temporal events --id", html)
@@ -519,6 +529,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertNotIn("parallelism", body)
         self.assertNotIn("stages_completed", body)
         self.assertNotIn("fraction", body)
+        self.assertNotIn("timeline", body)
         self.assertEqual(body["investigate"]["catalog"]["name"], "recorded")
         self.assertEqual(body["investigate"]["catalog"]["digest_short"], "sha256:77e9299f…")
         self.assertIn("not a data-catalog product", body["investigate"]["catalog"]["note"])
@@ -989,6 +1000,16 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(body["stages_total"], 4)
         self.assertEqual(body["fraction"], 0.75)
         self.assertEqual(body["progress"]["stages_completed"], 3)
+        self.assertEqual(body["fraction"], 0.75)
+        self.assertEqual(
+            [(item["name"], item["state"], item["owner"]) for item in body["timeline"]],
+            [
+                ("admit", "completed", "ctl / admit"),
+                ("project", "completed", "kernel / project"),
+                ("fold", "completed", "kernel / fold"),
+                ("complete", "pending", "ctl / complete"),
+            ],
+        )
         self.assertIn("path-slices", body["note"].lower())
         self.assertIn("not iec planner", body["note"].lower())
         self.assertNotIn("temporal_product", body)

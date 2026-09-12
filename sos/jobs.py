@@ -85,6 +85,10 @@ DURABLE_PROGRESS_NOTE = (
     "Durable reserve-temporal path-slices — "
     "not iec planner parallelism; not iec chunk progress"
 )
+TIMELINE_COMPLETED = "completed"
+TIMELINE_CURRENT = "current"
+TIMELINE_PENDING = "pending"
+_HOOK_STAGE_NAME_KEYS = ("stage_names", "timeline", "slices")
 MEMORY_EVENTS_NOTE = (
     "Process-memory event trail — not a regulatory audit product"
 )
@@ -326,6 +330,130 @@ def _copy_progress_counters(src: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _slice_label(item: Any) -> str | None:
+    """A hook-provided stage name. Numeric stage indexes are not names."""
+    if isinstance(item, str):
+        text = item.strip()
+        if not text or text.isdigit() or text.lstrip("-").isdigit():
+            return None
+        return text
+    if isinstance(item, dict):
+        for key in ("name", "slice", "stage"):
+            label = _slice_label(item.get(key))
+            if label:
+                return label
+    return None
+
+
+def _hook_stage_names(durable: dict[str, Any], total: int) -> list[str | None] | None:
+    """Names the hook returned. None means use day-one path-slice defaults."""
+    blobs: list[dict[str, Any]] = [durable]
+    nested = durable.get("progress")
+    if isinstance(nested, dict):
+        blobs.append(nested)
+    for blob in blobs:
+        for key in _HOOK_STAGE_NAME_KEYS:
+            raw = blob.get(key)
+            if not isinstance(raw, list) or not raw:
+                continue
+            names = [_slice_label(item) for item in raw[:total]]
+            if any(names):
+                while len(names) < total:
+                    names.append(None)
+                return names
+        raw_stages = blob.get("stages")
+        if isinstance(raw_stages, list) and raw_stages:
+            names = [_slice_label(item) for item in raw_stages[:total]]
+            if any(names):
+                while len(names) < total:
+                    names.append(None)
+                return names
+    return None
+
+
+def _default_slice_names(total: int) -> list[str | None]:
+    """admit/project/fold/complete for known slices. No invented extras."""
+    names: list[str | None] = []
+    for index in range(total):
+        if index < len(PATH_SLICE_OWNERS):
+            names.append(PATH_SLICE_OWNERS[index][0])
+        else:
+            names.append(None)
+    return names
+
+
+def _owner_for_slice(name: str | None) -> str | None:
+    """Same static owners as investigate. No invented Slack / team tags."""
+    if not name:
+        return None
+    for tag in _ownership_tags()["tags"]:
+        if tag.get("slice") == name:
+            owner = tag.get("owner")
+            return str(owner) if owner else None
+    return None
+
+
+def _current_slice_index(
+    stage: Any, names: list[str | None], total: int
+) -> int | None:
+    if isinstance(stage, str):
+        label = stage.strip()
+        if label and not label.lstrip("-").isdigit():
+            for index, name in enumerate(names, start=1):
+                if name == label:
+                    return index
+            return None
+    current = _as_int(stage)
+    if current is None or current < 1 or current > total:
+        return None
+    return current
+
+
+def _progress_timeline(
+    durable: dict[str, Any], counters: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """Named path-slices + ownership. States follow honest counters only."""
+    total = _as_int(counters.get("stages_total"))
+    if total is None or total <= 0:
+        return None
+    hook_names = _hook_stage_names(durable, total)
+    names = hook_names if hook_names is not None else _default_slice_names(total)
+    done_raw = counters.get("stages_completed")
+    done = _as_int(done_raw) if done_raw is not None else None
+    if done is not None:
+        done = max(0, min(done, total))
+    current = _current_slice_index(counters.get("stage"), names, total)
+    items: list[dict[str, Any]] = []
+    for index in range(1, total + 1):
+        name = names[index - 1] if index - 1 < len(names) else None
+        if done is not None and index <= done:
+            state = TIMELINE_COMPLETED
+        elif current is not None and index == current:
+            state = TIMELINE_CURRENT
+        else:
+            state = TIMELINE_PENDING
+        item: dict[str, Any] = {"index": index, "state": state}
+        if name:
+            item["name"] = name
+        owner = _owner_for_slice(name)
+        if owner:
+            item["owner"] = owner
+        items.append(item)
+    return items
+
+
 def _has_progress_counters(data: dict[str, Any]) -> bool:
     nested = data.get("progress")
     blobs = [data]
@@ -359,6 +487,9 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
         payload["progress"] = nested
     elif isinstance(nested_raw, dict):
         payload["progress"] = {}
+    timeline = _progress_timeline(durable, payload)
+    if timeline:
+        payload["timeline"] = timeline
     _attach_investigate(payload, job, hooked=True)
     return payload
 
