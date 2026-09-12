@@ -12,9 +12,12 @@ from pathlib import Path
 from sos.http import SosApp
 from sos.jobs import JobStore
 from sos.lab_compose import (
+    COMPOSE_CATALOG_ALIASES,
     DEFAULT_BINDING_REL,
+    DEFAULT_COMPOSE_CATALOG,
     DEFAULT_CTL_PORT,
     DEFAULT_GUEST_PORT,
+    ENV_COMPOSE_CATALOG,
     ENV_GUEST_TIP,
     ENV_RUNTIME_TIP,
     GUEST_APPLY_METRICS_TIP,
@@ -76,6 +79,8 @@ from sos.lab_compose import (
     readmit_plan,
     readmit_smokes_honest,
     recorded_reserve_body,
+    reserve_body_for_catalog,
+    resolve_compose_catalog,
     resolve_known_tip,
     runtime_root_usable,
     runtime_serve_argv,
@@ -152,6 +157,11 @@ class ComposePlanTests(unittest.TestCase):
         self.assertTrue(GUEST_PACK_TIP.startswith("b859466"))
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
+        self.assertEqual(DEFAULT_COMPOSE_CATALOG, "recorded")
+        self.assertEqual(ENV_COMPOSE_CATALOG, "LAB_COMPOSE_CATALOG")
+        self.assertEqual(COMPOSE_CATALOG_ALIASES["parity-scale"], "parity")
+        self.assertNotIn("ci", COMPOSE_CATALOG_ALIASES)
+        self.assertNotIn("lab", COMPOSE_CATALOG_ALIASES)
 
     def test_ctl_origin_loopback_only(self) -> None:
         self.assertEqual(ctl_origin(), "http://127.0.0.1:19215")
@@ -185,9 +195,22 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(plan.serve_argv[4], DEFAULT_BINDING_REL)
         self.assertEqual(plan.guest_argv, ("python3", "./platform_run.py"))
         self.assertEqual(plan.reserve_body, {"demo": "reserve", "catalog": "recorded"})
+        self.assertEqual(reserve_body_for_catalog(None), plan.reserve_body)
         self.assertIs(plan.north_star_done, False)
         self.assertIn("not guest→mesh ctl", plan.honesty)
         self.assertIn("north_star_done false", plan.honesty)
+        self.assertIn("lab-compose catalog default recorded (CI / --dry-run unchanged)", plan.honesty)
+        self.assertIn(
+            "opt-in catalog live|parity (alias parity-scale) via --catalog / LAB_COMPOSE_CATALOG",
+            plan.honesty,
+        )
+        self.assertIn("opt-in catalog is not IFRS17 / not ADSL", plan.honesty)
+        self.assertIn("opt-in catalog does not stamp north_star_done", plan.honesty)
+        self.assertIn("opt-in catalog does not unlock #61 / #29", plan.honesty)
+        self.assertIn(
+            "opt-in catalog does not invent walls or flip comparison flags",
+            plan.honesty,
+        )
         self.assertIn("pin 0.5", plan.honesty)
         blob = plan_json(plan)
         parsed = json.loads(blob)
@@ -572,6 +595,48 @@ class ComposePlanTests(unittest.TestCase):
             self.assertEqual(runtime_root_usable(empty), empty.resolve())
 
 
+class ComposeCatalogTests(unittest.TestCase):
+    def test_resolve_recorded_live_parity_and_alias(self) -> None:
+        self.assertEqual(resolve_compose_catalog(None), "recorded")
+        self.assertEqual(resolve_compose_catalog(""), "recorded")
+        self.assertEqual(resolve_compose_catalog("  recorded  "), "recorded")
+        self.assertEqual(resolve_compose_catalog("LIVE"), "live")
+        self.assertEqual(resolve_compose_catalog("parity"), "parity")
+        self.assertEqual(resolve_compose_catalog("parity-scale"), "parity")
+        self.assertEqual(resolve_compose_catalog("PARITY-SCALE"), "parity")
+
+    def test_reject_unknown_and_handoff_extras(self) -> None:
+        for bad in ("ifrs17", "adsl", "ci", "small", "lab", "heavy", "parity_scale"):
+            with self.assertRaises(ValueError) as ctx:
+                resolve_compose_catalog(bad)
+            self.assertIn("recorded|live|parity", str(ctx.exception))
+            self.assertIn("parity-scale", str(ctx.exception))
+
+    def test_reserve_body_selection(self) -> None:
+        self.assertEqual(
+            reserve_body_for_catalog(),
+            {"demo": "reserve", "catalog": "recorded"},
+        )
+        self.assertEqual(reserve_body_for_catalog(), recorded_reserve_body())
+        self.assertEqual(
+            reserve_body_for_catalog("live"),
+            {"demo": "reserve", "catalog": "live"},
+        )
+        self.assertEqual(
+            reserve_body_for_catalog("parity-scale"),
+            {"demo": "reserve", "catalog": "parity"},
+        )
+        plan = build_compose_plan(guest_root=ROOT, catalog="parity")
+        self.assertEqual(plan.reserve_body, {"demo": "reserve", "catalog": "parity"})
+        self.assertIs(plan.north_star_done, False)
+        parsed = json.loads(plan_json(plan))
+        self.assertEqual(parsed["reserve_body"]["catalog"], "parity")
+        self.assertIs(parsed["north_star_done"], False)
+        self.assertIs(parsed["pack_fill"]["operator_live_pack"]["comparable"], False)
+        with self.assertRaises(ValueError):
+            build_compose_plan(guest_root=ROOT, catalog="ifrs17")
+
+
 class EvidenceTests(unittest.TestCase):
     def test_ok_only_when_runtime_and_durable(self) -> None:
         stub = classify_lab_evidence(
@@ -816,6 +881,7 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIn("runtime.serve", plan["serve_argv"])
         self.assertIn(DEFAULT_BINDING_REL, plan["serve_argv"])
         self.assertEqual(plan["reserve_body"]["catalog"], "recorded")
+        self.assertEqual(plan["reserve_body"], {"demo": "reserve", "catalog": "recorded"})
         self.assertIs(plan["north_star_done"], False)
         self.assertIs(plan["guest_to_mesh_ctl"], False)
         self.assertEqual(plan["readmit"]["path"], "POST /v0/jobs/{id}/re-admit")
@@ -996,6 +1062,97 @@ class ScriptDryRunTests(unittest.TestCase):
             looks_like_git_tip(fill["fragment"]["tips"]["guest_tip"]),
             git_head_sha(ROOT),
         )
+
+    def test_dry_run_catalog_flag_and_env(self) -> None:
+        recorded = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        recorded_plan = json.loads(recorded.stdout)
+        self.assertEqual(
+            recorded_plan["reserve_body"],
+            {"demo": "reserve", "catalog": "recorded"},
+        )
+
+        parity = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run", "--catalog", "parity"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(parity.returncode, 0, parity.stderr)
+        parity_plan = json.loads(parity.stdout)
+        self.assertEqual(
+            parity_plan["reserve_body"],
+            {"demo": "reserve", "catalog": "parity"},
+        )
+        self.assertIs(parity_plan["north_star_done"], False)
+        self.assertTrue(readmit_smokes_honest(parity_plan["readmit_smoke"]))
+
+        alias = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run", "--catalog", "parity-scale"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(alias.returncode, 0, alias.stderr)
+        self.assertEqual(json.loads(alias.stdout)["reserve_body"]["catalog"], "parity")
+
+        env = dict(__import__("os").environ)
+        env[ENV_COMPOSE_CATALOG] = "live"
+        from_env = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(from_env.returncode, 0, from_env.stderr)
+        self.assertEqual(json.loads(from_env.stdout)["reserve_body"]["catalog"], "live")
+
+        override = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run", "--catalog", "recorded"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(override.returncode, 0, override.stderr)
+        self.assertEqual(
+            json.loads(override.stdout)["reserve_body"]["catalog"],
+            "recorded",
+        )
+
+        bad = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run", "--catalog", "ifrs17"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("recorded|live|parity", bad.stderr)
+
+        env_bad = dict(__import__("os").environ)
+        env_bad[ENV_COMPOSE_CATALOG] = "adsl"
+        bad_env = subprocess.run(
+            [sys.executable, str(SCRIPT), "--dry-run"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env_bad,
+        )
+        self.assertNotEqual(bad_env.returncode, 0)
+        self.assertIn("recorded|live|parity", bad_env.stderr)
 
     def test_live_fail_closed_without_runtime_root(self) -> None:
         env = dict(**{k: v for k, v in __import__("os").environ.items() if k != "PANORAMIX_RUNTIME_ROOT"})
@@ -1724,6 +1881,11 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("metrics.wall_time_sec", helper)
         self.assertIn("pack-fill", helper)
         self.assertIn("does not write the full live pack", helper.lower())
+        self.assertIn("LAB_COMPOSE_CATALOG", helper)
+        self.assertIn("parity-scale", helper)
+        self.assertIn("not ADSL", helper)
+        self.assertIn("does not invent walls", helper)
+        self.assertIn("does not flip comparison flags", helper)
         self.assertIn("north_star_done", helper)
         self.assertIn("Not guest→mesh ctl", helper)
         self.assertIn("Not SIEM", helper)
@@ -1802,6 +1964,12 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("never invent", text.lower(), name)
             self.assertIn("pack_fill", text, name)
             self.assertIn("#78", text, name)
+            self.assertIn("LAB_COMPOSE_CATALOG", text, name)
+            self.assertIn("--catalog", text, name)
+            self.assertIn("parity-scale", text, name)
+            self.assertIn("ADSL", text, name)
+            self.assertIn("does not invent walls", text.lower(), name)
+            self.assertIn("comparison flags", text.lower(), name)
             self.assertNotIn("Fixes #70", text)
             self.assertNotIn("Fixes #78", text)
             self.assertNotIn("may not yet expose", text.lower(), name)
@@ -1870,6 +2038,13 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("assist ≠ fill", lab)
         self.assertIn("does **not** write the full live pack", lab)
         self.assertIn("#78 D", lab)
+        self.assertIn("LAB_COMPOSE_CATALOG", lab)
+        self.assertIn("--catalog live|parity", lab)
+        self.assertIn("parity-scale", lab)
+        self.assertIn("sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102", lab)
+        self.assertIn("**not** ADSL", lab)
+        self.assertIn("does **not** invent walls", lab)
+        self.assertIn("does **not** flip comparison flags", lab)
         self.assertNotIn("may not yet expose", lab.lower())
 
         for line in HONESTY_LINES:
@@ -1902,6 +2077,11 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] Overnight apply-notes assist smoke stamp is apply-notes ≠ fill / apply-notes ≠ Done", ux)
         self.assertIn("- [x] Lab-compose pack_fill.apply_notes hint", ux)
         self.assertIn("- [x] Operator live #78 D pack is off-box", ux)
+        self.assertIn("- [x] Lab-compose opt-in catalog live|parity", ux)
+        self.assertIn("LAB_COMPOSE_CATALOG", ux)
+        self.assertIn("sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102", ux)
+        self.assertIn("parity ≠ IFRS17 / ≠ ADSL", ux)
+        self.assertIn("does not invent walls or flip comparison flags", ux)
         self.assertIn("b81130f", ux)
         self.assertIn("63a168d", ux)
         self.assertIn("84cb202", ux)
