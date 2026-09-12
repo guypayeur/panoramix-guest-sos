@@ -4,18 +4,18 @@ One-shot local lab so an operator can start **runtime.serve** (ctl **19215**) an
 
 WSL stamp already exists at operator lab `~/panoramix-lab/evidence-70/stamp-71fb4c9-ctl-http/` — this page does **not** reproduce that pack.
 
-**Honesty:** fail-closed without env. Not guest→mesh ctl. Not a second control plane. Not SIEM. Not IFRS17. Pin **0.5**. WorkHandoff triple only. Path-slice elapsed omitted when timestamps missing (never invent). Does **not** close runtime [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) / [#78](https://github.com/guypayeur/panoramix-runtime/issues/78). Does **not** unlock [#61](https://github.com/guypayeur/panoramix-runtime/issues/61) / [#29](https://github.com/guypayeur/panoramix-runtime/issues/29). `north_star_done` stays false. Default hook stays inert. Journey rows stay **match (thinner)** — this page does **not** stamp the #70 UX Done-when boxes.
+**Honesty:** fail-closed without env. Not guest→mesh ctl. Not a second control plane. Not SIEM. Not IFRS17. Pin **0.5**. WorkHandoff triple only. Path-slice elapsed omitted when timestamps missing (never invent). Optional durable `stages[].elapsed_ms` can come from runtime tip [`9ba95bbb`](https://github.com/guypayeur/panoramix-runtime/commit/9ba95bbb4fa4c9046abee6eac60158e4fd649b90) (or **main**, [PR #110](https://github.com/guypayeur/panoramix-runtime/pull/110)) — omit when missing; never invent. Job-detail **Handoff docs** panel is operator clarity only. Does **not** close runtime [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) / [#78](https://github.com/guypayeur/panoramix-runtime/issues/78). Does **not** unlock [#61](https://github.com/guypayeur/panoramix-runtime/issues/61) / [#29](https://github.com/guypayeur/panoramix-runtime/issues/29). `north_star_done` stays false. Default hook stays inert. Journey rows stay **match (thinner)** — this page does **not** stamp the #70 UX Done-when boxes.
 
 ## What it starts
 
-1. `python3 -m runtime.serve --binding bindings/local-reserve-temporal.example.yaml` from a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout (**main** @ `fb901542`, PR #100). Binding `publish.ctl_port` is **19215**.
+1. `python3 -m runtime.serve --binding bindings/local-reserve-temporal.example.yaml` from a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout (**main** @ `fb901542`, PR #100; optional durable `stages[].elapsed_ms` from tip `9ba95bbb` / PR #110 / **main** — omit when missing). Binding `publish.ctl_port` is **19215**.
 2. This guest: `PLATFORM_LISTEN_HTTP=18280` and `PANORAMIX_CTL_HTTP=http://127.0.0.1:19215` (loopback only; off-loopback fails closed).
 3. `POST /v0/jobs` with `{"demo":"reserve","catalog":"recorded"}`.
-4. Show `local.backed=runtime`, durable `GET /progress` / `GET /events`, and `pause_resume`.
+4. Show `local.backed=runtime`, durable `GET /progress` / `GET /events`, and `pause_resume`. Path-slice `elapsed_ms` only when the hook/progress supplies it (tip `9ba95bbb` / main) or durable event timestamps subtract honestly — **omit when missing; never invent**. Job detail **Handoff docs** panel is operator clarity, not a second control plane.
 5. `POST /v0/jobs/{id}/cancel` (or wait for fail), then one-click `POST /v0/jobs/{id}/re-admit` and show a **new** job id (`local.re_admit_from` = the canceled/failed id). Not resume-from-failed.
 6. Tear down both processes.
 
-CI uses `--dry-run` (plan JSON plus in-process re-admit smokes: hooked new job id, inert / payload-unknown **409** `re_admit_unavailable`). No live Temporal is required for unit tests. Fail-closed without hook or payload — **no silent stub**.
+CI uses `--dry-run` (plan JSON plus in-process re-admit smokes: hooked new job id, inert / payload-unknown **409** `re_admit_unavailable`). Plan also records `timeline_elapsed` (runtime tip `9ba95bbb` / main; `omit_when_missing: true`; `invent: false`) and `handoff_docs` (panel; not a second control plane). No live Temporal is required for unit tests. Fail-closed without hook or payload — **no silent stub**.
 
 ## Commands
 
@@ -57,6 +57,10 @@ Optional `PANORAMIX_CTL_HTTP_BEARER` when the binding has `ctl.require`.
 ## UI
 
 Operator UI (`GET /`) reads `GET /v0/info` → `jobs.durable_hook`. A badge says the durable path is active **only** when the HTTP adapter is hooked (`kind: ctl_http`). Inert stub copy stays honest (no pretend).
+
+Job detail shows a compact **Handoff docs** panel (handoff + payload export, recoverability / re-admit, this page) — operator clarity, **not** a second control plane.
+
+Optional path-slice `elapsed_ms` appears when durable progress supplies it (runtime tip `9ba95bbb` / [PR #110](https://github.com/guypayeur/panoramix-runtime/pull/110) / **main**) or durable event timestamps can be subtracted honestly. **Omit when missing; never invent.** Serve pin `fb901542` remains valid for compose; elapsed stays omitted on older tips without those timestamps. Not #70 Done.
 
 ## Not this page
 

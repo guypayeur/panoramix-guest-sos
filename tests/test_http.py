@@ -164,6 +164,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("elapsed", body["jobs"]["progress_honesty"])
         self.assertIn("omitted when missing", body["jobs"]["progress_honesty"])
         self.assertIn("never invented", body["jobs"]["progress_honesty"])
+        self.assertIn("9ba95bbb", body["jobs"]["progress_honesty"])
         self.assertIn("not a second control plane", body["jobs"]["handoff_docs"])
         self.assertIn("lab-compose", body["jobs"]["handoff_docs"])
         self.assertIn(

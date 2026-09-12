@@ -1562,6 +1562,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("verified @ `63c4d8e`", text, name)
             self.assertIn("verified @ `d86552e`", text, name)
             self.assertIn("verified @ `3a164cd`", text, name)
+            self.assertIn("verified @ `9ba95bbb`", text, name)
             self.assertIn(".runtime/reserve-temporal/events/", text, name)
             self.assertIn("stages_completed", text, name)
             self.assertIn("stages_total", text, name)
@@ -1623,6 +1624,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("not #70 done", text.lower(), name)
             self.assertIn("/progress", text, name)
             self.assertIn("omitted when missing", text, name)
+            self.assertIn("9ba95bbb", text, name)
             self.assertIn("not a second control plane", text, name)
             self.assertIn("/events", text, name)
             self.assertIn("?kind=", text, name)
@@ -1713,6 +1715,7 @@ class JobStoreTests(unittest.TestCase):
             ux,
         )
         self.assertIn("- [x] Optional path-slice stage elapsed", ux)
+        self.assertIn("9ba95bbb", ux)
         self.assertIn("- [x] Compact handoff docs affordance", ux)
         self.assertIn(
             "| 2.2 Investigate | SPA progress + catalog + Slack | **match** (thinner) |",
@@ -1800,6 +1803,8 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("verified @ `63c4d8e`", ux)
         self.assertIn("verified @ `d86552e`", ux)
         self.assertIn("verified @ `3a164cd`", ux)
+        self.assertIn("verified @ `9ba95bbb`", ux)
+        self.assertNotIn("may not yet expose", ux.lower())
         self.assertIn(".runtime/reserve-temporal/events/", ux)
         self.assertIn("stages_completed", ux)
         self.assertIn("stages_total", ux)

@@ -1,8 +1,10 @@
 """Optional per-stage elapsed for the durable path-slice timeline.
 
 Prefer hook-provided ``stages[].elapsed_ms`` (or equivalent) when the
-number is real. Else derive from durable ``GET /v0/jobs/{id}/events``
-timestamps when both ends parse. Otherwise omit — never invent.
+number is real. Runtime tip ``9ba95bbb`` (or main, PR #110) can
+supply those on durable progress; older tips omit the field.
+Else derive from durable ``GET /v0/jobs/{id}/events`` timestamps
+when both ends parse. Otherwise omit — never invent.
 
 Not iec planner. Not a forecast. Not SIEM. Does not stamp
 ``north_star_done``.
