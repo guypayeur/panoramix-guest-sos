@@ -20,9 +20,14 @@ tip ``9b6646e8`` (PR #114, or main; docs tip ``6511cec7`` / PR
 #116 for evidence-index lineage); omit when missing — never
 invent. Compare prefers that wall when present. Not a forecast.
 Not IFRS17. Not iec SPA. Handoff docs
-panel is operator clarity, not a second control plane. Does not close runtime
+panel is operator clarity, not a second control plane. Dry-run /
+live emit a small paste fragment for runtime #78 D pack fill
+(``tips`` when known; optional ``durable`` only when measured
+from the hooked run). Documented runtime tip ``411aa68``
+(#118 checklist era, or main); wall feature tip remains
+``9b6646e8``. Does not write the full live pack. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
-stamp north_star_done. Cloud stays locked.
+stamp north_star_done or #70 UX Done. Cloud stays locked.
 """
 
 from __future__ import annotations
@@ -35,6 +40,11 @@ from urllib.parse import urlsplit
 
 from sos.lab_ctl import APPLY_REL
 from sos.lab_ctl_http import ENV_CTL_BEARER, ENV_CTL_HTTP, normalize_ctl_http_base
+from sos.stage_elapsed import (
+    elapsed_ms_from_mapping,
+    wall_elapsed_ms_from_durable,
+    wall_elapsed_ms_from_mapping,
+)
 
 GUEST_LISTEN_ENV = "PLATFORM_LISTEN_HTTP"
 DEFAULT_GUEST_PORT = 18280
@@ -45,7 +55,14 @@ RUNTIME_ELAPSED_PIN = "9ba95bbb"
 RUNTIME_DOCS_PIN = "5dc191cb"
 RUNTIME_WALL_PIN = "9b6646e8"
 RUNTIME_WALL_DOCS_PIN = "6511cec7"
+# Runtime #118 live-pack schema / #78 D checklist era (or main).
+RUNTIME_PACK_TIP = "411aa68bd1dd9c8a11d4ec98b3570acb5b90b4d9"
+# Guest main after #50. Checkout HEAD wins when present.
+GUEST_PACK_TIP = "4e2251c7d8374dbec408e0febb0a33f4c00f33c2"
+ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
+ENV_GUEST_TIP = "PANORAMIX_GUEST_TIP"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
+_SHA_CHARS = frozenset("0123456789abcdefABCDEF")
 
 HONESTY_LINES = (
     "fail-closed without PANORAMIX_CTL_HTTP (or a usable PANORAMIX_RUNTIME_ROOT)",
@@ -62,6 +79,9 @@ HONESTY_LINES = (
     "optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)",
     "compare prefers durable wall_elapsed_ms when present (runtime tip 9b6646e8 / main; omit when missing)",
     "handoff docs panel is operator clarity (not a second control plane)",
+    "pack-fill tips from checkout / env / documented tip (omit when missing)",
+    "pack-fill durable wall/stage elapsed only when measured from hooked run (omit when missing; never invent)",
+    "pack-fill assist for runtime #78 D only (does not write the live pack)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
     "north_star_done false",
@@ -116,6 +136,10 @@ class ComposePlan:
             "timeline_elapsed": elapsed_plan(),
             "wall_elapsed": wall_plan(),
             "handoff_docs": handoff_docs_plan(),
+            "pack_fill": pack_fill_plan(
+                guest_root=self.guest_cwd,
+                runtime_root=self.runtime_root,
+            ),
         }
 
 
@@ -220,6 +244,289 @@ def handoff_docs_plan() -> dict[str, Any]:
             "Job-detail Handoff docs panel is operator clarity only — "
             "not a second control plane. Not guest→mesh ctl. "
             "Not #70 Done. Not SIEM. Not IFRS17."
+        ),
+    }
+
+
+def looks_like_git_tip(value: str | None) -> str | None:
+    """Accept a hex SHA of at least 7 chars. Omit otherwise."""
+    text = str(value or "").strip()
+    if len(text) < 7:
+        return None
+    if not all(char in _SHA_CHARS for char in text):
+        return None
+    return text
+
+
+def _sha_from_packed_refs(packed: Path, ref: str) -> str | None:
+    if not packed.is_file():
+        return None
+    try:
+        text = packed.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or raw.startswith("^"):
+            continue
+        parts = raw.split()
+        if len(parts) >= 2 and parts[1] == ref:
+            return looks_like_git_tip(parts[0])
+    return None
+
+
+def git_head_sha(root: str | Path | None) -> str | None:
+    """Read checkout HEAD SHA from ``.git``. No spawn. Omit if unknown."""
+    if root is None or not str(root).strip():
+        return None
+    path = Path(root)
+    try:
+        path = path.expanduser()
+        if not path.exists():
+            return None
+        path = path.resolve()
+    except OSError:
+        return None
+    git_dir = path / ".git"
+    try:
+        if git_dir.is_file():
+            raw = git_dir.read_text(encoding="utf-8").strip()
+            if raw.lower().startswith("gitdir:"):
+                nested = Path(raw.split(":", 1)[1].strip())
+                git_dir = nested if nested.is_absolute() else (path / nested)
+                git_dir = git_dir.resolve()
+        if not git_dir.is_dir():
+            return None
+        head_path = git_dir / "HEAD"
+        if not head_path.is_file():
+            return None
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if head.startswith("ref:"):
+        ref = head.split(":", 1)[1].strip()
+        ref_file = git_dir / ref
+        try:
+            if ref_file.is_file():
+                return looks_like_git_tip(ref_file.read_text(encoding="utf-8").strip())
+        except OSError:
+            return None
+        return _sha_from_packed_refs(git_dir / "packed-refs", ref)
+    return looks_like_git_tip(head)
+
+
+def resolve_known_tip(
+    *,
+    checkout: str | Path | None = None,
+    env_value: str | None = None,
+    documented: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Prefer checkout HEAD, then env, then documented tip. Omit if none."""
+    sha = git_head_sha(checkout)
+    if sha:
+        return sha, "checkout"
+    sha = looks_like_git_tip(env_value)
+    if sha:
+        return sha, "env"
+    sha = looks_like_git_tip(documented)
+    if sha:
+        return sha, "documented"
+    return None, None
+
+
+def _tip_env(environ: Mapping[str, str] | None) -> Mapping[str, str]:
+    if environ is not None:
+        return environ
+    import os
+
+    return os.environ
+
+
+def measured_wall_elapsed_ms(progress: Mapping[str, Any]) -> int | None:
+    """Honest job wall from hooked durable progress. Never guest clocks."""
+    if not isinstance(progress, Mapping):
+        return None
+    blob = dict(progress)
+    if wall_elapsed_ms_from_mapping(blob) is not None or any(
+        key in blob
+        for key in (
+            "wall_elapsed_ms",
+            "wall_ms",
+            "job_elapsed_ms",
+            "job_wall_ms",
+            "wall_elapsed_s",
+            "wall_s",
+            "job_elapsed_s",
+            "job_wall_s",
+            "wall_elapsed_sec",
+        )
+    ):
+        return wall_elapsed_ms_from_mapping(blob)
+    return wall_elapsed_ms_from_durable(blob)
+
+
+def measured_stage_elapsed_ms(progress: Mapping[str, Any]) -> list[int] | None:
+    """Honest per-stage elapsed from hooked durable progress. Omit if none."""
+    if not isinstance(progress, Mapping):
+        return None
+    values: list[int] = []
+    for key in ("timeline", "stages"):
+        raw = progress.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            ms = elapsed_ms_from_mapping(item)
+            if ms is not None:
+                values.append(ms)
+        if values:
+            return values
+    raw_list = progress.get("stage_elapsed_ms")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            ms = elapsed_ms_from_mapping({"elapsed_ms": item})
+            if ms is not None:
+                values.append(ms)
+    return values or None
+
+
+def durable_pack_observations(
+    progress: Mapping[str, Any] | None,
+    *,
+    hooked: bool,
+) -> dict[str, Any] | None:
+    """Optional ``durable.*`` from a hooked run only. Fail-closed otherwise.
+
+    Omit when missing. Never invent. Not a forecast. Not IFRS17. Not iec SPA.
+    """
+    if not hooked or not isinstance(progress, Mapping):
+        return None
+    if progress.get("source") != "durable":
+        return None
+    out: dict[str, Any] = {}
+    wall = measured_wall_elapsed_ms(progress)
+    if wall is not None:
+        out["wall_elapsed_ms"] = {"panoramix": wall}
+    stages = measured_stage_elapsed_ms(progress)
+    if stages:
+        out["stage_elapsed_ms"] = {"panoramix": stages}
+    return out or None
+
+
+def pack_fill_fragment(
+    *,
+    guest_root: str | Path | None = None,
+    runtime_root: str | Path | None = None,
+    runtime_tip: str | None = None,
+    guest_tip: str | None = None,
+    progress: Mapping[str, Any] | None = None,
+    hooked: bool = False,
+    environ: Mapping[str, str] | None = None,
+    documented_runtime_tip: str | None = RUNTIME_PACK_TIP,
+    documented_guest_tip: str | None = GUEST_PACK_TIP,
+) -> dict[str, Any]:
+    """Paste-ready ``tips`` / optional ``durable`` for the off-box pack.
+
+    Tips when known (checkout / env / documented). Durable only when
+    measured from the hooked run. Omit when missing. Never invent.
+    Does not write the live pack file.
+    """
+    env = _tip_env(environ)
+    runtime_sha, _src = resolve_known_tip(
+        checkout=runtime_root,
+        env_value=runtime_tip if runtime_tip is not None else env.get(ENV_RUNTIME_TIP),
+        documented=documented_runtime_tip,
+    )
+    guest_sha, _gsrc = resolve_known_tip(
+        checkout=guest_root,
+        env_value=guest_tip if guest_tip is not None else env.get(ENV_GUEST_TIP),
+        documented=documented_guest_tip,
+    )
+    fragment: dict[str, Any] = {}
+    tips: dict[str, str] = {}
+    if runtime_sha:
+        tips["panoramix_runtime_tip"] = runtime_sha
+    if guest_sha:
+        tips["guest_tip"] = guest_sha
+    if tips:
+        fragment["tips"] = tips
+    durable = durable_pack_observations(progress, hooked=hooked)
+    if durable:
+        fragment["durable"] = durable
+    return fragment
+
+
+def pack_fill_plan(
+    *,
+    guest_root: str | Path | None = None,
+    runtime_root: str | Path | None = None,
+    runtime_tip: str | None = None,
+    guest_tip: str | None = None,
+    progress: Mapping[str, Any] | None = None,
+    hooked: bool = False,
+    environ: Mapping[str, str] | None = None,
+    documented_runtime_tip: str | None = RUNTIME_PACK_TIP,
+    documented_guest_tip: str | None = GUEST_PACK_TIP,
+) -> dict[str, Any]:
+    """Dry-run / live honesty plus the paste fragment. No invented walls."""
+    env = _tip_env(environ)
+    _runtime_sha, runtime_src = resolve_known_tip(
+        checkout=runtime_root,
+        env_value=runtime_tip if runtime_tip is not None else env.get(ENV_RUNTIME_TIP),
+        documented=documented_runtime_tip,
+    )
+    _guest_sha, guest_src = resolve_known_tip(
+        checkout=guest_root,
+        env_value=guest_tip if guest_tip is not None else env.get(ENV_GUEST_TIP),
+        documented=documented_guest_tip,
+    )
+    fragment = pack_fill_fragment(
+        guest_root=guest_root,
+        runtime_root=runtime_root,
+        runtime_tip=runtime_tip,
+        guest_tip=guest_tip,
+        progress=progress,
+        hooked=hooked,
+        environ=env,
+        documented_runtime_tip=documented_runtime_tip,
+        documented_guest_tip=documented_guest_tip,
+    )
+    sources: dict[str, str] = {}
+    if runtime_src:
+        sources["panoramix_runtime_tip"] = runtime_src
+    if guest_src:
+        sources["guest_tip"] = guest_src
+    return {
+        "assist": "runtime #78 D fill checklist",
+        "when": (
+            "tips from checkout / env / documented tip; "
+            "durable only from hooked measured progress"
+        ),
+        "runtime_tip": RUNTIME_PACK_TIP,
+        "or": "main",
+        "runtime_pr": 118,
+        "wall_feature_tip": RUNTIME_WALL_PIN,
+        "omit_when_missing": True,
+        "invent": False,
+        "forecast": False,
+        "ifrs17": False,
+        "iec_spa": False,
+        "writes_live_pack": False,
+        "ux_done": False,
+        "north_star_done": False,
+        "tip_sources": sources,
+        "fragment": fragment,
+        "note": (
+            "Small JSON fragment to paste into the off-box iec-parity pack "
+            "under tips / optional durable. Assist for runtime #78 D fill "
+            "checklist only. Does not write the full live pack. "
+            "Does not stamp #70 UX Done / north_star_done. "
+            f"Runtime tip {RUNTIME_PACK_TIP} (#118 checklist era, or main). "
+            f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
+            "Durable wall/stage elapsed only when measured from the hooked "
+            "run. Omit when missing. Never invent. Not a forecast. "
+            "Not IFRS17. Not iec SPA. Not #70 Done."
         ),
     }
 

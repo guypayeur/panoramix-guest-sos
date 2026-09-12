@@ -19,9 +19,13 @@ Optional durable stage elapsed from runtime tip 9ba95bbb / docs tip
 durable wall_elapsed_ms / started_at from runtime tip 9b6646e8
 (PR #114, or main; docs tip 6511cec7 / PR #116 lineage); omit
 when missing — never invent. Compare prefers that wall when
-present. Not a forecast. Not IFRS17. Not iec SPA. Handoff docs
-panel is operator clarity, not a second control plane. Does not
-close runtime
+present. Dry-run / live emit a small paste fragment for runtime
+#78 D pack fill (tips when known; optional durable only when
+measured from the hooked run). Runtime tip 411aa68 (#118
+checklist era, or main); wall feature tip remains 9b6646e8.
+Does not write the full live pack. Not a forecast. Not IFRS17.
+Not iec SPA. Handoff docs panel is operator clarity, not a
+second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. north_star_done false.
 Cloud stays locked.
 """
@@ -54,6 +58,7 @@ from sos.lab_compose import (  # noqa: E402
     dry_run_readmit_smokes,
     guest_paths,
     job_paths,
+    pack_fill_plan,
     plan_json,
     port_from_origin,
     readmit_smokes_honest,
@@ -315,6 +320,22 @@ def live(args: argparse.Namespace) -> int:
                     ),
                 },
             )
+        _pcode, latest_progress = _http("GET", jp["progress"])
+        if isinstance(latest_progress, dict) and latest_progress:
+            progress = latest_progress
+        hooked = bool(
+            progress.get("source") == "durable"
+            and (
+                hook.get("durable_path") is True
+                or hook.get("kind") == "ctl_http"
+            )
+        )
+        fill = pack_fill_plan(
+            guest_root=plan.guest_cwd,
+            runtime_root=plan.runtime_root,
+            progress=progress,
+            hooked=hooked,
+        )
         report = {
             "id": job_id,
             "status": job.get("status"),
@@ -340,6 +361,7 @@ def live(args: argparse.Namespace) -> int:
                 "re_admit_from": (readmit_job.get("local") or {}).get("re_admit_from"),
                 "evidence": readmit_evidence,
             },
+            "pack_fill": fill,
             "north_star_done": False,
             "honesty": list(plan.honesty),
         }

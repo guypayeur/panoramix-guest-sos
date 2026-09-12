@@ -15,10 +15,18 @@ from sos.lab_compose import (
     DEFAULT_BINDING_REL,
     DEFAULT_CTL_PORT,
     DEFAULT_GUEST_PORT,
+    ENV_GUEST_TIP,
+    ENV_RUNTIME_TIP,
+    GUEST_PACK_TIP,
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
+    RUNTIME_PACK_TIP,
     elapsed_plan,
+    git_head_sha,
     handoff_docs_plan,
+    looks_like_git_tip,
+    pack_fill_fragment,
+    pack_fill_plan,
     wall_plan,
     RECORDED_RESERVE_BODY,
     RUNTIME_DOCS_PIN,
@@ -40,6 +48,7 @@ from sos.lab_compose import (
     readmit_plan,
     readmit_smokes_honest,
     recorded_reserve_body,
+    resolve_known_tip,
     runtime_root_usable,
     runtime_serve_argv,
     wait_loopback_port,
@@ -77,6 +86,9 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_ELAPSED_PIN, "9ba95bbb")
         self.assertEqual(RUNTIME_DOCS_PIN, "5dc191cb")
         self.assertEqual(RUNTIME_WALL_PIN, "9b6646e8")
+        self.assertEqual(RUNTIME_PACK_TIP, "411aa68bd1dd9c8a11d4ec98b3570acb5b90b4d9")
+        self.assertTrue(RUNTIME_PACK_TIP.startswith("411aa68"))
+        self.assertEqual(GUEST_PACK_TIP, "4e2251c7d8374dbec408e0febb0a33f4c00f33c2")
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
 
@@ -173,6 +185,36 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIn("optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)", plan.honesty)
         self.assertIn("compare prefers durable wall_elapsed_ms when present (runtime tip 9b6646e8 / main; omit when missing)", plan.honesty)
         self.assertIn("handoff docs panel is operator clarity (not a second control plane)", plan.honesty)
+        self.assertIn("pack-fill tips from checkout / env / documented tip (omit when missing)", plan.honesty)
+        self.assertIn(
+            "pack-fill durable wall/stage elapsed only when measured from hooked run (omit when missing; never invent)",
+            plan.honesty,
+        )
+        fill = parsed["pack_fill"]
+        self.assertIs(fill["omit_when_missing"], True)
+        self.assertIs(fill["invent"], False)
+        self.assertIs(fill["forecast"], False)
+        self.assertIs(fill["ifrs17"], False)
+        self.assertIs(fill["iec_spa"], False)
+        self.assertIs(fill["writes_live_pack"], False)
+        self.assertIs(fill["ux_done"], False)
+        self.assertIs(fill["north_star_done"], False)
+        self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
+        self.assertEqual(fill["or"], "main")
+        self.assertEqual(fill["runtime_pr"], 118)
+        self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
+        self.assertEqual(fill["assist"], "runtime #78 D fill checklist")
+        fragment = fill["fragment"]
+        self.assertIn("tips", fragment)
+        self.assertEqual(
+            looks_like_git_tip(fragment["tips"]["guest_tip"]),
+            git_head_sha(ROOT),
+        )
+        self.assertTrue(
+            looks_like_git_tip(fragment["tips"]["panoramix_runtime_tip"])
+        )
+        self.assertNotIn("durable", fragment)
+        self.assertEqual(pack_fill_plan()["when"], fill["when"])
 
     def test_runtime_root_usable_fail_closed(self) -> None:
         self.assertIsNone(runtime_root_usable(None))
@@ -461,6 +503,22 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(plan["handoff_docs"]["panel"], True)
         self.assertIs(plan["handoff_docs"]["second_control_plane"], False)
         self.assertIs(plan["handoff_docs"]["north_star_done"], False)
+        fill = plan["pack_fill"]
+        self.assertIs(fill["omit_when_missing"], True)
+        self.assertIs(fill["invent"], False)
+        self.assertIs(fill["writes_live_pack"], False)
+        self.assertIs(fill["north_star_done"], False)
+        self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
+        self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
+        self.assertEqual(fill["runtime_pr"], 118)
+        self.assertNotIn("durable", fill["fragment"])
+        self.assertTrue(
+            looks_like_git_tip(fill["fragment"]["tips"]["panoramix_runtime_tip"])
+        )
+        self.assertEqual(
+            looks_like_git_tip(fill["fragment"]["tips"]["guest_tip"]),
+            git_head_sha(ROOT),
+        )
 
     def test_live_fail_closed_without_runtime_root(self) -> None:
         env = dict(**{k: v for k, v in __import__("os").environ.items() if k != "PANORAMIX_RUNTIME_ROOT"})
@@ -477,12 +535,208 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIn("dry-run", proc.stderr.lower())
 
 
+class PackFillTests(unittest.TestCase):
+    def test_git_head_and_resolve_order(self) -> None:
+        self.assertIsNone(git_head_sha(None))
+        self.assertIsNone(git_head_sha("/no/such/checkout"))
+        self.assertIsNone(looks_like_git_tip("short"))
+        self.assertIsNone(looks_like_git_tip("not-a-sha!!!!"))
+        self.assertEqual(looks_like_git_tip("411aa68"), "411aa68")
+        self.assertEqual(git_head_sha(ROOT), looks_like_git_tip(git_head_sha(ROOT)))
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            git_dir = root / ".git"
+            (git_dir / "refs" / "heads").mkdir(parents=True)
+            (git_dir / "HEAD").write_text("ref: refs/heads/lab\n", encoding="utf-8")
+            (git_dir / "refs" / "heads" / "lab").write_text(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                git_head_sha(root),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            packed = root / "packed"
+            (packed / ".git").mkdir(parents=True)
+            (packed / ".git" / "HEAD").write_text(
+                "ref: refs/heads/packed\n", encoding="utf-8"
+            )
+            (packed / ".git" / "packed-refs").write_text(
+                "# pack-refs\n"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/heads/packed\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                git_head_sha(packed),
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            )
+        sha, source = resolve_known_tip(
+            checkout=ROOT,
+            env_value="ddddddd",
+            documented=RUNTIME_PACK_TIP,
+        )
+        self.assertEqual(sha, git_head_sha(ROOT))
+        self.assertEqual(source, "checkout")
+        sha, source = resolve_known_tip(
+            checkout=None,
+            env_value="ccccccc",
+            documented=RUNTIME_PACK_TIP,
+        )
+        self.assertEqual(sha, "ccccccc")
+        self.assertEqual(source, "env")
+        sha, source = resolve_known_tip(
+            checkout=None,
+            env_value="",
+            documented=RUNTIME_PACK_TIP,
+        )
+        self.assertEqual(sha, RUNTIME_PACK_TIP)
+        self.assertEqual(source, "documented")
+        sha, source = resolve_known_tip(checkout=None, env_value=None, documented=None)
+        self.assertIsNone(sha)
+        self.assertIsNone(source)
+
+    def test_dry_run_omits_unmeasured_durable(self) -> None:
+        fill = pack_fill_plan(
+            guest_root=ROOT,
+            runtime_root=None,
+            environ={},
+            hooked=False,
+        )
+        self.assertIs(fill["omit_when_missing"], True)
+        self.assertIs(fill["invent"], False)
+        self.assertIs(fill["writes_live_pack"], False)
+        self.assertIs(fill["north_star_done"], False)
+        self.assertIs(fill["ux_done"], False)
+        self.assertEqual(fill["tip_sources"]["panoramix_runtime_tip"], "documented")
+        self.assertEqual(fill["tip_sources"]["guest_tip"], "checkout")
+        fragment = fill["fragment"]
+        self.assertEqual(fragment["tips"]["panoramix_runtime_tip"], RUNTIME_PACK_TIP)
+        self.assertEqual(fragment["tips"]["guest_tip"], git_head_sha(ROOT))
+        self.assertNotIn("durable", fragment)
+        self.assertNotIn("wall_elapsed_ms", json.dumps(fragment))
+        self.assertNotIn("stage_elapsed_ms", json.dumps(fragment))
+
+    def test_env_tips_when_no_checkout(self) -> None:
+        fragment = pack_fill_fragment(
+            environ={
+                ENV_RUNTIME_TIP: "411aa68eeeeeee",
+                ENV_GUEST_TIP: "4e2251cfffffff",
+            },
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertEqual(fragment["tips"]["panoramix_runtime_tip"], "411aa68eeeeeee")
+        self.assertEqual(fragment["tips"]["guest_tip"], "4e2251cfffffff")
+        self.assertNotIn("durable", fragment)
+
+    def test_omit_tips_when_unknown(self) -> None:
+        fragment = pack_fill_fragment(
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertEqual(fragment, {})
+
+    def test_measured_durable_only_when_hooked(self) -> None:
+        progress = {
+            "source": "durable",
+            "wall_elapsed_ms": 1500,
+            "timeline": [
+                {"name": "admit", "elapsed_ms": 120},
+                {"name": "project", "elapsed_ms": 200},
+            ],
+        }
+        hooked = pack_fill_fragment(
+            progress=progress,
+            hooked=True,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertEqual(hooked["durable"]["wall_elapsed_ms"]["panoramix"], 1500)
+        self.assertEqual(
+            hooked["durable"]["stage_elapsed_ms"]["panoramix"],
+            [120, 200],
+        )
+        self.assertNotIn("tips", hooked)
+
+        not_hooked = pack_fill_fragment(
+            progress=progress,
+            hooked=False,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertNotIn("durable", not_hooked)
+
+        stub = pack_fill_fragment(
+            progress={
+                "source": "stub",
+                "wall_elapsed_ms": 9999,
+                "timeline": [{"name": "admit", "elapsed_ms": 1}],
+            },
+            hooked=True,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertNotIn("durable", stub)
+
+    def test_never_invent_from_guest_clocks_or_junk(self) -> None:
+        clocks = pack_fill_fragment(
+            progress={
+                "source": "durable",
+                "created_at": "2026-09-12T00:00:00Z",
+                "updated_at": "2026-09-12T00:01:00Z",
+            },
+            hooked=True,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertEqual(clocks, {})
+
+        junk = pack_fill_fragment(
+            progress={
+                "source": "durable",
+                "wall_elapsed_ms": -4,
+                "timeline": [
+                    {"name": "admit", "elapsed_ms": True},
+                    {"name": "project"},
+                ],
+            },
+            hooked=True,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertEqual(junk, {})
+
+        stages_only = pack_fill_fragment(
+            progress={
+                "source": "durable",
+                "stages": [{"name": "admit", "elapsed_ms": 80}],
+            },
+            hooked=True,
+            environ={},
+            documented_runtime_tip=None,
+            documented_guest_tip=None,
+        )
+        self.assertNotIn("wall_elapsed_ms", stages_only.get("durable", {}))
+        self.assertEqual(
+            stages_only["durable"]["stage_elapsed_ms"]["panoramix"],
+            [80],
+        )
+
+
 class HonestyTests(unittest.TestCase):
     def test_helpers_and_docs(self) -> None:
         helper = (ROOT / "sos" / "lab_compose.py").read_text(encoding="utf-8")
         self.assertIn("Does not close runtime", helper)
         self.assertIn("#70", helper)
         self.assertIn("#78", helper)
+        self.assertIn("411aa68", helper)
+        self.assertIn("pack-fill", helper)
+        self.assertIn("does not write the full live pack", helper.lower())
         self.assertIn("north_star_done", helper)
         self.assertIn("Not guest→mesh ctl", helper)
         self.assertIn("Not SIEM", helper)
@@ -530,11 +784,14 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("5dc191cb", text, name)
             self.assertIn("9b6646e8", text, name)
             self.assertIn("6511cec7", text, name)
+            self.assertIn("411aa68", text, name)
             self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("compare prefers", text.lower(), name)
             self.assertIn("handoff docs", text.lower(), name)
             self.assertIn("omit when missing", text.lower(), name)
             self.assertIn("never invent", text.lower(), name)
+            self.assertIn("pack_fill", text, name)
+            self.assertIn("#78", text, name)
             self.assertNotIn("Fixes #70", text)
             self.assertNotIn("Fixes #78", text)
             self.assertNotIn("may not yet expose", text.lower(), name)
@@ -544,6 +801,10 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("timeline_elapsed", lab)
         self.assertIn("wall_elapsed", lab)
         self.assertIn("omit_when_missing", lab)
+        self.assertIn("pack_fill", lab)
+        self.assertIn("411aa68", lab)
+        self.assertIn("does **not** write the full live pack", lab)
+        self.assertIn("#78 D", lab)
         self.assertNotIn("may not yet expose", lab.lower())
 
         for line in HONESTY_LINES:
@@ -565,6 +826,10 @@ class HonestyTests(unittest.TestCase):
         )
         self.assertIn("- [x] One-shot lab compose", ux)
         self.assertIn("re-admit smoke", ux)
+        self.assertIn("- [x] Thinner lab-compose pack-fill fragment", ux)
+        self.assertIn("411aa68", ux)
+        self.assertIn("#78 D", ux)
+        self.assertIn("does not write the live pack", ux)
         self.assertIn("- [ ] `north_star_done: true`", ux)
         self.assertNotIn("- [x] `north_star_done: true`", ux)
         self.assertIn("- [ ] Operator/actuary path", ux)
