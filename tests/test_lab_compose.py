@@ -20,6 +20,7 @@ from sos.lab_compose import (
     GUEST_PACK_TIP,
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
+    RUNTIME_PACK_DOCS_PIN,
     RUNTIME_PACK_TIP,
     elapsed_plan,
     git_head_sha,
@@ -89,6 +90,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_WALL_PIN, "9b6646e8")
         self.assertEqual(RUNTIME_PACK_TIP, "b81130f2187109eabc2342df6345ca877e98023f")
         self.assertTrue(RUNTIME_PACK_TIP.startswith("b81130f"))
+        self.assertEqual(RUNTIME_PACK_DOCS_PIN, "63a168d")
         self.assertEqual(GUEST_PACK_TIP, "b859466dcd079eb063b615728b258a686f79749a")
         self.assertTrue(GUEST_PACK_TIP.startswith("b859466"))
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
@@ -196,6 +198,10 @@ class ComposePlanTests(unittest.TestCase):
             "pack-fill emit fragment can feed runtime.iec_parity_pack skeleton via --from-json / flags (measured durable only; omit when missing)",
             plan.honesty,
         )
+        self.assertIn(
+            "pack-fill docs tip 63a168d / PR #122 names WSL assist-smoke stamp lineage (assist ≠ fill)",
+            plan.honesty,
+        )
         self.assertIn("never invent metrics.wall_time_sec", plan.honesty)
         self.assertIn("assist ≠ fill; assist ≠ Done", plan.honesty)
         fill = parsed["pack_fill"]
@@ -210,6 +216,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
         self.assertEqual(fill["or"], "main")
         self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(fill["docs_tip"], "63a168d")
+        self.assertEqual(fill["docs_pr"], 122)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["assist_ne_fill"], True)
@@ -218,6 +226,8 @@ class ComposePlanTests(unittest.TestCase):
         handoff = fill["skeleton_handoff"]
         self.assertEqual(handoff["cmd"], "python3 -m runtime.iec_parity_pack skeleton")
         self.assertEqual(handoff["runtime_tip"], RUNTIME_PACK_TIP)
+        self.assertEqual(handoff["docs_tip"], "63a168d")
+        self.assertEqual(handoff["docs_pr"], 122)
         self.assertEqual(handoff["guest_emit_tip"], GUEST_PACK_TIP)
         self.assertIs(handoff["from_json"], True)
         self.assertIs(handoff["invent_wall_time_sec"], False)
@@ -530,6 +540,8 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
         self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
         self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(fill["docs_tip"], "63a168d")
+        self.assertEqual(fill["docs_pr"], 122)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertEqual(
@@ -636,6 +648,9 @@ class PackFillTests(unittest.TestCase):
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["assist_ne_fill"], True)
         self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(fill["docs_tip"], "63a168d")
+        self.assertEqual(fill["docs_pr"], 122)
+        self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
         self.assertEqual(
             fill["skeleton_handoff"]["cmd"],
             "python3 -m runtime.iec_parity_pack skeleton",
@@ -774,6 +789,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(handoff["validate_cmd"], "python3 -m runtime.iec_parity_pack validate")
         self.assertTrue(handoff["runtime_tip"].startswith("b81130f"))
         self.assertEqual(handoff["runtime_pr"], 120)
+        self.assertEqual(handoff["docs_tip"], "63a168d")
+        self.assertEqual(handoff["docs_pr"], 122)
         self.assertTrue(handoff["guest_emit_tip"].startswith("b859466"))
         self.assertIn("--from-json", handoff["flags"])
         self.assertIs(handoff["durable_only_when_measured"], True)
@@ -796,6 +813,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("#70", helper)
         self.assertIn("#78", helper)
         self.assertIn("b81130f", helper)
+        self.assertIn("63a168d", helper)
         self.assertIn("b859466", helper)
         self.assertIn("iec_parity_pack", helper)
         self.assertIn("skeleton", helper)
@@ -850,6 +868,7 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("9b6646e8", text, name)
             self.assertIn("6511cec7", text, name)
             self.assertIn("b81130f", text, name)
+            self.assertIn("63a168d", text, name)
             self.assertIn("b859466", text, name)
             self.assertIn("iec_parity_pack", text, name)
             self.assertIn("skeleton", text, name)
@@ -872,7 +891,9 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("omit_when_missing", lab)
         self.assertIn("pack_fill", lab)
         self.assertIn("b81130f", lab)
+        self.assertIn("63a168d", lab)
         self.assertIn("b859466", lab)
+        self.assertIn("PR #122", lab)
         self.assertIn("runtime.iec_parity_pack skeleton", lab)
         self.assertIn("--from-json", lab)
         self.assertIn("metrics.wall_time_sec", lab)
@@ -901,7 +922,9 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] One-shot lab compose", ux)
         self.assertIn("re-admit smoke", ux)
         self.assertIn("- [x] Thinner lab-compose pack-fill fragment", ux)
+        self.assertIn("- [x] Overnight assist smoke stamp is assist ≠ fill", ux)
         self.assertIn("b81130f", ux)
+        self.assertIn("63a168d", ux)
         self.assertIn("b859466", ux)
         self.assertIn("iec_parity_pack skeleton", ux)
         self.assertIn("metrics.wall_time_sec", ux)
