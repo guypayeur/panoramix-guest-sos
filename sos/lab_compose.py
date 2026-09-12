@@ -33,10 +33,12 @@ merge docs tip ``6ecb645`` (PR #130 stamp link, or main);
 apply-metrics tip ``5d399f7`` (PR #132 ``iec_parity_pack
 apply-metrics``, or main); apply-metrics docs tip ``3904ee4``
 (PR #134 stamp link, or main); apply-notes tip ``48a8645``
-(PR #136 ``iec_parity_pack apply-notes``, or main); guest emit
+(PR #136 ``iec_parity_pack apply-notes``, or main); apply-notes
+docs tip ``6807509`` (PR #138 stamp link, or main); guest emit
 tip ``b859466`` (#52); guest gap-report tip ``eb48605`` (#60);
 guest merge tip ``39064d5`` (#64); guest apply-metrics tip
-``7c09f32`` (#68). Wall feature tip remains
+``7c09f32`` (#68); guest apply-notes tip ``e5562c3`` (#70).
+Wall feature tip remains
 ``9b6646e8``. Guest fragment can feed optional tips / measured
 durable into ``python3 -m runtime.iec_parity_pack skeleton``
 via ``--from-json`` (file or stdin) or flags; omit durable when
@@ -54,7 +56,11 @@ assist ≠ fill; assist ≠ Done; apply-notes ≠ fill;
 apply-notes ≠ Done; apply-metrics ≠ fill;
 apply-metrics ≠ Done; merge ≠ fill; merge ≠ Done;
 gap-report ≠ Done. Does not write the full live pack.
-Does not close runtime
+Operator live #78 D pack is off-box at
+``~/panoramix-lab/evidence-70/iec-parity-live-20260912/``
+with STRICT ``stamp-48a8645-iec-parity-live/`` — live fill ≠
+Done; ``north_star_done`` false; comparable false; does not
+unlock cloud. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done or #70 UX Done. Cloud stays locked.
 """
@@ -94,6 +100,7 @@ RUNTIME_WALL_DOCS_PIN = "6511cec7"
 # Apply-metrics tip #132 names the WSL apply-metrics stamp (apply-metrics ≠ fill).
 # Docs tip #134 links that stamp on main (or tip 3904ee4).
 # Apply-notes tip #136 names the WSL apply-notes stamp (apply-notes ≠ fill).
+# Docs tip #138 links that stamp on main (or tip 6807509).
 RUNTIME_PACK_TIP = "b81130f2187109eabc2342df6345ca877e98023f"
 RUNTIME_PACK_DOCS_PIN = "63a168d"
 RUNTIME_PACK_GAP_REPORT_PIN = "84cb202"
@@ -103,7 +110,10 @@ RUNTIME_PACK_MERGE_DOCS_PIN = "6ecb645"
 RUNTIME_PACK_APPLY_METRICS_PIN = "5d399f7"
 RUNTIME_PACK_APPLY_METRICS_DOCS_PIN = "3904ee4"
 RUNTIME_PACK_APPLY_NOTES_PIN = "48a8645"
+RUNTIME_PACK_APPLY_NOTES_DOCS_PIN = "6807509"
 OFFBOX_IEC_PARITY_PACK = "~/panoramix-lab/evidence-70/iec-parity/iec-parity.json"
+OFFBOX_IEC_PARITY_LIVE_DIR = "~/panoramix-lab/evidence-70/iec-parity-live-20260912/"
+OFFBOX_IEC_PARITY_LIVE_STAMP = "stamp-48a8645-iec-parity-live/"
 GAP_REPORT_CMD = "python3 -m runtime.iec_parity_pack gap-report"
 MERGE_CMD = "python3 -m runtime.iec_parity_pack merge"
 MERGE_FROM_JSON = "--from-json -"
@@ -119,6 +129,8 @@ GUEST_GAP_REPORT_TIP = "eb48605"
 GUEST_MERGE_TIP = "39064d5"
 # Guest main after #68 (apply-metrics docs pin). Mention only — emit tip stays #52.
 GUEST_APPLY_METRICS_TIP = "7c09f32"
+# Guest main after #70 (apply-notes hint). Mention only — emit tip stays #52.
+GUEST_APPLY_NOTES_TIP = "e5562c3"
 ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
 ENV_GUEST_TIP = "PANORAMIX_GUEST_TIP"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
@@ -155,6 +167,8 @@ HONESTY_LINES = (
     "pack-fill apply-metrics hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run apply-metrics; does not supply wall numbers; apply-metrics ≠ fill; apply-metrics ≠ Done)",
     "pack-fill apply-metrics+merge+gap-report pairing (hint only; apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done; merge ≠ fill; merge ≠ Done; gap-report ≠ Done)",
     "pack-fill apply-notes tip 48a8645 / PR #136 (or main) names WSL apply-notes assist-smoke stamp lineage (apply-notes ≠ fill; apply-notes ≠ Done; assist ≠ Done; smoke notes ≠ Done)",
+    "pack-fill apply-notes docs tip 6807509 / PR #138 (or main) links WSL apply-notes stamp (apply-notes ≠ fill; apply-notes ≠ Done; assist ≠ Done)",
+    "operator live #78 D pack is off-box ~/panoramix-lab/evidence-70/iec-parity-live-20260912/ with STRICT stamp-48a8645-iec-parity-live/ (live fill ≠ Done; north_star_done false; comparable false; does not unlock cloud)",
     "pack-fill apply-notes hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run apply-notes; does not supply wall numbers; does not invent UX strings; apply-notes ≠ fill; apply-notes ≠ Done)",
     "pack-fill apply-notes+apply-metrics+merge+gap-report pairing (hint only; apply-notes ≠ fill; apply-notes ≠ Done; apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done; merge ≠ fill; merge ≠ Done; gap-report ≠ Done)",
     "never invent metrics.wall_time_sec",
@@ -563,6 +577,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
         "apply_metrics_docs_pr": 134,
         "apply_notes_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "apply_notes_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "guest_emit_tip": GUEST_PACK_TIP,
         "guest_pr": 52,
         "from_json": True,
@@ -603,6 +619,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
             "(PR #134, or main). "
             f"Apply-notes tip {RUNTIME_PACK_APPLY_NOTES_PIN} "
             "(PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -662,6 +680,8 @@ def gap_report_plan(
         "apply_metrics_docs_pr": 134,
         "apply_notes_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "apply_notes_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
         "invent": False,
@@ -705,6 +725,8 @@ def gap_report_plan(
             "(PR #134, or main). "
             f"Apply-notes tip {RUNTIME_PACK_APPLY_NOTES_PIN} "
             "(PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -754,6 +776,8 @@ def merge_plan(
         "apply_metrics_docs_pr": 134,
         "apply_notes_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "apply_notes_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "guest_gap_report_tip": GUEST_GAP_REPORT_TIP,
         "guest_gap_report_pr": 60,
@@ -789,6 +813,8 @@ def merge_plan(
             "(PR #134, or main). "
             f"Apply-notes tip {RUNTIME_PACK_APPLY_NOTES_PIN} "
             "(PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -833,6 +859,8 @@ def apply_metrics_plan(
         "apply_metrics_docs_pr": 134,
         "apply_notes_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "apply_notes_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "merge_tip": RUNTIME_PACK_MERGE_PIN,
         "merge_pr": 128,
         "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
@@ -884,6 +912,8 @@ def apply_metrics_plan(
             "(PR #134, or main). "
             f"Apply-notes tip {RUNTIME_PACK_APPLY_NOTES_PIN} "
             "(PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             f"Merge tip remains {RUNTIME_PACK_MERGE_PIN} (PR #128). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
@@ -922,6 +952,8 @@ def apply_notes_plan(
         "runtime_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "or": "main",
         "runtime_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "apply_metrics_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
         "apply_metrics_pr": 132,
         "apply_metrics_docs_tip": RUNTIME_PACK_APPLY_METRICS_DOCS_PIN,
@@ -939,6 +971,8 @@ def apply_notes_plan(
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "guest_apply_metrics_tip": GUEST_APPLY_METRICS_TIP,
         "guest_apply_metrics_pr": 68,
+        "guest_apply_notes_tip": GUEST_APPLY_NOTES_TIP,
+        "guest_apply_notes_pr": 70,
         "omit_when_missing": True,
         "invent": False,
         "invent_wall_time_sec": False,
@@ -973,6 +1007,8 @@ def apply_notes_plan(
             "apply-metrics ≠ Done; merge ≠ fill; merge ≠ Done; "
             "gap-report ≠ Done. "
             f"Runtime tip {RUNTIME_PACK_APPLY_NOTES_PIN} (PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             f"Apply-metrics tip remains {RUNTIME_PACK_APPLY_METRICS_PIN} "
             "(PR #132). "
             f"Apply-metrics docs tip remains "
@@ -980,6 +1016,11 @@ def apply_notes_plan(
             f"Merge tip remains {RUNTIME_PACK_MERGE_PIN} (PR #128). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
+            "Operator live #78 D pack is off-box at "
+            f"{OFFBOX_IEC_PARITY_LIVE_DIR} with STRICT "
+            f"{OFFBOX_IEC_PARITY_LIVE_STAMP} — live fill ≠ Done; "
+            "north_star_done false; comparable false; does not unlock "
+            "cloud. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
     }
@@ -1050,6 +1091,8 @@ def pack_fill_plan(
         "apply_metrics_docs_pr": 134,
         "apply_notes_tip": RUNTIME_PACK_APPLY_NOTES_PIN,
         "apply_notes_pr": 136,
+        "apply_notes_docs_tip": RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
+        "apply_notes_docs_pr": 138,
         "schema_pr": 118,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
@@ -1072,6 +1115,15 @@ def pack_fill_plan(
         "north_star_done": False,
         "tip_sources": sources,
         "fragment": fragment,
+        "operator_live_pack": {
+            "path": OFFBOX_IEC_PARITY_LIVE_DIR,
+            "strict_stamp": OFFBOX_IEC_PARITY_LIVE_STAMP,
+            "off_box": True,
+            "live_fill_ne_done": True,
+            "north_star_done": False,
+            "comparable": False,
+            "unlocks_cloud": False,
+        },
         "skeleton_handoff": skeleton_handoff_plan(),
         "apply_notes": apply_notes_plan(runtime_root=runtime_root),
         "apply_metrics": apply_metrics_plan(runtime_root=runtime_root),
@@ -1115,12 +1167,20 @@ def pack_fill_plan(
             "(PR #134, or main). "
             f"Apply-notes tip {RUNTIME_PACK_APPLY_NOTES_PIN} "
             "(PR #136, or main). "
+            f"Apply-notes docs tip {RUNTIME_PACK_APPLY_NOTES_DOCS_PIN} "
+            "(PR #138, or main). "
             "Schema / checklist era remains #118. "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             f"Guest gap-report tip {GUEST_GAP_REPORT_TIP} (PR #60). "
             f"Guest merge tip {GUEST_MERGE_TIP} (PR #64). "
             f"Guest apply-metrics tip {GUEST_APPLY_METRICS_TIP} (PR #68). "
+            f"Guest apply-notes tip {GUEST_APPLY_NOTES_TIP} (PR #70). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
+            "Operator live #78 D pack is off-box at "
+            f"{OFFBOX_IEC_PARITY_LIVE_DIR} with STRICT "
+            f"{OFFBOX_IEC_PARITY_LIVE_STAMP} — live fill ≠ Done; "
+            "north_star_done false; comparable false; does not unlock "
+            "cloud. "
             "Durable wall/stage elapsed only when measured from the hooked "
             "run. Omit when missing. Never invent. Never invent "
             "metrics.wall_time_sec. Never invent UX strings. "

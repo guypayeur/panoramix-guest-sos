@@ -18,6 +18,7 @@ from sos.lab_compose import (
     ENV_GUEST_TIP,
     ENV_RUNTIME_TIP,
     GUEST_APPLY_METRICS_TIP,
+    GUEST_APPLY_NOTES_TIP,
     GUEST_GAP_REPORT_TIP,
     GUEST_MERGE_TIP,
     GUEST_PACK_TIP,
@@ -25,6 +26,7 @@ from sos.lab_compose import (
     OPAQUE_HANDOFF_BODY,
     RUNTIME_PACK_APPLY_METRICS_DOCS_PIN,
     RUNTIME_PACK_APPLY_METRICS_PIN,
+    RUNTIME_PACK_APPLY_NOTES_DOCS_PIN,
     RUNTIME_PACK_APPLY_NOTES_PIN,
     RUNTIME_PACK_DOCS_PIN,
     RUNTIME_PACK_GAP_REPORT_DOCS_PIN,
@@ -38,6 +40,8 @@ from sos.lab_compose import (
     GAP_REPORT_CMD,
     MERGE_CMD,
     MERGE_FROM_JSON,
+    OFFBOX_IEC_PARITY_LIVE_DIR,
+    OFFBOX_IEC_PARITY_LIVE_STAMP,
     OFFBOX_IEC_PARITY_PACK,
     RUNTIME_ROOT_TEMPLATE,
     elapsed_plan,
@@ -120,6 +124,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_PACK_APPLY_METRICS_PIN, "5d399f7")
         self.assertEqual(RUNTIME_PACK_APPLY_METRICS_DOCS_PIN, "3904ee4")
         self.assertEqual(RUNTIME_PACK_APPLY_NOTES_PIN, "48a8645")
+        self.assertEqual(RUNTIME_PACK_APPLY_NOTES_DOCS_PIN, "6807509")
         self.assertEqual(GAP_REPORT_CMD, "python3 -m runtime.iec_parity_pack gap-report")
         self.assertEqual(MERGE_CMD, "python3 -m runtime.iec_parity_pack merge")
         self.assertEqual(MERGE_FROM_JSON, "--from-json -")
@@ -129,9 +134,18 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(GUEST_GAP_REPORT_TIP, "eb48605")
         self.assertEqual(GUEST_MERGE_TIP, "39064d5")
         self.assertEqual(GUEST_APPLY_METRICS_TIP, "7c09f32")
+        self.assertEqual(GUEST_APPLY_NOTES_TIP, "e5562c3")
         self.assertEqual(
             OFFBOX_IEC_PARITY_PACK,
             "~/panoramix-lab/evidence-70/iec-parity/iec-parity.json",
+        )
+        self.assertEqual(
+            OFFBOX_IEC_PARITY_LIVE_DIR,
+            "~/panoramix-lab/evidence-70/iec-parity-live-20260912/",
+        )
+        self.assertEqual(
+            OFFBOX_IEC_PARITY_LIVE_STAMP,
+            "stamp-48a8645-iec-parity-live/",
         )
         self.assertEqual(RUNTIME_ROOT_TEMPLATE, "/path/to/panoramix-runtime")
         self.assertEqual(GUEST_PACK_TIP, "b859466dcd079eb063b615728b258a686f79749a")
@@ -294,6 +308,14 @@ class ComposePlanTests(unittest.TestCase):
             plan.honesty,
         )
         self.assertIn(
+            "pack-fill apply-notes docs tip 6807509 / PR #138 (or main) links WSL apply-notes stamp (apply-notes ≠ fill; apply-notes ≠ Done; assist ≠ Done)",
+            plan.honesty,
+        )
+        self.assertIn(
+            "operator live #78 D pack is off-box ~/panoramix-lab/evidence-70/iec-parity-live-20260912/ with STRICT stamp-48a8645-iec-parity-live/ (live fill ≠ Done; north_star_done false; comparable false; does not unlock cloud)",
+            plan.honesty,
+        )
+        self.assertIn(
             "pack-fill apply-notes hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run apply-notes; does not supply wall numbers; does not invent UX strings; apply-notes ≠ fill; apply-notes ≠ Done)",
             plan.honesty,
         )
@@ -336,6 +358,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertEqual(fill["apply_notes_tip"], "48a8645")
         self.assertEqual(fill["apply_notes_pr"], 136)
+        self.assertEqual(fill["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(fill["apply_notes_docs_pr"], 138)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["invent_ux_strings"], False)
@@ -368,6 +392,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(handoff["apply_metrics_docs_pr"], 134)
         self.assertEqual(handoff["apply_notes_tip"], "48a8645")
         self.assertEqual(handoff["apply_notes_pr"], 136)
+        self.assertEqual(handoff["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(handoff["apply_notes_docs_pr"], 138)
         self.assertEqual(handoff["guest_emit_tip"], GUEST_PACK_TIP)
         self.assertIs(handoff["from_json"], True)
         self.assertIs(handoff["invent_wall_time_sec"], False)
@@ -398,6 +424,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(gap["apply_metrics_docs_pr"], 134)
         self.assertEqual(gap["apply_notes_tip"], "48a8645")
         self.assertEqual(gap["apply_notes_pr"], 136)
+        self.assertEqual(gap["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(gap["apply_notes_docs_pr"], 138)
         self.assertEqual(gap["wall_feature_tip"], "9b6646e8")
         self.assertIn("cd /path/to/panoramix-runtime", gap["hint"])
         self.assertIn(GAP_REPORT_CMD, gap["hint"])
@@ -431,6 +459,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(merged["apply_metrics_docs_pr"], 134)
         self.assertEqual(merged["apply_notes_tip"], "48a8645")
         self.assertEqual(merged["apply_notes_pr"], 136)
+        self.assertEqual(merged["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(merged["apply_notes_docs_pr"], 138)
         self.assertEqual(merged["gap_report_tip"], "84cb202")
         self.assertEqual(merged["wall_feature_tip"], "9b6646e8")
         self.assertIn("cd /path/to/panoramix-runtime", merged["hint"])
@@ -495,6 +525,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(noted["gap_report_ne_done"], True)
         self.assertIs(noted["north_star_done"], False)
         self.assertEqual(noted["runtime_tip"], "48a8645")
+        self.assertEqual(noted["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(noted["apply_notes_docs_pr"], 138)
         self.assertEqual(noted["or"], "main")
         self.assertEqual(noted["runtime_pr"], 136)
         self.assertEqual(noted["apply_metrics_tip"], "5d399f7")
@@ -508,6 +540,14 @@ class ComposePlanTests(unittest.TestCase):
         self.assertNotIn("wall_time_sec", json.dumps(noted["hint"]))
         self.assertNotIn("failure_clarity", noted["hint"])
         self.assertEqual(apply_notes_plan()["note"], noted["note"])
+        live = fill["operator_live_pack"]
+        self.assertEqual(live["path"], OFFBOX_IEC_PARITY_LIVE_DIR)
+        self.assertEqual(live["strict_stamp"], OFFBOX_IEC_PARITY_LIVE_STAMP)
+        self.assertIs(live["off_box"], True)
+        self.assertIs(live["live_fill_ne_done"], True)
+        self.assertIs(live["north_star_done"], False)
+        self.assertIs(live["comparable"], False)
+        self.assertIs(live["unlocks_cloud"], False)
         fragment = fill["fragment"]
         self.assertIn("tips", fragment)
         self.assertEqual(
@@ -831,6 +871,8 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertEqual(fill["apply_notes_tip"], "48a8645")
         self.assertEqual(fill["apply_notes_pr"], 136)
+        self.assertEqual(fill["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(fill["apply_notes_docs_pr"], 138)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["invent_ux_strings"], False)
@@ -907,6 +949,8 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(noted["apply_notes_ne_fill"], True)
         self.assertIs(noted["apply_notes_ne_done"], True)
         self.assertEqual(noted["runtime_tip"], "48a8645")
+        self.assertEqual(noted["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(noted["apply_notes_docs_pr"], 138)
         self.assertEqual(noted["apply_metrics_tip"], "5d399f7")
         self.assertEqual(noted["merge_tip"], "5086d0f")
         self.assertEqual(noted["gap_report_tip"], "84cb202")
@@ -1059,6 +1103,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertEqual(fill["apply_notes_tip"], "48a8645")
         self.assertEqual(fill["apply_notes_pr"], 136)
+        self.assertEqual(fill["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(fill["apply_notes_docs_pr"], 138)
         self.assertIs(fill["apply_notes_ne_fill"], True)
         self.assertIs(fill["apply_notes_ne_done"], True)
         self.assertIs(fill["apply_metrics_ne_fill"], True)
@@ -1231,6 +1277,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(handoff["apply_metrics_docs_pr"], 134)
         self.assertEqual(handoff["apply_notes_tip"], "48a8645")
         self.assertEqual(handoff["apply_notes_pr"], 136)
+        self.assertEqual(handoff["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(handoff["apply_notes_docs_pr"], 138)
         self.assertTrue(handoff["guest_emit_tip"].startswith("b859466"))
         self.assertIn("--from-json", handoff["flags"])
         self.assertIs(handoff["durable_only_when_measured"], True)
@@ -1277,6 +1325,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["apply_notes_tip"], "48a8645")
         self.assertEqual(hint["apply_notes_pr"], 136)
+        self.assertEqual(hint["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(hint["apply_notes_docs_pr"], 138)
         self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
         self.assertEqual(
             hint["hint"],
@@ -1311,6 +1361,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(known["apply_metrics_tip"], "5d399f7")
         self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["apply_notes_tip"], "48a8645")
+        self.assertEqual(known["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(known["apply_notes_docs_pr"], 138)
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
 
         fill = pack_fill_plan(
@@ -1369,6 +1421,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["apply_notes_tip"], "48a8645")
         self.assertEqual(hint["apply_notes_pr"], 136)
+        self.assertEqual(hint["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(hint["apply_notes_docs_pr"], 138)
         self.assertEqual(hint["gap_report_tip"], "84cb202")
         self.assertEqual(hint["gap_report_pr"], 124)
         self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
@@ -1407,6 +1461,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(known["apply_metrics_tip"], "5d399f7")
         self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["apply_notes_tip"], "48a8645")
+        self.assertEqual(known["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(known["apply_notes_docs_pr"], 138)
         self.assertEqual(known["gap_report_tip"], "84cb202")
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
 
@@ -1453,6 +1509,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["apply_notes_tip"], "48a8645")
         self.assertEqual(hint["apply_notes_pr"], 136)
+        self.assertEqual(hint["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(hint["apply_notes_docs_pr"], 138)
         self.assertEqual(hint["merge_tip"], "5086d0f")
         self.assertEqual(hint["merge_pr"], 128)
         self.assertEqual(hint["merge_docs_tip"], "6ecb645")
@@ -1496,6 +1554,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(known["runtime_tip"], "5d399f7")
         self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["apply_notes_tip"], "48a8645")
+        self.assertEqual(known["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(known["apply_notes_docs_pr"], 138)
         self.assertEqual(known["merge_tip"], "5086d0f")
         self.assertEqual(known["gap_report_tip"], "84cb202")
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
@@ -1541,6 +1601,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["runtime_tip"], "48a8645")
         self.assertEqual(hint["or"], "main")
         self.assertEqual(hint["runtime_pr"], 136)
+        self.assertEqual(hint["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(hint["apply_notes_docs_pr"], 138)
         self.assertEqual(hint["apply_metrics_tip"], "5d399f7")
         self.assertEqual(hint["apply_metrics_pr"], 132)
         self.assertEqual(hint["apply_metrics_docs_tip"], "3904ee4")
@@ -1552,6 +1614,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["gap_report_pr"], 124)
         self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
         self.assertEqual(hint["guest_apply_metrics_tip"], "7c09f32")
+        self.assertEqual(hint["guest_apply_notes_tip"], "e5562c3")
+        self.assertEqual(hint["guest_apply_notes_pr"], 70)
         self.assertEqual(
             hint["hint"],
             f"cd {RUNTIME_ROOT_TEMPLATE} && {APPLY_NOTES_CMD} {OFFBOX_IEC_PARITY_PACK}",
@@ -1562,6 +1626,11 @@ class PackFillTests(unittest.TestCase):
         self.assertIn("assist ≠ Done", hint["note"])
         self.assertIn("does not run apply-notes", hint["note"])
         self.assertIn("does not supply wall numbers or invent UX strings", hint["note"])
+        self.assertIn("6807509", hint["note"])
+        self.assertIn("PR #138", hint["note"])
+        self.assertIn("iec-parity-live-20260912", hint["note"])
+        self.assertIn("stamp-48a8645-iec-parity-live", hint["note"])
+        self.assertIn("live fill ≠ Done", hint["note"])
         self.assertNotIn("Fixes #70", hint["note"])
         self.assertNotIn("Fixes #78", hint["note"])
         self.assertNotIn("wall_time_sec", hint["hint"])
@@ -1586,6 +1655,8 @@ class PackFillTests(unittest.TestCase):
         self.assertIs(known["invent"], False)
         self.assertIs(known["invent_wall_time_sec"], False)
         self.assertEqual(known["runtime_tip"], "48a8645")
+        self.assertEqual(known["apply_notes_docs_tip"], "6807509")
+        self.assertEqual(known["apply_notes_docs_pr"], 138)
         self.assertEqual(known["apply_metrics_tip"], "5d399f7")
         self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["merge_tip"], "5086d0f")
@@ -1599,6 +1670,10 @@ class PackFillTests(unittest.TestCase):
             hooked=False,
         )
         self.assertEqual(fill["apply_notes"]["hint"], known["hint"])
+        self.assertEqual(fill["operator_live_pack"]["path"], OFFBOX_IEC_PARITY_LIVE_DIR)
+        self.assertIs(fill["operator_live_pack"]["north_star_done"], False)
+        self.assertIs(fill["operator_live_pack"]["comparable"], False)
+        self.assertIs(fill["operator_live_pack"]["unlocks_cloud"], False)
         self.assertIs(fill["apply_notes"]["runtime_root_known"], True)
         self.assertNotIn("durable", fill["fragment"])
         self.assertNotIn("wall_time_sec", json.dumps(fill["fragment"]))
@@ -1620,10 +1695,14 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5d399f7", helper)
         self.assertIn("3904ee4", helper)
         self.assertIn("48a8645", helper)
+        self.assertIn("6807509", helper)
         self.assertIn("eb48605", helper)
         self.assertIn("39064d5", helper)
         self.assertIn("7c09f32", helper)
+        self.assertIn("e5562c3", helper)
         self.assertIn("b859466", helper)
+        self.assertIn("iec-parity-live-20260912", helper)
+        self.assertIn("stamp-48a8645-iec-parity-live", helper)
         self.assertIn("iec_parity_pack", helper)
         self.assertIn("skeleton", helper)
         self.assertIn("gap-report", helper)
@@ -1701,10 +1780,14 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("5d399f7", text, name)
             self.assertIn("3904ee4", text, name)
             self.assertIn("48a8645", text, name)
+            self.assertIn("6807509", text, name)
             self.assertIn("eb48605", text, name)
             self.assertIn("39064d5", text, name)
             self.assertIn("7c09f32", text, name)
+            self.assertIn("e5562c3", text, name)
             self.assertIn("b859466", text, name)
+            self.assertIn("iec-parity-live-20260912", text, name)
+            self.assertIn("stamp-48a8645-iec-parity-live", text, name)
             self.assertIn("iec_parity_pack", text, name)
             self.assertIn("skeleton", text, name)
             self.assertIn("gap-report", text, name)
@@ -1738,10 +1821,14 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5d399f7", lab)
         self.assertIn("3904ee4", lab)
         self.assertIn("48a8645", lab)
+        self.assertIn("6807509", lab)
         self.assertIn("eb48605", lab)
         self.assertIn("39064d5", lab)
         self.assertIn("7c09f32", lab)
+        self.assertIn("e5562c3", lab)
         self.assertIn("b859466", lab)
+        self.assertIn("iec-parity-live-20260912", lab)
+        self.assertIn("stamp-48a8645-iec-parity-live", lab)
         self.assertIn("PR #122", lab)
         self.assertIn("PR #124", lab)
         self.assertIn("PR #126", lab)
@@ -1750,6 +1837,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("PR #132", lab)
         self.assertIn("PR #134", lab)
         self.assertIn("PR #136", lab)
+        self.assertIn("PR #138", lab)
         self.assertIn("gap-report ≠ Done", lab)
         self.assertIn("merge ≠ fill", lab)
         self.assertIn("merge ≠ Done", lab)
@@ -1775,6 +1863,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("stamp-5086d0f-iec-parity-merge", lab)
         self.assertIn("stamp-5d399f7-iec-parity-apply-metrics", lab)
         self.assertIn("stamp-48a8645-iec-parity-apply-notes", lab)
+        self.assertIn("live fill ≠ Done", lab)
         self.assertIn("smoke walls ≠ Done", lab)
         self.assertIn("smoke notes ≠ Done", lab)
         self.assertIn("metrics.wall_time_sec", lab)
@@ -1812,6 +1901,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] Lab-compose pack_fill.apply_metrics hint", ux)
         self.assertIn("- [x] Overnight apply-notes assist smoke stamp is apply-notes ≠ fill / apply-notes ≠ Done", ux)
         self.assertIn("- [x] Lab-compose pack_fill.apply_notes hint", ux)
+        self.assertIn("- [x] Operator live #78 D pack is off-box", ux)
         self.assertIn("b81130f", ux)
         self.assertIn("63a168d", ux)
         self.assertIn("84cb202", ux)
@@ -1821,10 +1911,14 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5d399f7", ux)
         self.assertIn("3904ee4", ux)
         self.assertIn("48a8645", ux)
+        self.assertIn("6807509", ux)
         self.assertIn("eb48605", ux)
         self.assertIn("39064d5", ux)
         self.assertIn("7c09f32", ux)
+        self.assertIn("e5562c3", ux)
         self.assertIn("b859466", ux)
+        self.assertIn("iec-parity-live-20260912", ux)
+        self.assertIn("stamp-48a8645-iec-parity-live", ux)
         self.assertIn("iec_parity_pack skeleton", ux)
         self.assertIn("metrics.wall_time_sec", ux)
         self.assertIn("#78 D", ux)
