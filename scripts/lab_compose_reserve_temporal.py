@@ -25,17 +25,20 @@ measured from the hooked run). Runtime tip b81130f (#120
 runtime.iec_parity_pack skeleton|validate, or main); docs tip
 63a168d (PR #122 WSL assist-smoke stamp lineage); gap-report
 tip 84cb202 (PR #124 gap-report); gap-report docs tip
-aa4f09e (PR #126 stamp link, or main); guest emit
-tip b859466 (#52). Wall feature tip remains 9b6646e8. Guest
+aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
+(PR #128 iec_parity_pack merge, or main); guest emit
+tip b859466 (#52); guest gap-report tip eb48605 (#60).
+Wall feature tip remains 9b6646e8. Guest
 fragment can feed optional tips / measured durable into
 python3 -m runtime.iec_parity_pack skeleton via --from-json
 (file or stdin) or flags; omit durable when missing. Dry-run /
-live record pack_fill.gap_report (cd+cmd when
+live record pack_fill.merge (cd+cmd when
 PANORAMIX_RUNTIME_ROOT known, else a copy-paste template) for
-python3 -m runtime.iec_parity_pack gap-report after merge
-(merge+gap-report pairing). Hint only — does not run gap-report. Never
+python3 -m runtime.iec_parity_pack merge … --from-json, then
+pack_fill.gap_report for gap-report (merge+gap-report pairing).
+Hint only — does not run merge or gap-report. Never
 invent metrics.wall_time_sec. assist ≠ fill; assist ≠ Done;
-gap-report ≠ Done.
+merge ≠ fill; merge ≠ Done; gap-report ≠ Done.
 Does not write the full live pack. Not a forecast. Not IFRS17.
 Not iec SPA. Handoff docs panel is operator clarity, not a
 second control plane. Does not close runtime
