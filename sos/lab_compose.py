@@ -12,7 +12,10 @@ on the existing hook seam. Fail-closed without hook or payload
 (no silent stub). Not resume-from-failed.
 
 Honesty: fail-closed without env. Not guest→mesh ctl. Not SIEM.
-Not IFRS17. Pin 0.5. WorkHandoff triple only. Does not close runtime
+Not IFRS17. Pin 0.5. WorkHandoff triple only. Optional durable
+stage elapsed from runtime tip ``9ba95bbb`` (or main, PR #110);
+omit when missing — never invent. Handoff docs panel is operator
+clarity, not a second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not stamp north_star_done.
 Cloud stays locked.
 """
@@ -33,6 +36,7 @@ DEFAULT_GUEST_PORT = 18280
 DEFAULT_CTL_PORT = 19215
 DEFAULT_BINDING_REL = "bindings/local-reserve-temporal.example.yaml"
 RUNTIME_SERVE_PIN = "fb901542"
+RUNTIME_ELAPSED_PIN = "9ba95bbb"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
 
 HONESTY_LINES = (
@@ -46,6 +50,8 @@ HONESTY_LINES = (
     "re-admit is a new admit (not resume-from-failed)",
     "no silent stub re-admit",
     "path-slice elapsed omitted when timestamps missing (never invent)",
+    "optional durable stage elapsed from runtime tip 9ba95bbb (or main)",
+    "handoff docs panel is operator clarity (not a second control plane)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
     "north_star_done false",
@@ -98,6 +104,7 @@ class ComposePlan:
             "guest_to_mesh_ctl": False,
             "readmit": readmit_plan(),
             "timeline_elapsed": elapsed_plan(),
+            "handoff_docs": handoff_docs_plan(),
         }
 
 
@@ -138,14 +145,38 @@ def elapsed_plan() -> dict[str, Any]:
     """Dry-run honesty for optional path-slice elapsed. No invented numbers."""
     return {
         "when": "durable progress stages[].elapsed_ms and/or GET /events timestamps",
+        "runtime_tip": RUNTIME_ELAPSED_PIN,
+        "or": "main",
+        "runtime_pr": 110,
         "omit_when_missing": True,
         "invent": False,
         "north_star_done": False,
         "note": (
             "Optional per-stage elapsed on the path-slice timeline. "
-            "Prefer progress elapsed_ms when present; else derive from "
-            "durable event timestamps. Omit when missing. Never invent. "
+            f"Runtime tip {RUNTIME_ELAPSED_PIN} (or main, PR #110) can "
+            "supply durable stages[].elapsed_ms on progress. Prefer "
+            "progress elapsed_ms when present; else derive from durable "
+            "event timestamps. Omit when missing. Never invent. "
             "Not iec planner. Not #70 Done."
+        ),
+    }
+
+
+def handoff_docs_plan() -> dict[str, Any]:
+    """Dry-run honesty for the compact handoff docs panel."""
+    return {
+        "panel": True,
+        "second_control_plane": False,
+        "covers": (
+            "handoff + payload export",
+            "recoverability / re-admit",
+            "lab-compose",
+        ),
+        "north_star_done": False,
+        "note": (
+            "Job-detail Handoff docs panel is operator clarity only — "
+            "not a second control plane. Not guest→mesh ctl. "
+            "Not #70 Done. Not SIEM. Not IFRS17."
         ),
     }
 

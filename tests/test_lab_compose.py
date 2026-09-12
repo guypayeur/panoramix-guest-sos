@@ -18,7 +18,9 @@ from sos.lab_compose import (
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
     elapsed_plan,
+    handoff_docs_plan,
     RECORDED_RESERVE_BODY,
+    RUNTIME_ELAPSED_PIN,
     RUNTIME_SERVE_PIN,
     LabComposeReadmitHook,
     build_compose_plan,
@@ -69,6 +71,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(DEFAULT_CTL_PORT, 19215)
         self.assertEqual(DEFAULT_GUEST_PORT, 18280)
         self.assertEqual(RUNTIME_SERVE_PIN, "fb901542")
+        self.assertEqual(RUNTIME_ELAPSED_PIN, "9ba95bbb")
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
 
@@ -137,8 +140,17 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(elapsed["omit_when_missing"], True)
         self.assertIs(elapsed["invent"], False)
         self.assertIs(elapsed["north_star_done"], False)
+        self.assertEqual(elapsed["runtime_tip"], "9ba95bbb")
+        self.assertEqual(elapsed["or"], "main")
         self.assertEqual(elapsed_plan()["when"], elapsed["when"])
+        docs = parsed["handoff_docs"]
+        self.assertIs(docs["panel"], True)
+        self.assertIs(docs["second_control_plane"], False)
+        self.assertIs(docs["north_star_done"], False)
+        self.assertEqual(handoff_docs_plan()["note"], docs["note"])
         self.assertIn("path-slice elapsed omitted when timestamps missing (never invent)", plan.honesty)
+        self.assertIn("optional durable stage elapsed from runtime tip 9ba95bbb (or main)", plan.honesty)
+        self.assertIn("handoff docs panel is operator clarity (not a second control plane)", plan.honesty)
 
     def test_runtime_root_usable_fail_closed(self) -> None:
         self.assertIsNone(runtime_root_usable(None))
@@ -409,6 +421,14 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertEqual(smoke["inert"]["fail_closed_reason"], "hook_inert")
         self.assertEqual(smoke["payload_unknown"]["fail_closed_reason"], "payload_unknown")
         self.assertIs(smoke["north_star_done"], False)
+        elapsed = plan["timeline_elapsed"]
+        self.assertEqual(elapsed["runtime_tip"], "9ba95bbb")
+        self.assertEqual(elapsed["or"], "main")
+        self.assertIs(elapsed["omit_when_missing"], True)
+        self.assertIs(elapsed["invent"], False)
+        self.assertIs(plan["handoff_docs"]["panel"], True)
+        self.assertIs(plan["handoff_docs"]["second_control_plane"], False)
+        self.assertIs(plan["handoff_docs"]["north_star_done"], False)
 
     def test_live_fail_closed_without_runtime_root(self) -> None:
         env = dict(**{k: v for k, v in __import__("os").environ.items() if k != "PANORAMIX_RUNTIME_ROOT"})
@@ -474,6 +494,19 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("/re-admit", text, name)
             self.assertIn("no silent stub", text.lower(), name)
             self.assertIn("not resume-from-failed", text.lower(), name)
+            self.assertIn("9ba95bbb", text, name)
+            self.assertIn("handoff docs", text.lower(), name)
+            self.assertIn("omit when missing", text.lower(), name)
+            self.assertIn("never invent", text.lower(), name)
+            self.assertNotIn("Fixes #70", text)
+            self.assertNotIn("Fixes #78", text)
+            self.assertNotIn("may not yet expose", text.lower(), name)
+
+        lab = (ROOT / "docs" / "lab-compose.md").read_text(encoding="utf-8")
+        self.assertIn("Handoff docs", lab)
+        self.assertIn("timeline_elapsed", lab)
+        self.assertIn("omit_when_missing", lab)
+        self.assertNotIn("may not yet expose", lab.lower())
 
         for line in HONESTY_LINES:
             self.assertTrue(line)
@@ -499,6 +532,11 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [ ] Operator/actuary path", ux)
         self.assertNotIn("- [x] Operator/actuary path", ux)
         self.assertIn("does **not** mark #70 Done", ux)
+        self.assertIn("9ba95bbb", ux)
+        self.assertIn("verified @ `9ba95bbb`", ux)
+        self.assertNotIn("may not yet expose", ux.lower())
+        self.assertIn("- [ ] `north_star_done: true`", ux)
+        self.assertNotIn("- [x] Operator/actuary path", ux)
 
 
 if __name__ == "__main__":

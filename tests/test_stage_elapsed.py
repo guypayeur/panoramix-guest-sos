@@ -215,8 +215,11 @@ class ElapsedPureTests(unittest.TestCase):
         self.assertIs(plan["omit_when_missing"], True)
         self.assertIs(plan["invent"], False)
         self.assertIs(plan["north_star_done"], False)
+        self.assertEqual(plan["runtime_tip"], "9ba95bbb")
+        self.assertEqual(plan["or"], "main")
         self.assertIn("Never invent", plan["note"])
         self.assertIn("Omit when missing", plan["note"])
+        self.assertIn("9ba95bbb", plan["note"])
 
 
 class _ProgressEventsHook:
