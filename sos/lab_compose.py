@@ -29,6 +29,7 @@ docs tip ``63a168d`` (PR #122 WSL assist-smoke stamp lineage);
 gap-report tip ``84cb202`` (PR #124 gap-report);
 gap-report docs tip ``aa4f09e`` (PR #126 stamp link, or main);
 merge tip ``5086d0f`` (PR #128 ``iec_parity_pack merge``, or main);
+merge docs tip ``6ecb645`` (PR #130 stamp link, or main);
 guest emit tip ``b859466`` (#52); guest gap-report tip
 ``eb48605`` (#60). Wall feature tip remains
 ``9b6646e8``. Guest fragment can feed optional tips / measured
@@ -78,11 +79,13 @@ RUNTIME_WALL_DOCS_PIN = "6511cec7"
 # Gap-report tip #124 names the WSL gap-report stamp (gap-report ≠ Done).
 # Docs tip #126 links that stamp on main (or tip aa4f09e).
 # Merge tip #128 names the WSL merge assist-smoke stamp (merge ≠ fill).
+# Docs tip #130 links that stamp on main (or tip 6ecb645).
 RUNTIME_PACK_TIP = "b81130f2187109eabc2342df6345ca877e98023f"
 RUNTIME_PACK_DOCS_PIN = "63a168d"
 RUNTIME_PACK_GAP_REPORT_PIN = "84cb202"
 RUNTIME_PACK_GAP_REPORT_DOCS_PIN = "aa4f09e"
 RUNTIME_PACK_MERGE_PIN = "5086d0f"
+RUNTIME_PACK_MERGE_DOCS_PIN = "6ecb645"
 OFFBOX_IEC_PARITY_PACK = "~/panoramix-lab/evidence-70/iec-parity/iec-parity.json"
 GAP_REPORT_CMD = "python3 -m runtime.iec_parity_pack gap-report"
 MERGE_CMD = "python3 -m runtime.iec_parity_pack merge"
@@ -120,6 +123,7 @@ HONESTY_LINES = (
     "pack-fill gap-report docs tip aa4f09e / PR #126 (or main) links WSL gap-report stamp (gap-report ≠ Done)",
     "pack-fill gap-report hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run gap-report; gap-report ≠ Done)",
     "pack-fill merge tip 5086d0f / PR #128 (or main) names WSL merge assist-smoke stamp lineage (merge ≠ fill; merge ≠ Done; assist ≠ Done)",
+    "pack-fill merge docs tip 6ecb645 / PR #130 (or main) links WSL merge stamp (merge ≠ fill; merge ≠ Done; assist ≠ Done)",
     "pack-fill merge hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run merge; merge ≠ fill; merge ≠ Done)",
     "pack-fill merge+gap-report pairing (hint only; merge ≠ fill; merge ≠ Done; assist ≠ Done; gap-report ≠ Done)",
     "never invent metrics.wall_time_sec",
@@ -517,6 +521,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
         "gap_report_docs_pr": 126,
         "merge_tip": RUNTIME_PACK_MERGE_PIN,
         "merge_pr": 128,
+        "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
+        "merge_docs_pr": 130,
         "guest_emit_tip": GUEST_PACK_TIP,
         "guest_pr": 52,
         "from_json": True,
@@ -549,6 +555,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
             f"Gap-report docs tip {RUNTIME_PACK_GAP_REPORT_DOCS_PIN} "
             "(PR #126, or main). "
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
+            f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
+            "(PR #130, or main). "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -600,6 +608,8 @@ def gap_report_plan(
         "docs_pr": 122,
         "merge_tip": RUNTIME_PACK_MERGE_PIN,
         "merge_pr": 128,
+        "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
+        "merge_docs_pr": 130,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
         "invent": False,
@@ -625,6 +635,8 @@ def gap_report_plan(
             f"Runtime tip {RUNTIME_PACK_GAP_REPORT_DOCS_PIN} (PR #126, or main). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
+            f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
+            "(PR #130, or main). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -666,6 +678,8 @@ def merge_plan(
         "gap_report_docs_pr": 126,
         "docs_tip": RUNTIME_PACK_DOCS_PIN,
         "docs_pr": 122,
+        "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
+        "merge_docs_pr": 130,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "guest_gap_report_tip": GUEST_GAP_REPORT_TIP,
         "guest_gap_report_pr": 60,
@@ -692,6 +706,8 @@ def merge_plan(
             "Never stamp north_star_done. merge ≠ fill; merge ≠ Done; "
             "assist ≠ Done; gap-report ≠ Done. "
             f"Runtime tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
+            f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
+            "(PR #130, or main). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
@@ -756,6 +772,8 @@ def pack_fill_plan(
         "gap_report_docs_pr": 126,
         "merge_tip": RUNTIME_PACK_MERGE_PIN,
         "merge_pr": 128,
+        "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
+        "merge_docs_pr": 130,
         "schema_pr": 118,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
@@ -797,6 +815,8 @@ def pack_fill_plan(
             f"Gap-report docs tip {RUNTIME_PACK_GAP_REPORT_DOCS_PIN} "
             "(PR #126, or main). "
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
+            f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
+            "(PR #130, or main). "
             "Schema / checklist era remains #118. "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             f"Guest gap-report tip {GUEST_GAP_REPORT_TIP} (PR #60). "

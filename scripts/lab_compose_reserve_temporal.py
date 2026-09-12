@@ -26,7 +26,8 @@ runtime.iec_parity_pack skeleton|validate, or main); docs tip
 63a168d (PR #122 WSL assist-smoke stamp lineage); gap-report
 tip 84cb202 (PR #124 gap-report); gap-report docs tip
 aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
-(PR #128 iec_parity_pack merge, or main); guest emit
+(PR #128 iec_parity_pack merge, or main); merge docs tip
+6ecb645 (PR #130 stamp link, or main); guest emit
 tip b859466 (#52); guest gap-report tip eb48605 (#60).
 Wall feature tip remains 9b6646e8. Guest
 fragment can feed optional tips / measured durable into
