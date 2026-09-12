@@ -3,7 +3,10 @@
 
 Starts ``python3 -m runtime.serve --binding bindings/local-reserve-temporal.example.yaml``
 (ctl **19215**), starts this guest with ``PANORAMIX_CTL_HTTP`` +
-``PLATFORM_LISTEN_HTTP``, POSTs ``{"demo":"reserve","catalog":"recorded"}``,
+``PLATFORM_LISTEN_HTTP``, POSTs ``{"demo":"reserve","catalog":"recorded"}``
+by default (CI / ``--dry-run`` unchanged). Opt-in ``--catalog
+live|parity`` (alias ``parity-scale``) / ``LAB_COMPOSE_CATALOG``
+selects that catalog. Parity is still not IFRS17 / not ADSL.
 prints ``local.backed=runtime`` / durable progress+events / ``pause_resume``,
 then cancel/fail → one-click ``POST /v0/jobs/{id}/re-admit`` → new job id
 when the durable hook is active. Fail-closed without hook or payload
@@ -61,7 +64,9 @@ Not a forecast. Not IFRS17.
 Not iec SPA. Handoff docs panel is operator clarity, not a
 second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. north_star_done false.
-Cloud stays locked.
+Cloud stays locked. Opt-in catalog does not stamp
+north_star_done, does not unlock cloud, does not invent walls,
+and does not flip comparison flags.
 """
 
 from __future__ import annotations
@@ -83,8 +88,10 @@ if str(GUEST_ROOT) not in sys.path:
     sys.path.insert(0, str(GUEST_ROOT))
 
 from sos.lab_compose import (  # noqa: E402
+    DEFAULT_COMPOSE_CATALOG,
     DEFAULT_CTL_PORT,
     DEFAULT_GUEST_PORT,
+    ENV_COMPOSE_CATALOG,
     LIVE_JOB_STATUSES,
     build_compose_plan,
     classify_lab_evidence,
@@ -96,6 +103,7 @@ from sos.lab_compose import (  # noqa: E402
     plan_json,
     port_from_origin,
     readmit_smokes_honest,
+    resolve_compose_catalog,
     runtime_root_usable,
     wait_loopback_port,
 )
@@ -192,7 +200,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=20.0,
         help="How long to wait for ports / job evidence",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--catalog",
+        default=os.environ.get(ENV_COMPOSE_CATALOG) or DEFAULT_COMPOSE_CATALOG,
+        help=(
+            "Reserve catalog recorded|live|parity (alias parity-scale). "
+            "Default recorded so CI / --dry-run stay unchanged. "
+            f"Or {ENV_COMPOSE_CATALOG}."
+        ),
+    )
+    args = parser.parse_args(argv)
+    try:
+        args.catalog = resolve_compose_catalog(args.catalog)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def dry_run(args: argparse.Namespace) -> int:
@@ -203,6 +225,7 @@ def dry_run(args: argparse.Namespace) -> int:
         guest_port=args.guest_port,
         binding=args.binding or None,
         bearer=args.bearer or None,
+        catalog=args.catalog,
     )
     blob = json.loads(plan_json(plan))
     smokes = dry_run_readmit_smokes()
@@ -233,6 +256,7 @@ def live(args: argparse.Namespace) -> int:
         guest_port=args.guest_port,
         binding=args.binding or None,
         bearer=args.bearer or None,
+        catalog=args.catalog,
     )
     ctl_port = port_from_origin(plan.ctl_http)
     guest_port = int(plan.guest_listen)
@@ -298,7 +322,8 @@ def live(args: argparse.Namespace) -> int:
         )
         create_code, job = _http("POST", paths["jobs"], plan.reserve_body)
         if create_code not in {200, 201} or not job.get("id"):
-            sys.stderr.write(f"POST recorded reserve failed: {create_code} {job}\n")
+            catalog = plan.reserve_body.get("catalog", DEFAULT_COMPOSE_CATALOG)
+            sys.stderr.write(f"POST reserve catalog={catalog} failed: {create_code} {job}\n")
             return 1
         job_id = str(job["id"])
         jp = job_paths(plan, job_id)

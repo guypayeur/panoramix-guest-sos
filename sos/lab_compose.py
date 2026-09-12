@@ -63,6 +63,12 @@ Done; ``north_star_done`` false; comparable false; does not
 unlock cloud. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done or #70 UX Done. Cloud stays locked.
+Default reserve POST is catalog recorded (CI / --dry-run
+unchanged). Opt-in ``--catalog live|parity`` (alias
+parity-scale) / ``LAB_COMPOSE_CATALOG`` selects that catalog.
+Parity is still not IFRS17 / not ADSL. Opt-in does not stamp
+north_star_done, does not unlock cloud, does not invent walls,
+and does not flip comparison flags.
 """
 
 from __future__ import annotations
@@ -73,6 +79,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
+from sos.handoff_vocab import (
+    RESERVE_CATALOG_LIVE,
+    RESERVE_CATALOG_PARITY,
+    RESERVE_CATALOG_RECORDED,
+)
 from sos.lab_ctl import APPLY_REL
 from sos.lab_ctl_http import ENV_CTL_BEARER, ENV_CTL_HTTP, normalize_ctl_http_base
 from sos.stage_elapsed import (
@@ -133,6 +144,16 @@ GUEST_APPLY_METRICS_TIP = "7c09f32"
 GUEST_APPLY_NOTES_TIP = "e5562c3"
 ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
 ENV_GUEST_TIP = "PANORAMIX_GUEST_TIP"
+ENV_COMPOSE_CATALOG = "LAB_COMPOSE_CATALOG"
+DEFAULT_COMPOSE_CATALOG = RESERVE_CATALOG_RECORDED
+# Lab-compose POST body only. recorded|live|parity; alias parity-scale.
+# Do not accept handoff_vocab extras (ci/small/lab/heavy).
+COMPOSE_CATALOG_ALIASES = {
+    RESERVE_CATALOG_RECORDED: RESERVE_CATALOG_RECORDED,
+    RESERVE_CATALOG_LIVE: RESERVE_CATALOG_LIVE,
+    RESERVE_CATALOG_PARITY: RESERVE_CATALOG_PARITY,
+    "parity-scale": RESERVE_CATALOG_PARITY,
+}
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
 _SHA_CHARS = frozenset("0123456789abcdefABCDEF")
 
@@ -182,6 +203,12 @@ HONESTY_LINES = (
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
     "north_star_done false",
+    "lab-compose catalog default recorded (CI / --dry-run unchanged)",
+    "opt-in catalog live|parity (alias parity-scale) via --catalog / LAB_COMPOSE_CATALOG",
+    "opt-in catalog is not IFRS17 / not ADSL",
+    "opt-in catalog does not stamp north_star_done",
+    "opt-in catalog does not unlock #61 / #29",
+    "opt-in catalog does not invent walls or flip comparison flags",
 )
 
 READMIT_JOURNEY = ("admit", "cancel_or_fail", "re-admit", "new_job_id")
@@ -269,8 +296,26 @@ def guest_base_url(port: int = DEFAULT_GUEST_PORT) -> str:
     return f"http://127.0.0.1:{int(guest_listen_value(port))}"
 
 
+def resolve_compose_catalog(catalog: str | None = None) -> str:
+    """recorded|live|parity. Alias parity-scale → parity. Default recorded."""
+    raw = "" if catalog is None else str(catalog).strip()
+    if not raw:
+        return DEFAULT_COMPOSE_CATALOG
+    resolved = COMPOSE_CATALOG_ALIASES.get(raw.lower())
+    if resolved is None:
+        raise ValueError(
+            "catalog must be recorded|live|parity (alias parity-scale)"
+        )
+    return resolved
+
+
+def reserve_body_for_catalog(catalog: str | None = None) -> dict[str, Any]:
+    """POST body for the selected catalog. Default recorded."""
+    return {"demo": "reserve", "catalog": resolve_compose_catalog(catalog)}
+
+
 def recorded_reserve_body() -> dict[str, Any]:
-    return dict(RECORDED_RESERVE_BODY)
+    return reserve_body_for_catalog(DEFAULT_COMPOSE_CATALOG)
 
 
 def elapsed_plan() -> dict[str, Any]:
@@ -1258,6 +1303,7 @@ def build_compose_plan(
     guest_port: int = DEFAULT_GUEST_PORT,
     binding: str | None = None,
     bearer: str | None = None,
+    catalog: str | None = None,
 ) -> ComposePlan:
     """Describe the one-shot lab. Does not spawn processes."""
     guest = Path(guest_root).expanduser().resolve()
@@ -1279,7 +1325,7 @@ def build_compose_plan(
         ctl_http=ctl,
         guest_listen=listen,
         guest_base=guest_base_url(guest_port),
-        reserve_body=recorded_reserve_body(),
+        reserve_body=reserve_body_for_catalog(catalog),
         honesty=HONESTY_LINES,
         runtime_serve_pin=RUNTIME_SERVE_PIN,
     )
