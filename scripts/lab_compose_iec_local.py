@@ -5,7 +5,8 @@ Starts ``python3 -m runtime.serve --binding bindings/local-iec.example.yaml``
 (ctl **19216**), starts this guest with ``PANORAMIX_CTL_HTTP`` +
 ``PANORAMIX_CTL_KIND=iec-local`` + ``PLATFORM_LISTEN_HTTP``, POSTs
 ``{"demo":"reserve","catalog":"reserve_ifrs17"}``, and shows
-``local.backed=runtime`` plus durable phase/fraction progress.
+``local.backed=runtime`` plus durable progress (phase/fraction when
+the hook supplies them; omit Platform unknown/0).
 
 Recorded fixture needs no iec checkout. Opt-in ``--live`` passes
 ``live=1`` so ctl wraps the operator iec Platform API
@@ -302,13 +303,17 @@ def live(args: argparse.Namespace) -> int:
             "evidence": evidence,
             "job_local": job.get("local"),
             "progress": {
-                "source": progress.get("source"),
-                "phase": progress.get("phase"),
-                "fraction": progress.get("fraction"),
-                "pct": progress.get("pct"),
-                "same_job": progress.get("same_job"),
-                "ifrs17_guest": progress.get("ifrs17_guest"),
-                "walls": progress.get("walls"),
+                key: progress[key]
+                for key in (
+                    "source",
+                    "phase",
+                    "fraction",
+                    "pct",
+                    "same_job",
+                    "ifrs17_guest",
+                    "walls",
+                )
+                if key in progress and progress[key] is not None
             },
             "ui": paths.get("ui"),
             "north_star_done": False,
@@ -325,8 +330,8 @@ def live(args: argparse.Namespace) -> int:
             return 1
         print(
             "OK lab compose iec-local: local.backed=runtime, durable "
-            "phase/fraction. Guest does not run IFRS17 math. "
-            "north_star_done false.",
+            "progress (phase/fraction when supplied; omit unknown/0). "
+            "Guest does not run IFRS17 math. north_star_done false.",
             flush=True,
         )
         return 0

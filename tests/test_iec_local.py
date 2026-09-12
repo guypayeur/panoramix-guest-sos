@@ -153,6 +153,130 @@ class SameJobIdentityTests(unittest.TestCase):
         self.assertNotIn("timeline", progress)
         self.assertNotIn("walls", progress)
 
+    def test_progress_omits_platform_unknown_zero_defaults(self) -> None:
+        class ZeroedHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {
+                    "same_job": True,
+                    "phase": "unknown",
+                    "fraction": 0.0,
+                    "pct": 0,
+                    "progress": {"invented": False},
+                    "walls": {
+                        "api_e2e_ms": 1800,
+                        "wall_elapsed_ms": 1800,
+                        "invented": False,
+                    },
+                }
+
+        store = JobStore(runtime_hook=ZeroedHook(), step_seconds=0.01)
+        job = store.submit(same_job_body())
+        progress = store.progress(job.id)
+        self.assertEqual(progress["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertIs(progress["same_job"], True)
+        self.assertNotIn("phase", progress)
+        self.assertNotIn("fraction", progress)
+        self.assertNotIn("pct", progress)
+        self.assertNotEqual(progress.get("phase"), "unknown")
+        self.assertNotIn("timeline", progress)
+        self.assertEqual(progress["walls"]["api_e2e_ms"], 1800)
+        self.assertIn("unknown/0", progress["note"])
+
+    def test_progress_omits_when_hook_leaves_phase_fraction_out(self) -> None:
+        class WallsOnlyHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {
+                    "same_job": True,
+                    "progress": {"invented": False},
+                    "walls": {"api_e2e_ms": 900, "invented": False},
+                }
+
+        class EmptyHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {"invented": False}
+
+        store = JobStore(runtime_hook=WallsOnlyHook(), step_seconds=0.01)
+        job = store.submit(same_job_body())
+        progress = store.progress(job.id)
+        self.assertEqual(progress["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertNotIn("phase", progress)
+        self.assertNotIn("fraction", progress)
+        self.assertNotIn("pct", progress)
+        self.assertNotIn("timeline", progress)
+        self.assertEqual(progress["walls"]["api_e2e_ms"], 900)
+
+        empty = JobStore(runtime_hook=EmptyHook(), step_seconds=0.01)
+        omitted = empty.progress(empty.submit(same_job_body()).id)
+        self.assertEqual(omitted["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertNotIn("phase", omitted)
+        self.assertNotIn("fraction", omitted)
+        self.assertNotIn("timeline", omitted)
+
+    def test_progress_surfaces_honest_hook_fields(self) -> None:
+        class RichHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {
+                    "same_job": True,
+                    "progress": {
+                        "phase": "compile_dag",
+                        "pct": 0.12,
+                        "updated_at": "2026-04-14T11:02:17Z",
+                    },
+                    "chunk_idx": 2,
+                    "n_chunks": 4,
+                }
+
+        store = JobStore(runtime_hook=RichHook(), step_seconds=0.01)
+        job = store.submit(same_job_body())
+        progress = store.progress(job.id)
+        self.assertEqual(progress["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertEqual(progress["phase"], "compile_dag")
+        self.assertAlmostEqual(progress["fraction"], 0.12)
+        self.assertEqual(progress["pct"], 0.12)
+        self.assertEqual(progress["updated_at"], "2026-04-14T11:02:17Z")
+        self.assertEqual(progress["chunk_idx"], 2)
+        self.assertEqual(progress["n_chunks"], 4)
+        self.assertNotIn("timeline", progress)
+        self.assertNotIn("eta_elapsed_s", progress)
+        self.assertNotIn("heartbeat", progress)
+
+    def test_progress_maps_event_and_keeps_honest_zero_fraction(self) -> None:
+        class InitHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {"phase": "init", "pct": 0.0, "fraction": 0.0}
+
+        store = JobStore(runtime_hook=InitHook(), step_seconds=0.01)
+        job = store.submit(same_job_body())
+        progress = store.progress(job.id)
+        self.assertEqual(progress["phase"], "init")
+        self.assertEqual(progress["fraction"], 0.0)
+        self.assertEqual(progress["pct"], 0.0)
+
+    def test_http_progress_omits_unknown_zero(self) -> None:
+        class ZeroedHook(IecLocalComposeHook):
+            def progress(self, job_id, runtime_ref):
+                del job_id, runtime_ref
+                return {"phase": "unknown", "fraction": 0.0, "pct": 0}
+
+        app = SosApp(JobStore(runtime_hook=ZeroedHook(), step_seconds=0.01))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "reserve_ifrs17"}).encode(),
+        )
+        self.assertEqual(created.status, 201)
+        job_id = _json(created)["id"]
+        body = _json(app.handle("GET", f"/v0/jobs/{job_id}/progress"))
+        self.assertEqual(body["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertNotIn("phase", body)
+        self.assertNotIn("fraction", body)
+        self.assertNotIn("pct", body)
+
     def test_progress_copies_honest_walls_only(self) -> None:
         class WallHook(IecLocalComposeHook):
             def progress(self, job_id, runtime_ref):
@@ -356,9 +480,34 @@ class ComposePlanTests(unittest.TestCase):
             {"source": "durable", "phase": "admitted", "fraction": 0.0},
         )
         self.assertTrue(evidence["ok"])
+        self.assertEqual(evidence["phase"], "admitted")
+        self.assertEqual(evidence["fraction"], 0.0)
         self.assertIs(evidence["events_required"], False)
         self.assertIs(evidence["pause_resume_required"], False)
         self.assertIs(evidence["north_star_done"], False)
+
+    def test_classify_omits_unknown_phase_and_missing_fraction(self) -> None:
+        evidence = classify_iec_evidence(
+            {
+                "payload_digest": SAME_JOB_PAYLOAD_DIGEST,
+                "local": {"backed": "runtime", "same_job": True},
+            },
+            {"source": "durable"},
+        )
+        self.assertTrue(evidence["ok"])
+        self.assertNotIn("phase", evidence)
+        self.assertNotIn("fraction", evidence)
+
+        fake = classify_iec_evidence(
+            {
+                "payload_digest": SAME_JOB_PAYLOAD_DIGEST,
+                "local": {"backed": "runtime", "same_job": True},
+            },
+            {"source": "durable", "phase": "unknown", "fraction": 0.0},
+        )
+        self.assertTrue(fake["ok"])
+        self.assertNotIn("phase", fake)
+        self.assertNotIn("fraction", fake)
 
     def test_dry_run_smokes_and_script(self) -> None:
         smokes = dry_run_iec_smokes()
@@ -393,6 +542,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(iec["ctl_port"], DEFAULT_IEC_CTL_PORT)
         self.assertIs(iec["ifrs17_guest"], False)
         self.assertIs(iec["north_star_done"], False)
+        self.assertIn("Phase/fraction omit when", iec["note"])
         html = app.handle("GET", "/").body.decode("utf-8")
         self.assertIn('value="reserve_ifrs17"', html)
         self.assertIn("iec-local same-job", html)
@@ -400,6 +550,9 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIn("does not run ifrs17", html.lower())
         self.assertIn("docs/lab-compose-iec-local.md", html)
         self.assertIn("isSameJob", html)
+        self.assertIn("honestPhase", html)
+        self.assertIn("honestNumber", html)
+        self.assertIn("omit unknown/0", html)
         self.assertIn("19216", html)
 
 

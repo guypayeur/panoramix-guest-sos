@@ -8,15 +8,17 @@ unit-testable without a live iec checkout.
 
 POST body is ``{"demo":"reserve","catalog":"reserve_ifrs17"}``
 (alias ``same-job``). Evidence is ``local.backed=runtime`` plus
-durable progress (phase/fraction). Does **not** require events or
-pause_resume (iec-local has no events verb; pause is
-pause-before-start only).
+durable progress (phase/fraction when the hook supplies them).
+Does **not** require events or pause_resume (iec-local has no
+events verb; pause is pause-before-start only).
 
 Honesty: guest does not run IFRS17 math. Runtime binding wraps the
 operator iec checkout (``POST /v1/jobs``). Recorded fixture needs no
 checkout. Opt-in ``--live`` / ``PANORAMIX_RESERVE_TEMPORAL_LIVE``
-passes ``live=1`` so ctl wraps the operator Platform API. Walls
-(``api_e2e_ms``) omit when missing — never invent. Pin 0.5.
+passes ``live=1`` so ctl wraps the operator Platform API. Phase/
+fraction omit Platform unknown/0 (runtime #149 / #150) — never
+invent. Walls (``api_e2e_ms``) omit when missing — never invent.
+Pin 0.5.
 WorkHandoff triple only. Does **not** grow pack_fill. Does **not**
 close runtime #70 / #78. Does **not** unlock #61 / #29. Does **not**
 stamp ``north_star_done``. Cloud stays locked.
@@ -79,6 +81,7 @@ HONESTY_LINES = (
     "runtime binding wraps operator iec checkout (POST /v1/jobs)",
     "not invented walls (api_e2e_ms omit when missing)",
     "not invented path-slices",
+    "phase/fraction omit Platform unknown/0 (runtime #149 / #150)",
     "iec-local has no events verb",
     "pause is pause-before-start only (iec single-activity limit)",
     "recorded fixture needs no iec checkout",
@@ -137,7 +140,8 @@ class IecComposePlan:
             "script": LAB_COMPOSE_IEC_SCRIPT,
             "evidence": (
                 "local.backed=runtime + durable progress "
-                "(phase/fraction). events/pause_resume not required."
+                "(phase/fraction when the hook supplies them; omit "
+                "unknown/0). events/pause_resume not required."
             ),
             "guest_to_mesh_ctl": False,
             "north_star_done": self.north_star_done,
@@ -242,8 +246,12 @@ def classify_iec_evidence(
     walls = None
     if isinstance(progress, Mapping):
         progress_source = progress.get("source")
-        phase = progress.get("phase")
-        fraction = progress.get("fraction")
+        raw_phase = progress.get("phase")
+        if raw_phase not in (None, "", "unknown"):
+            phase = raw_phase
+        raw_frac = progress.get("fraction")
+        if raw_frac is not None and not (phase is None and raw_frac == 0.0):
+            fraction = raw_frac
         raw_walls = progress.get("walls")
         if isinstance(raw_walls, dict) and raw_walls.get("invented") is not True:
             walls = {
@@ -256,8 +264,6 @@ def classify_iec_evidence(
         "ok": ok,
         "backed": backed,
         "progress_source": progress_source,
-        "phase": phase,
-        "fraction": fraction,
         "same_job": local.get("same_job") is True
         or local.get("catalog") == RESERVE_CATALOG_SAME_JOB
         or job.get("payload_digest") == SAME_JOB_PAYLOAD_DIGEST,
@@ -268,11 +274,16 @@ def classify_iec_evidence(
         "guest_to_mesh_ctl": False,
         "note": (
             "local.backed=runtime + durable progress when the HTTP "
-            "adapter admitted. Events/pause_resume not required. "
+            "adapter admitted. Phase/fraction omit when missing "
+            "(Platform unknown/0). Events/pause_resume not required. "
             "Stub stays fail-closed (same_job_stub). Guest does not "
             "run IFRS17 math."
         ),
     }
+    if phase is not None:
+        payload["phase"] = phase
+    if fraction is not None:
+        payload["fraction"] = fraction
     if walls:
         payload["walls"] = walls
     return payload
