@@ -27,6 +27,7 @@ from sos.lab_compose import (
     looks_like_git_tip,
     pack_fill_fragment,
     pack_fill_plan,
+    skeleton_handoff_plan,
     wall_plan,
     RECORDED_RESERVE_BODY,
     RUNTIME_DOCS_PIN,
@@ -86,9 +87,10 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_ELAPSED_PIN, "9ba95bbb")
         self.assertEqual(RUNTIME_DOCS_PIN, "5dc191cb")
         self.assertEqual(RUNTIME_WALL_PIN, "9b6646e8")
-        self.assertEqual(RUNTIME_PACK_TIP, "411aa68bd1dd9c8a11d4ec98b3570acb5b90b4d9")
-        self.assertTrue(RUNTIME_PACK_TIP.startswith("411aa68"))
-        self.assertEqual(GUEST_PACK_TIP, "4e2251c7d8374dbec408e0febb0a33f4c00f33c2")
+        self.assertEqual(RUNTIME_PACK_TIP, "b81130f2187109eabc2342df6345ca877e98023f")
+        self.assertTrue(RUNTIME_PACK_TIP.startswith("b81130f"))
+        self.assertEqual(GUEST_PACK_TIP, "b859466dcd079eb063b615728b258a686f79749a")
+        self.assertTrue(GUEST_PACK_TIP.startswith("b859466"))
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
 
@@ -190,6 +192,12 @@ class ComposePlanTests(unittest.TestCase):
             "pack-fill durable wall/stage elapsed only when measured from hooked run (omit when missing; never invent)",
             plan.honesty,
         )
+        self.assertIn(
+            "pack-fill emit fragment can feed runtime.iec_parity_pack skeleton via --from-json / flags (measured durable only; omit when missing)",
+            plan.honesty,
+        )
+        self.assertIn("never invent metrics.wall_time_sec", plan.honesty)
+        self.assertIn("assist ≠ fill; assist ≠ Done", plan.honesty)
         fill = parsed["pack_fill"]
         self.assertIs(fill["omit_when_missing"], True)
         self.assertIs(fill["invent"], False)
@@ -201,9 +209,20 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(fill["north_star_done"], False)
         self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
         self.assertEqual(fill["or"], "main")
-        self.assertEqual(fill["runtime_pr"], 118)
+        self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(fill["schema_pr"], 118)
+        self.assertIs(fill["invent_wall_time_sec"], False)
+        self.assertIs(fill["assist_ne_fill"], True)
         self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
         self.assertEqual(fill["assist"], "runtime #78 D fill checklist")
+        handoff = fill["skeleton_handoff"]
+        self.assertEqual(handoff["cmd"], "python3 -m runtime.iec_parity_pack skeleton")
+        self.assertEqual(handoff["runtime_tip"], RUNTIME_PACK_TIP)
+        self.assertEqual(handoff["guest_emit_tip"], GUEST_PACK_TIP)
+        self.assertIs(handoff["from_json"], True)
+        self.assertIs(handoff["invent_wall_time_sec"], False)
+        self.assertIs(handoff["north_star_done"], False)
+        self.assertEqual(skeleton_handoff_plan()["note"], handoff["note"])
         fragment = fill["fragment"]
         self.assertIn("tips", fragment)
         self.assertEqual(
@@ -510,7 +529,14 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(fill["north_star_done"], False)
         self.assertEqual(fill["runtime_tip"], RUNTIME_PACK_TIP)
         self.assertEqual(fill["wall_feature_tip"], "9b6646e8")
-        self.assertEqual(fill["runtime_pr"], 118)
+        self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(fill["schema_pr"], 118)
+        self.assertIs(fill["invent_wall_time_sec"], False)
+        self.assertEqual(
+            fill["skeleton_handoff"]["cmd"],
+            "python3 -m runtime.iec_parity_pack skeleton",
+        )
+        self.assertIs(fill["skeleton_handoff"]["invent_wall_time_sec"], False)
         self.assertNotIn("durable", fill["fragment"])
         self.assertTrue(
             looks_like_git_tip(fill["fragment"]["tips"]["panoramix_runtime_tip"])
@@ -542,6 +568,7 @@ class PackFillTests(unittest.TestCase):
         self.assertIsNone(looks_like_git_tip("short"))
         self.assertIsNone(looks_like_git_tip("not-a-sha!!!!"))
         self.assertEqual(looks_like_git_tip("411aa68"), "411aa68")
+        self.assertEqual(looks_like_git_tip("b81130f"), "b81130f")
         self.assertEqual(git_head_sha(ROOT), looks_like_git_tip(git_head_sha(ROOT)))
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -606,6 +633,13 @@ class PackFillTests(unittest.TestCase):
         self.assertIs(fill["writes_live_pack"], False)
         self.assertIs(fill["north_star_done"], False)
         self.assertIs(fill["ux_done"], False)
+        self.assertIs(fill["invent_wall_time_sec"], False)
+        self.assertIs(fill["assist_ne_fill"], True)
+        self.assertEqual(fill["runtime_pr"], 120)
+        self.assertEqual(
+            fill["skeleton_handoff"]["cmd"],
+            "python3 -m runtime.iec_parity_pack skeleton",
+        )
         self.assertEqual(fill["tip_sources"]["panoramix_runtime_tip"], "documented")
         self.assertEqual(fill["tip_sources"]["guest_tip"], "checkout")
         fragment = fill["fragment"]
@@ -726,6 +760,31 @@ class PackFillTests(unittest.TestCase):
             stages_only["durable"]["stage_elapsed_ms"]["panoramix"],
             [80],
         )
+        allowed = set(hooked) | set(stages_only)
+        self.assertTrue(allowed.issubset({"tips", "durable"}))
+        self.assertNotIn("metrics", hooked)
+        self.assertNotIn("wall_time_sec", json.dumps(hooked))
+        self.assertNotIn("north_star_done", json.dumps(hooked))
+
+    def test_skeleton_handoff_refuses_invented_walls(self) -> None:
+        handoff = skeleton_handoff_plan()
+        self.assertEqual(handoff["cmd"], "python3 -m runtime.iec_parity_pack skeleton")
+        self.assertEqual(handoff["validate_cmd"], "python3 -m runtime.iec_parity_pack validate")
+        self.assertTrue(handoff["runtime_tip"].startswith("b81130f"))
+        self.assertEqual(handoff["runtime_pr"], 120)
+        self.assertTrue(handoff["guest_emit_tip"].startswith("b859466"))
+        self.assertIn("--from-json", handoff["flags"])
+        self.assertIs(handoff["durable_only_when_measured"], True)
+        self.assertIs(handoff["omit_when_missing"], True)
+        self.assertIs(handoff["invent"], False)
+        self.assertIs(handoff["invent_wall_time_sec"], False)
+        self.assertIs(handoff["writes_live_pack"], False)
+        self.assertIs(handoff["assist_ne_fill"], True)
+        self.assertIs(handoff["north_star_done"], False)
+        self.assertIn("metrics.wall_time_sec", handoff["note"])
+        self.assertIn("assist ≠ fill", handoff["note"])
+        self.assertNotIn("Fixes #70", handoff["note"])
+        self.assertNotIn("Fixes #78", handoff["note"])
 
 
 class HonestyTests(unittest.TestCase):
@@ -734,7 +793,11 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("Does not close runtime", helper)
         self.assertIn("#70", helper)
         self.assertIn("#78", helper)
-        self.assertIn("411aa68", helper)
+        self.assertIn("b81130f", helper)
+        self.assertIn("b859466", helper)
+        self.assertIn("iec_parity_pack", helper)
+        self.assertIn("skeleton", helper)
+        self.assertIn("metrics.wall_time_sec", helper)
         self.assertIn("pack-fill", helper)
         self.assertIn("does not write the full live pack", helper.lower())
         self.assertIn("north_star_done", helper)
@@ -784,7 +847,11 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("5dc191cb", text, name)
             self.assertIn("9b6646e8", text, name)
             self.assertIn("6511cec7", text, name)
-            self.assertIn("411aa68", text, name)
+            self.assertIn("b81130f", text, name)
+            self.assertIn("b859466", text, name)
+            self.assertIn("iec_parity_pack", text, name)
+            self.assertIn("skeleton", text, name)
+            self.assertIn("metrics.wall_time_sec", text, name)
             self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("compare prefers", text.lower(), name)
             self.assertIn("handoff docs", text.lower(), name)
@@ -802,7 +869,12 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("wall_elapsed", lab)
         self.assertIn("omit_when_missing", lab)
         self.assertIn("pack_fill", lab)
-        self.assertIn("411aa68", lab)
+        self.assertIn("b81130f", lab)
+        self.assertIn("b859466", lab)
+        self.assertIn("runtime.iec_parity_pack skeleton", lab)
+        self.assertIn("--from-json", lab)
+        self.assertIn("metrics.wall_time_sec", lab)
+        self.assertIn("assist ≠ fill", lab)
         self.assertIn("does **not** write the full live pack", lab)
         self.assertIn("#78 D", lab)
         self.assertNotIn("may not yet expose", lab.lower())
@@ -827,7 +899,10 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("- [x] One-shot lab compose", ux)
         self.assertIn("re-admit smoke", ux)
         self.assertIn("- [x] Thinner lab-compose pack-fill fragment", ux)
-        self.assertIn("411aa68", ux)
+        self.assertIn("b81130f", ux)
+        self.assertIn("b859466", ux)
+        self.assertIn("iec_parity_pack skeleton", ux)
+        self.assertIn("metrics.wall_time_sec", ux)
         self.assertIn("#78 D", ux)
         self.assertIn("does not write the live pack", ux)
         self.assertIn("- [ ] `north_star_done: true`", ux)
