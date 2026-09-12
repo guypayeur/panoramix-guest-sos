@@ -26,6 +26,7 @@ live emit a small paste fragment for runtime #78 D pack fill
 from the hooked run). Documented runtime tip ``b81130f``
 (#120 ``runtime.iec_parity_pack skeleton|validate``, or main);
 docs tip ``63a168d`` (PR #122 WSL assist-smoke stamp lineage);
+gap-report tip ``84cb202`` (PR #124 gap-report);
 guest emit tip ``b859466`` (#52). Wall feature tip remains
 ``9b6646e8``. Guest fragment can feed optional tips / measured
 durable into ``python3 -m runtime.iec_parity_pack skeleton``
@@ -64,8 +65,10 @@ RUNTIME_WALL_DOCS_PIN = "6511cec7"
 # Runtime #120 iec_parity_pack skeleton|validate (or main).
 # Schema / #78 D checklist era remains #118.
 # Docs tip #122 links the WSL assist-smoke stamp (assist ≠ fill).
+# Gap-report tip #124 names the WSL gap-report stamp (gap-report ≠ Done).
 RUNTIME_PACK_TIP = "b81130f2187109eabc2342df6345ca877e98023f"
 RUNTIME_PACK_DOCS_PIN = "63a168d"
+RUNTIME_PACK_GAP_REPORT_PIN = "84cb202"
 # Guest main after #52 (emit tips + optional durable). Checkout HEAD wins.
 GUEST_PACK_TIP = "b859466dcd079eb063b615728b258a686f79749a"
 ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
@@ -92,6 +95,7 @@ HONESTY_LINES = (
     "pack-fill durable wall/stage elapsed only when measured from hooked run (omit when missing; never invent)",
     "pack-fill emit fragment can feed runtime.iec_parity_pack skeleton via --from-json / flags (measured durable only; omit when missing)",
     "pack-fill docs tip 63a168d / PR #122 names WSL assist-smoke stamp lineage (assist ≠ fill)",
+    "pack-fill gap-report tip 84cb202 / PR #124 names WSL gap-report stamp lineage (gap-report ≠ Done; assist ≠ fill)",
     "never invent metrics.wall_time_sec",
     "assist ≠ fill; assist ≠ Done",
     "pack-fill assist for runtime #78 D only (does not write the live pack)",
@@ -479,6 +483,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
         "runtime_pr": 120,
         "docs_tip": RUNTIME_PACK_DOCS_PIN,
         "docs_pr": 122,
+        "gap_report_tip": RUNTIME_PACK_GAP_REPORT_PIN,
+        "gap_report_pr": 124,
         "guest_emit_tip": GUEST_PACK_TIP,
         "guest_pr": 52,
         "from_json": True,
@@ -506,6 +512,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
             f"Runtime tip {RUNTIME_PACK_TIP} (PR #120, or main). "
             f"Docs tip {RUNTIME_PACK_DOCS_PIN} (PR #122 WSL assist-smoke "
             "stamp lineage). "
+            f"Gap-report tip {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124 "
+            "gap-report ≠ Done). "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -563,6 +571,8 @@ def pack_fill_plan(
         "runtime_pr": 120,
         "docs_tip": RUNTIME_PACK_DOCS_PIN,
         "docs_pr": 122,
+        "gap_report_tip": RUNTIME_PACK_GAP_REPORT_PIN,
+        "gap_report_pr": 124,
         "schema_pr": 118,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
@@ -588,6 +598,8 @@ def pack_fill_plan(
             f"Runtime tip {RUNTIME_PACK_TIP} (#120 skeleton|validate, or main). "
             f"Docs tip {RUNTIME_PACK_DOCS_PIN} (PR #122 WSL assist-smoke "
             "stamp lineage). "
+            f"Gap-report tip {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124 "
+            "gap-report ≠ Done). "
             "Schema / checklist era remains #118. "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
