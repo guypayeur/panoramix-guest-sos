@@ -11,10 +11,14 @@ from sos.compare import (
     COMPARE_NOTE_THIN,
     COMPARE_NOTE_TYPICAL,
     COMPARE_SOURCE,
+    ELAPSED_SOURCE_DURABLE,
+    ELAPSED_SOURCE_GUEST,
     MATCH_CATALOG,
     MATCH_KIND_CLASS,
     compare_vs_priors,
     elapsed_seconds,
+    guest_clock_seconds,
+    wall_elapsed_seconds,
 )
 from sos.errors import JobNotFound
 from sos.handoff_vocab import RECORDED_PAYLOAD_DIGEST
@@ -46,6 +50,7 @@ def _job(
     kind: str = "job",
     resource_class: str = "cpu",
     digest: str = RECORDED_PAYLOAD_DIGEST,
+    wall_elapsed_ms: int | None = None,
 ) -> Job:
     local: dict | None = {"backed": "stub"}
     if catalog is not None:
@@ -60,6 +65,7 @@ def _job(
         created_at=created,
         updated_at=updated,
         local=local,
+        wall_elapsed_ms=wall_elapsed_ms,
     )
 
 
@@ -83,6 +89,8 @@ class ComparePureTests(unittest.TestCase):
         self.assertNotIn("typical_elapsed_s", body)
         self.assertNotIn("eta_elapsed_s", body)
         self.assertEqual(body["this"]["elapsed_s"], 8.0)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
+        self.assertNotIn("wall_elapsed_ms", body["this"])
         self.assertEqual(body["note"], COMPARE_NOTE_EMPTY)
         self.assertIn("Not a forecast", body["note"])
         self.assertIn("Not IFRS17", body["note"])
@@ -104,7 +112,9 @@ class ComparePureTests(unittest.TestCase):
         self.assertEqual(body["priors_n"], 1)
         self.assertEqual(body["priors"][0]["id"], "p1")
         self.assertEqual(body["priors"][0]["elapsed_s"], 10.0)
+        self.assertEqual(body["priors"][0]["elapsed_source"], ELAPSED_SOURCE_GUEST)
         self.assertEqual(body["this"]["elapsed_s"], 10.0)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
         self.assertEqual(body["typical_n"], 1)
         self.assertNotIn("typical_elapsed_s", body)
         self.assertNotIn("eta_elapsed_s", body)
@@ -243,6 +253,74 @@ class ComparePureTests(unittest.TestCase):
         self.assertNotIn("elapsed_s", body["this"])
         self.assertNotIn("typical_elapsed_s", body)
 
+    def test_prefers_durable_wall_over_guest_clocks(self) -> None:
+        prior = _job(
+            "p1",
+            created="2026-09-11T12:00:00.000000Z",
+            updated="2026-09-11T12:00:10.000000Z",
+            wall_elapsed_ms=2500,
+        )
+        current = _job(
+            "c1",
+            created="2026-09-11T12:00:20.000000Z",
+            updated="2026-09-11T12:00:50.000000Z",
+            status="running",
+            wall_elapsed_ms=4000,
+        )
+        body = compare_vs_priors(current, [prior], now="2026-09-11T12:00:30.000000Z")
+        self.assertEqual(body["this"]["elapsed_s"], 4.0)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_DURABLE)
+        self.assertEqual(body["this"]["wall_elapsed_ms"], 4000)
+        self.assertEqual(body["priors"][0]["elapsed_s"], 2.5)
+        self.assertEqual(body["priors"][0]["elapsed_source"], ELAPSED_SOURCE_DURABLE)
+        self.assertEqual(guest_clock_seconds(prior, now=NOW), 10.0)
+        self.assertNotEqual(body["priors"][0]["elapsed_s"], 10.0)
+        self.assertNotIn("typical_elapsed_s", body)
+
+    def test_omits_invalid_wall_and_falls_back_to_guest_clock(self) -> None:
+        for bad in (-8, True, "nope", float("nan")):
+            job = _job(
+                "bad-wall",
+                created="2026-09-11T12:00:00.000000Z",
+                updated="2026-09-11T12:00:06.000000Z",
+                wall_elapsed_ms=bad,  # type: ignore[arg-type]
+            )
+            self.assertIsNone(wall_elapsed_seconds(job))
+            self.assertEqual(elapsed_seconds(job, now=NOW), 6.0)
+            body = compare_vs_priors(job, [], now=NOW)
+            self.assertEqual(body["this"]["elapsed_s"], 6.0)
+            self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
+            self.assertNotIn("wall_elapsed_ms", body["this"])
+
+    def test_typical_prefers_durable_walls_when_two_priors(self) -> None:
+        p1 = _job(
+            "a",
+            created="2026-09-11T12:00:00.000000Z",
+            updated="2026-09-11T12:00:10.000000Z",
+            wall_elapsed_ms=1000,
+        )
+        p2 = _job(
+            "b",
+            created="2026-09-11T12:00:20.000000Z",
+            updated="2026-09-11T12:00:50.000000Z",
+            wall_elapsed_ms=3000,
+        )
+        current = _job(
+            "c",
+            created="2026-09-11T12:00:55.000000Z",
+            updated="2026-09-11T12:00:56.000000Z",
+            status="running",
+        )
+        body = compare_vs_priors(current, [p2, p1], now="2026-09-11T12:01:00.000000Z")
+        self.assertEqual(body["typical_elapsed_s"], 2.0)
+        self.assertEqual(body["eta_elapsed_s"], 2.0)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
+        self.assertEqual([row["elapsed_s"] for row in body["priors"]], [3.0, 1.0])
+        self.assertEqual(
+            [row["elapsed_source"] for row in body["priors"]],
+            [ELAPSED_SOURCE_DURABLE, ELAPSED_SOURCE_DURABLE],
+        )
+
 
 class CompareStoreTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -318,6 +396,109 @@ class CompareStoreTests(unittest.TestCase):
     def test_store_missing(self) -> None:
         with self.assertRaises(JobNotFound):
             self.store.compare("missing")
+
+
+class _WallHook:
+    def __init__(self, wall_ms: int | None, *, via: str = "progress") -> None:
+        self.wall_ms = wall_ms
+        self.via = via
+        self.last_status_payload: dict | None = None
+
+    def admit(self, handoff, payload_bytes):
+        return {"accepted": True}
+
+    def cancel(self, job_id, runtime_ref) -> bool:
+        return True
+
+    def status(self, job_id, runtime_ref):
+        if self.via == "status" and self.wall_ms is not None:
+            self.last_status_payload = {"wall_elapsed_ms": self.wall_ms}
+        else:
+            self.last_status_payload = {"id": "cw_status"}
+        return "running"
+
+    def progress(self, job_id, runtime_ref):
+        body: dict = {
+            "stage": 2,
+            "stages_total": 4,
+            "stages_completed": 1,
+        }
+        if self.via == "progress" and self.wall_ms is not None:
+            body["wall_elapsed_ms"] = self.wall_ms
+        return body
+
+
+class CompareDurableWallTests(unittest.TestCase):
+    def test_store_compare_prefers_hook_wall_and_omits_when_missing(self) -> None:
+        present = JobStore(step_seconds=0.02, runtime_hook=_WallHook(4500))
+        job = present.submit({"demo": "reserve", "seconds": 8, "catalog": "recorded"})
+        body = present.compare(job.id)
+        self.assertEqual(body["this"]["elapsed_s"], 4.5)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_DURABLE)
+        self.assertEqual(body["this"]["wall_elapsed_ms"], 4500)
+        self.assertEqual(present.get(job.id).wall_elapsed_ms, 4500)
+        present.cancel(job.id)
+
+        omitted = JobStore(step_seconds=0.02, runtime_hook=_WallHook(None))
+        other = omitted.submit({"demo": "reserve", "seconds": 8, "catalog": "recorded"})
+        bare = omitted.compare(other.id)
+        self.assertEqual(bare["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
+        self.assertNotIn("wall_elapsed_ms", bare["this"])
+        self.assertIsNone(omitted.get(other.id).wall_elapsed_ms)
+        omitted.cancel(other.id)
+
+    def test_store_compare_prefers_status_wall(self) -> None:
+        store = JobStore(
+            step_seconds=0.02, runtime_hook=_WallHook(900, via="status")
+        )
+        job = store.submit({"demo": "reserve", "seconds": 8, "catalog": "recorded"})
+        body = store.compare(job.id)
+        self.assertEqual(body["this"]["elapsed_s"], 0.9)
+        self.assertEqual(body["this"]["elapsed_source"], ELAPSED_SOURCE_DURABLE)
+        store.cancel(job.id)
+
+    def test_persisted_wall_used_after_restart(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from sos.persist import job_to_record, write_record
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = _job(
+                "prior-a",
+                created="2026-09-11T12:00:00.000000Z",
+                updated="2026-09-11T12:00:10.000000Z",
+                wall_elapsed_ms=8000,
+            )
+            b = _job(
+                "prior-b",
+                created="2026-09-11T12:00:20.000000Z",
+                updated="2026-09-11T12:00:50.000000Z",
+                wall_elapsed_ms=2000,
+            )
+            self.assertTrue(write_record(root, job_to_record(a)))
+            self.assertTrue(write_record(root, job_to_record(b)))
+            restarted = JobStore(step_seconds=0.01, persist_dir=root)
+            self.assertEqual(restarted.get(a.id).wall_elapsed_ms, 8000)
+            self.assertEqual(restarted.get(b.id).wall_elapsed_ms, 2000)
+            c = restarted.submit(
+                {"demo": "reserve", "seconds": 0, "stages": 2, "catalog": "recorded"}
+            )
+            wait_status(restarted, c.id, {"succeeded"})
+            vs = restarted.compare(c.id)
+            self.assertEqual(vs["priors_n"], 2)
+            walls = {row["id"]: row["elapsed_s"] for row in vs["priors"]}
+            self.assertEqual(walls[a.id], 8.0)
+            self.assertEqual(walls[b.id], 2.0)
+            self.assertTrue(
+                all(
+                    row["elapsed_source"] == ELAPSED_SOURCE_DURABLE
+                    for row in vs["priors"]
+                )
+            )
+            self.assertEqual(vs["typical_elapsed_s"], 5.0)
+            self.assertEqual(vs["this"]["elapsed_source"], ELAPSED_SOURCE_GUEST)
 
 
 if __name__ == "__main__":

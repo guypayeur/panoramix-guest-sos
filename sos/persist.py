@@ -1,8 +1,9 @@
 """Local lab persistence for guest job history.
 
 Stores enough identity for compare and recoverability: catalog / kind /
-class, created/updated, status, digests, payload bytes when known, and
-handoff / runtime_ref pointers. Reloads recent records on start.
+class, created/updated, status, digests, payload bytes when known,
+optional durable ``wall_elapsed_ms`` when seen, and handoff /
+runtime_ref pointers. Reloads recent records on start.
 
 Default dir is ``.sos/jobs``. Override with ``PANORAMIX_SOS_JOBS_DIR``.
 Unset keeps the default. ``off`` / ``0`` / ``disabled`` / ``false`` /
@@ -10,6 +11,7 @@ empty **fails closed** (in-process only; no files; no invented priors).
 Unwritable dirs also fail closed.
 
 Does not invent typical/ETA (those stay computed at compare time).
+Does not invent ``wall_elapsed_ms`` (omit when missing).
 Does not claim SIEM / six-month audit / IFRS17. Not a cross-host DB.
 Does not close #70 / #78. Does not unlock cloud. Pin stays 0.5.
 """
@@ -40,8 +42,9 @@ RESTART_LOST_ERROR = "lost_on_restart"
 HISTORY_PERSIST_NOTE = (
     "Local lab job records for compare / recoverability. "
     "Fail-closed if disabled or unwritable. Reloads recent "
-    "succeeded priors across guest restart. Does not invent "
-    "typical/ETA. Not a SIEM. Not a six-month audit product. "
+    "succeeded priors across guest restart. Optional wall_elapsed_ms "
+    "when a durable hook returned it. Does not invent "
+    "typical/ETA or walls. Not a SIEM. Not a six-month audit product. "
     "Not a cross-host DB. Not #70 Done."
 )
 
@@ -98,6 +101,27 @@ def describe_history_persist(persist_dir: Path | str | None) -> dict[str, Any]:
     }
 
 
+def optional_wall_elapsed_ms(raw: Any) -> int | None:
+    """Persist only a real non-negative wall. Omit invalid. Never invent."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 0 else None
+    if isinstance(raw, float):
+        if raw < 0 or raw != raw:
+            return None
+        return int(round(raw))
+    if isinstance(raw, str) and raw.strip():
+        try:
+            number = float(raw.strip())
+        except ValueError:
+            return None
+        if number < 0 or number != number:
+            return None
+        return int(round(number))
+    return None
+
+
 def job_to_record(job: Any) -> dict[str, Any]:
     """Projection for disk. No typical/ETA. No SIEM claims."""
     payload: dict[str, Any] = {
@@ -110,6 +134,9 @@ def job_to_record(job: Any) -> dict[str, Any]:
         "created_at": getattr(job, "created_at", ""),
         "updated_at": getattr(job, "updated_at", ""),
     }
+    wall_ms = optional_wall_elapsed_ms(getattr(job, "wall_elapsed_ms", None))
+    if wall_ms is not None:
+        payload["wall_elapsed_ms"] = wall_ms
     message = getattr(job, "message", None)
     if message is not None:
         payload["message"] = message
@@ -190,6 +217,10 @@ def record_to_job_kwargs(record: Any) -> dict[str, Any] | None:
         "runtime_ref": dict(runtime_ref) if isinstance(runtime_ref, dict) else None,
         "events": events,
     }
+    if "wall_elapsed_ms" in record:
+        wall_ms = optional_wall_elapsed_ms(record.get("wall_elapsed_ms"))
+        if wall_ms is not None:
+            kwargs["wall_elapsed_ms"] = wall_ms
     return kwargs
 
 

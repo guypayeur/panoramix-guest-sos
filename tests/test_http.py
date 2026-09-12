@@ -200,6 +200,9 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("PANORAMIX_SOS_JOBS_DIR", body["jobs"]["compare_honesty"])
         self.assertIn("Fail-closed", body["jobs"]["compare_honesty"])
         self.assertIn("No guest→ctl HTTP", body["jobs"]["compare_honesty"])
+        self.assertIn("wall_elapsed_ms", body["jobs"]["compare_honesty"])
+        self.assertIn("9b6646e8", body["jobs"]["compare_honesty"])
+        self.assertIn("never invent", body["jobs"]["compare_honesty"])
         persist = body["jobs"]["history_persist"]
         self.assertEqual(persist["env"], "PANORAMIX_SOS_JOBS_DIR")
         self.assertEqual(persist["default"], ".sos/jobs")

@@ -101,6 +101,7 @@ class PersistRecordTests(unittest.TestCase):
         self.assertEqual(record["catalog"] if "catalog" in record else record["local"]["catalog"], "recorded")
         self.assertNotIn("typical_elapsed_s", record)
         self.assertNotIn("eta_elapsed_s", record)
+        self.assertNotIn("wall_elapsed_ms", record)
         self.assertNotIn("siem", json.dumps(record).lower())
         kwargs = record_to_job_kwargs(record)
         assert kwargs is not None
@@ -108,6 +109,40 @@ class PersistRecordTests(unittest.TestCase):
         self.assertEqual(kwargs["payload_bytes"], b'{"workload":"reserve"}')
         self.assertEqual(kwargs["runtime_ref"]["id"], "cw_deadbeefdeadbeef")
         self.assertEqual(kwargs["local"]["catalog"], "recorded")
+        self.assertNotIn("wall_elapsed_ms", kwargs)
+
+    def test_optional_wall_roundtrip_and_omit(self) -> None:
+        from sos.persist import optional_wall_elapsed_ms
+
+        self.assertEqual(optional_wall_elapsed_ms(2500), 2500)
+        self.assertEqual(optional_wall_elapsed_ms(0), 0)
+        self.assertIsNone(optional_wall_elapsed_ms(None))
+        self.assertIsNone(optional_wall_elapsed_ms(-1))
+        self.assertIsNone(optional_wall_elapsed_ms(True))
+        self.assertIsNone(optional_wall_elapsed_ms("nope"))
+
+        job = Job(
+            id="wall-1",
+            kind="job",
+            resource_class="cpu",
+            payload_digest=RECORDED_PAYLOAD_DIGEST,
+            status="succeeded",
+            created_at="2026-09-11T12:00:00.000000Z",
+            updated_at="2026-09-11T12:00:08.000000Z",
+            wall_elapsed_ms=1800,
+        )
+        record = job_to_record(job)
+        self.assertEqual(record["wall_elapsed_ms"], 1800)
+        self.assertNotIn("typical_elapsed_s", record)
+        kwargs = record_to_job_kwargs(record)
+        assert kwargs is not None
+        self.assertEqual(kwargs["wall_elapsed_ms"], 1800)
+
+        skipped = dict(record)
+        skipped["wall_elapsed_ms"] = -4
+        omitted = record_to_job_kwargs(skipped)
+        assert omitted is not None
+        self.assertNotIn("wall_elapsed_ms", omitted)
 
     def test_corrupt_and_empty_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

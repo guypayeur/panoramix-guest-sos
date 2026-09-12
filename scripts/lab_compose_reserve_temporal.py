@@ -17,9 +17,11 @@ Honesty: not guest→mesh ctl. Not SIEM. Not IFRS17. Pin 0.5.
 Optional durable stage elapsed from runtime tip 9ba95bbb / docs tip
 5dc191cb (or main); omit when missing — never invent. Optional
 durable wall_elapsed_ms / started_at from runtime tip 9b6646e8
-(PR #114, or main); omit when missing — never invent. Not a
-forecast. Not IFRS17. Not iec SPA. Handoff docs panel is operator
-clarity, not a second control plane. Does not close runtime
+(PR #114, or main; docs tip 6511cec7 / PR #116 lineage); omit
+when missing — never invent. Compare prefers that wall when
+present. Not a forecast. Not IFRS17. Not iec SPA. Handoff docs
+panel is operator clarity, not a second control plane. Does not
+close runtime
 #70 / #78. Does not unlock #61 / #29. north_star_done false.
 Cloud stays locked.
 """

@@ -16,8 +16,10 @@ Not IFRS17. Pin 0.5. WorkHandoff triple only. Optional durable
 stage elapsed from runtime tip ``9ba95bbb`` / docs tip
 ``5dc191cb`` (PR #112, or main); omit when missing — never invent.
 Optional durable ``wall_elapsed_ms`` / ``started_at`` from runtime
-tip ``9b6646e8`` (PR #114, or main); omit when missing — never
-invent. Not a forecast. Not IFRS17. Not iec SPA. Handoff docs
+tip ``9b6646e8`` (PR #114, or main; docs tip ``6511cec7`` / PR
+#116 for evidence-index lineage); omit when missing — never
+invent. Compare prefers that wall when present. Not a forecast.
+Not IFRS17. Not iec SPA. Handoff docs
 panel is operator clarity, not a second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done. Cloud stays locked.
@@ -42,6 +44,7 @@ RUNTIME_SERVE_PIN = "fb901542"
 RUNTIME_ELAPSED_PIN = "9ba95bbb"
 RUNTIME_DOCS_PIN = "5dc191cb"
 RUNTIME_WALL_PIN = "9b6646e8"
+RUNTIME_WALL_DOCS_PIN = "6511cec7"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
 
 HONESTY_LINES = (
@@ -57,6 +60,7 @@ HONESTY_LINES = (
     "path-slice elapsed omitted when timestamps missing (never invent)",
     "optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)",
     "optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)",
+    "compare prefers durable wall_elapsed_ms when present (runtime tip 9b6646e8 / main; omit when missing)",
     "handoff docs panel is operator clarity (not a second control plane)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
@@ -177,8 +181,10 @@ def wall_plan() -> dict[str, Any]:
     return {
         "when": "durable progress/status wall_elapsed_ms / started_at (or equivalent)",
         "runtime_tip": RUNTIME_WALL_PIN,
+        "docs_tip": RUNTIME_WALL_DOCS_PIN,
         "or": "main",
         "runtime_pr": 114,
+        "docs_pr": 116,
         "omit_when_missing": True,
         "invent": False,
         "forecast": False,
@@ -186,12 +192,15 @@ def wall_plan() -> dict[str, Any]:
         "iec_spa": False,
         "north_star_done": False,
         "note": (
-            "Optional durable job wall on job detail / progress. "
+            "Optional durable job wall on job detail / progress / compare. "
             f"Runtime tip {RUNTIME_WALL_PIN} (or main, PR #114) can "
             "supply durable wall_elapsed_ms / started_at on "
-            "status/progress. Accept when hook JSON includes the field. "
-            "Omit when missing. Never invent. Not a forecast. "
-            "Not IFRS17. Not iec SPA. Not #70 Done."
+            "status/progress. Docs tip "
+            f"{RUNTIME_WALL_DOCS_PIN} (PR #116) is evidence-index lineage. "
+            "Compare prefers this wall when present; persist on the job "
+            "record for priors across restart. Accept when hook JSON "
+            "includes the field. Omit when missing. Never invent. "
+            "Not a forecast. Not IFRS17. Not iec SPA. Not #70 Done."
         ),
     }
 
