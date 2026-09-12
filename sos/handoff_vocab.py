@@ -43,9 +43,12 @@ TERMINAL_NOTE = (
     "stage when known; not a SIEM; not iec /v1/audit/events product"
 )
 RECOVERABILITY_NOTE = (
-    "Cancel/fail does not auto-retry. Re-admit via operator/ctl "
-    "reserve-temporal (handoff + payload). Pause/resume remains "
-    "durable-only (stub 409 stub_only). Not IFRS17."
+    "Cancel/fail does not auto-retry. Re-admit is a new admit "
+    "(POST /v0/jobs/{id}/re-admit when a durable hook is active; "
+    "else operator/ctl reserve-temporal). No resume-from-failed. "
+    "Fail-closed without hook or when payload is missing "
+    "(no silent stub re-admit). Pause/resume remains durable-only "
+    "(stub 409 stub_only). Not SIEM. Not IFRS17."
 )
 
 DEMO_ECHO = "echo"

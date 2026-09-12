@@ -17,6 +17,7 @@ from sos.errors import (
     InvalidKind,
     JobNotFound,
     PayloadUnknown,
+    ReAdmitUnavailable,
     StubOnly,
 )
 from sos.handoff import digest_canonical, digest_for, parse_submit, payload_for, recorded_params
@@ -38,6 +39,7 @@ from sos.handoff_vocab import (
     TERMINAL_NOTE,
     short_digest,
 )
+from sos.runtime_hook import InertRuntimeHandoffHook, durable_hook_active
 from sos.jobs import (
     JobStore,
     EVENTS_SOURCE_DURABLE,
@@ -871,6 +873,111 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(hooked.status, "canceled")
         self.assertEqual(hooked.message, "canceled via runtime hook")
 
+    def test_readmit_hooked_new_admit_and_inert_fail_closed(self) -> None:
+        class RecordingHook:
+            def __init__(self) -> None:
+                self.admits: list[tuple[dict[str, str], bytes | None]] = []
+                self.admit_ok = True
+
+            def admit(self, handoff: dict[str, str], payload_bytes: bytes | None):
+                self.admits.append((handoff, payload_bytes))
+                if not self.admit_ok:
+                    return None
+                return {"accepted": True, "n": len(self.admits)}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return None
+
+        hook = RecordingHook()
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        canceled = store.cancel(job.id)
+        self.assertEqual(canceled.status, STATUS_CANCELED)
+        rec = canceled.to_dict(durable_hook=True)
+        self.assertIs(rec["recoverability"]["one_click"], True)
+        self.assertIs(rec["recoverability"]["new_admit"], True)
+        self.assertIs(rec["recoverability"]["resume_from_failed"], False)
+        self.assertIs(rec["recoverability"]["auto_retry"], False)
+        self.assertIn(job.id, rec["recoverability"]["one_click_path"])
+        self.assertEqual(rec["recoverability"]["note"], RECOVERABILITY_NOTE)
+        self.assertIn("new admit", rec["recoverability"]["note"])
+        self.assertIn("no silent stub", rec["recoverability"]["note"])
+
+        again = store.readmit(job.id)
+        self.assertNotEqual(again.id, job.id)
+        self.assertEqual(again.payload_digest, job.payload_digest)
+        self.assertEqual(again.payload_bytes, job.payload_bytes)
+        self.assertEqual(again.kind, job.kind)
+        self.assertEqual(again.resource_class, job.resource_class)
+        self.assertEqual(again.local["backed"], "runtime")
+        self.assertEqual(again.local["re_admit_from"], job.id)
+        self.assertEqual(again.local["catalog"], "recorded")
+        self.assertNotIn("stage", again.local)
+        self.assertIn("new admit", again.message or "")
+        self.assertIn("not resume-from-failed", again.message or "")
+        self.assertEqual(len(hook.admits), 2)
+        self.assertEqual(hook.admits[1][0]["id"], again.id)
+        self.assertEqual(hook.admits[1][0]["payload_digest"], job.payload_digest)
+        self.assertEqual(hook.admits[1][0]["status"], STATUS_QUEUED)
+        self.assertEqual(hook.admits[1][1], job.payload_bytes)
+        source = store.get(job.id)
+        self.assertEqual(source.status, STATUS_CANCELED)
+        self.assertEqual(source.id, job.id)
+
+        hook.admit_ok = False
+        with self.assertRaises(ReAdmitUnavailable) as ctx:
+            store.readmit(job.id)
+        refused = ctx.exception.to_dict()
+        self.assertEqual(refused["error"], "re_admit_unavailable")
+        self.assertEqual(refused["reason"], "hook_refused")
+        self.assertEqual(ctx.exception.http_status, 409)
+        self.assertIn("no silent stub", refused["detail"])
+        self.assertEqual(len(store.list()), 2)
+
+        inert = JobStore(step_seconds=0.02)
+        stub = inert.submit({"demo": "reserve", "seconds": 8})
+        inert.cancel(stub.id)
+        inert_body = inert.get(stub.id).to_dict()
+        self.assertIs(inert_body["recoverability"]["one_click"], False)
+        self.assertEqual(inert_body["recoverability"]["one_click_reason"], "hook_inert")
+        self.assertIs(durable_hook_active(inert.runtime_hook), False)
+        self.assertIsInstance(inert.runtime_hook, InertRuntimeHandoffHook)
+        with self.assertRaises(ReAdmitUnavailable) as ctx:
+            inert.readmit(stub.id)
+        closed = ctx.exception.to_dict()
+        self.assertEqual(closed["reason"], "hook_inert")
+        self.assertIn("PANORAMIX_CTL_HTTP", closed["detail"])
+        self.assertIn(CTL_ADMIT, closed["note"])
+        self.assertEqual(len(inert.list()), 1)
+
+        opaque = store.submit(
+            {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+        )
+        store.cancel(opaque.id)
+        missing = store.get(opaque.id).to_dict(durable_hook=True)
+        self.assertIs(missing["recoverability"]["payload_known"], False)
+        self.assertIs(missing["recoverability"]["one_click"], False)
+        self.assertEqual(missing["recoverability"]["one_click_reason"], "payload_unknown")
+        with self.assertRaises(ReAdmitUnavailable) as ctx:
+            store.readmit(opaque.id)
+        self.assertEqual(ctx.exception.to_dict()["reason"], "payload_unknown")
+
+        live = store.submit({"demo": "reserve", "seconds": 8})
+        with self.assertRaises(IllegalTransition) as ctx:
+            store.readmit(live.id)
+        self.assertEqual(ctx.exception.to_dict()["action"], "re-admit")
+        store.cancel(live.id)
+
+        echo = inert.submit({"demo": "echo", "message": "x"})
+        wait_status(inert, echo.id, {"succeeded"})
+        with self.assertRaises(IllegalTransition):
+            inert.readmit(echo.id)
+        with self.assertRaises(JobNotFound):
+            inert.readmit("missing")
+
     def test_pause_resume_stub_only_refused(self) -> None:
         job = self.store.submit({"demo": "sleep", "seconds": 8})
         self.assertEqual(job.local["backed"], BACKED_STUB)
@@ -1520,6 +1627,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("ctl-mediated", text, name)
             self.assertIn("stale stub clock", text, name)
             self.assertIn("admit --handoff JSON", text, name)
+            self.assertIn("/re-admit", text, name)
+            self.assertIn("no silent stub", text.lower(), name)
             self.assertIn("not a forecast", text.lower(), name)
             self.assertIn("iec spa historical widget", text.lower(), name)
             self.assertIn("PANORAMIX_SOS_JOBS_DIR", text, name)
@@ -1668,6 +1777,9 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("Thinner recoverability", ux)
         self.assertIn("- [x] Thinner failure / terminal summary", ux)
         self.assertIn("- [x] Thinner recoverability", ux)
+        self.assertIn("POST /v0/jobs/{id}/re-admit", ux)
+        self.assertIn("no silent stub", ux.lower())
+        self.assertIn("one-click", ux.lower())
         self.assertNotIn("- [x] `north_star_done: true`", ux)
         self.assertIn("admit --handoff JSON", ux)
         self.assertIn("reserve-temporal", ux)

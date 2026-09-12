@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from sos.handoff_vocab import (
+    CTL_ADMIT,
     CTL_CANCEL,
     CTL_PAUSE_RESUME,
     LOCAL_DEMOS,
@@ -153,6 +154,29 @@ class IllegalTransition(SosError):
             status=status,
             action=action,
             detail=f"cannot {action} job in status {status}",
+        )
+
+
+class ReAdmitUnavailable(SosError):
+    """One-click re-admit refused. Fail-closed; no silent stub."""
+
+    http_status = 409
+
+    def __init__(self, job_id: str, reason: str, *, detail: str) -> None:
+        super().__init__(
+            "re_admit_unavailable",
+            id=job_id,
+            action="re-admit",
+            reason=reason,
+            detail=detail,
+            note=(
+                "Re-admit is a new admit through the durable hook "
+                "(PANORAMIX_CTL_HTTP preferred or PANORAMIX_RUNTIME_ROOT). "
+                "Not resume-from-failed. Cancel/fail does not auto-retry. "
+                "Fail-closed without hook or when handoff/payload is missing "
+                f"(no silent stub re-admit). Operator/ctl: {CTL_ADMIT}. "
+                "Not SIEM. Not IFRS17."
+            ),
         )
 
 

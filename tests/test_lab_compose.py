@@ -37,6 +37,7 @@ from sos.runtime_hook import (
     HOOK_KIND_INERT,
     InertRuntimeHandoffHook,
     describe_runtime_hook,
+    durable_hook_active,
 )
 
 
@@ -209,6 +210,15 @@ class HookDescribeTests(unittest.TestCase):
         self.assertIs(desc["north_star_done"], False)
         self.assertIs(desc["guest_to_mesh_ctl"], False)
         self.assertIn("No pretend", desc["note"])
+        self.assertIs(durable_hook_active(InertRuntimeHandoffHook()), False)
+
+    def test_injected_hook_is_active_for_readmit(self) -> None:
+        class TinyHook:
+            def admit(self, handoff, payload_bytes):
+                return {"accepted": True}
+
+        self.assertIs(durable_hook_active(TinyHook()), True)
+        self.assertIs(describe_runtime_hook(TinyHook())["durable_path"], False)
 
     def test_http_hook_badge(self) -> None:
         hook = LabReserveTemporalHttpHook(

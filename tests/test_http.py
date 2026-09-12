@@ -213,6 +213,10 @@ class HttpAppTests(unittest.TestCase):
             body["jobs"]["recoverability"],
         )
         self.assertIn("stub_only", body["jobs"]["recoverability"])
+        self.assertIn("POST /v0/jobs/{id}/re-admit", body["jobs"]["recoverability"])
+        self.assertEqual(body["jobs"]["re_admit"], "POST /v0/jobs/{id}/re-admit")
+        self.assertIn("no silent stub", body["jobs"]["recoverability"])
+        self.assertIn("new admit", body["jobs"]["recoverability"])
         blob = json.dumps(body)
         self.assertNotIn("ray://", blob)
         self.assertNotIn("temporal://", blob)
@@ -322,6 +326,12 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("does not auto-retry", html)
             self.assertIn("Export handoff for re-admit", html)
             self.assertIn("Export payload for re-admit", html)
+            self.assertIn("Re-admit as new job", html)
+            self.assertIn("/re-admit", html)
+            self.assertIn("no silent stub re-admit", html)
+            self.assertIn("new admit", html)
+            self.assertIn("Not SIEM", html)
+            self.assertIn("Not IFRS17", html)
             self.assertIn("reserve-temporal admit --handoff JSON", html)
             self.assertIn("not iec /v1/audit/events", html)
             self.assertIn("No resume-from-failed", html)
@@ -1001,6 +1011,117 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(conflict.status, 409)
         self.assertEqual(_json(conflict)["error"], "already_terminal")
         self.assertIn("ctl-mediated", _json(conflict)["note"])
+
+    def test_readmit_hooked_http_and_inert_fail_closed(self) -> None:
+        class RecordingHook:
+            def __init__(self) -> None:
+                self.admits: list[tuple[dict, bytes | None]] = []
+                self.admit_ok = True
+
+            def admit(self, handoff, payload_bytes):
+                self.admits.append((handoff, payload_bytes))
+                if not self.admit_ok:
+                    return None
+                return {"accepted": True}
+
+            def cancel(self, job_id, runtime_ref) -> bool:
+                return True
+
+            def status(self, job_id, runtime_ref):
+                return None
+
+        hook = RecordingHook()
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=hook))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        source_id = _json(created)["id"]
+        canceled = app.handle("POST", f"/v0/jobs/{source_id}/cancel")
+        rec = _json(canceled)["recoverability"]
+        self.assertIs(rec["one_click"], True)
+        self.assertIs(rec["new_admit"], True)
+        self.assertIs(rec["resume_from_failed"], False)
+        self.assertIn("/re-admit", rec["one_click_path"])
+
+        readmit = app.handle("POST", f"/v0/jobs/{source_id}/re-admit")
+        self.assertEqual(readmit.status, 201)
+        body = _json(readmit)
+        self.assertNotEqual(body["id"], source_id)
+        self.assertEqual(body["payload_digest"], _json(created)["payload_digest"])
+        self.assertEqual(body["local"]["backed"], "runtime")
+        self.assertEqual(body["local"]["re_admit_from"], source_id)
+        self.assertEqual((readmit.headers or {}).get("Location"), f"/v0/jobs/{body['id']}")
+        self.assertEqual(len(hook.admits), 2)
+        self.assertEqual(hook.admits[1][0]["id"], body["id"])
+        self.assertEqual(hook.admits[1][1], hook.admits[0][1])
+
+        source = _json(app.handle("GET", f"/v0/jobs/{source_id}"))
+        self.assertEqual(source["status"], "canceled")
+        self.assertEqual(source["id"], source_id)
+
+        self.assertEqual(
+            app.handle("GET", f"/v0/jobs/{source_id}/re-admit").status, 405
+        )
+
+        hook.admit_ok = False
+        refused = app.handle("POST", f"/v0/jobs/{source_id}/re-admit")
+        self.assertEqual(refused.status, 409)
+        self.assertEqual(_json(refused)["error"], "re_admit_unavailable")
+        self.assertEqual(_json(refused)["reason"], "hook_refused")
+        self.assertIn("no silent stub", _json(refused)["detail"])
+
+        inert = self.app
+        stub = inert.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        sid = _json(stub)["id"]
+        inert.handle("POST", f"/v0/jobs/{sid}/cancel")
+        closed = inert.handle("POST", f"/v0/jobs/{sid}/re-admit")
+        self.assertEqual(closed.status, 409)
+        closed_body = _json(closed)
+        self.assertEqual(closed_body["error"], "re_admit_unavailable")
+        self.assertEqual(closed_body["reason"], "hook_inert")
+        self.assertIn("PANORAMIX_CTL_HTTP", closed_body["detail"])
+        self.assertNotIn("resume-from-failed pretend", json.dumps(closed_body).lower())
+        listed = _json(inert.handle("GET", "/v0/jobs"))
+        self.assertEqual(len(listed["jobs"]), 1)
+
+        opaque = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps(
+                {"kind": "job", "class": "cpu", "payload_digest": _digest()}
+            ).encode(),
+        )
+        oid = _json(opaque)["id"]
+        app.handle("POST", f"/v0/jobs/{oid}/cancel")
+        missing = app.handle("POST", f"/v0/jobs/{oid}/re-admit")
+        self.assertEqual(missing.status, 409)
+        self.assertEqual(_json(missing)["reason"], "payload_unknown")
+
+        live = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        lid = _json(live)["id"]
+        bad = app.handle("POST", f"/v0/jobs/{lid}/re-admit")
+        self.assertEqual(bad.status, 409)
+        self.assertEqual(_json(bad)["error"], "illegal_transition")
+        echo = inert.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "echo", "message": "ok"}).encode(),
+        )
+        eid = _json(echo)["id"]
+        wait_http_status(inert, eid, {"succeeded"})
+        done = inert.handle("POST", f"/v0/jobs/{eid}/re-admit")
+        self.assertEqual(done.status, 409)
+        self.assertEqual(_json(done)["error"], "illegal_transition")
 
     def test_progress_durable_http(self) -> None:
         class FakeHook:
