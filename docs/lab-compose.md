@@ -47,6 +47,8 @@ curl -sS -X POST http://127.0.0.1:18280/v0/jobs \
 
 Without `PANORAMIX_CTL_HTTP` the guest stays stub (`local.backed=stub`, pause **409** `stub_only`). That is fail-closed, not a pretend durable path.
 
+When the env is set to a valid loopback origin but `runtime.serve` is down (connection refused / timeout), admit/status/progress fail closed with **`ctl_http_unreachable`** (lab-serve down) — not a hung poll, not pretend durable. Start serve or unset the env. Not #70 Done.
+
 Optional `PANORAMIX_CTL_HTTP_BEARER` when the binding has `ctl.require`.
 
 ## UI

@@ -20,6 +20,11 @@ the binding has ``ctl.require``. Optional
 Calls only ``/reserve-temporal/{admit,status,progress,events,pause,resume,cancel}``.
 Never ``runtime.apply compute-work``. Does not import the runtime package.
 
+When the origin is valid but runtime.serve is down (connection
+refused / timeout), admit/status/progress fail closed with
+``ctl_http_unreachable`` (lab-serve down). Short timeout — not a
+hung poll. HTTP 4xx/5xx stay the existing stub fallback.
+
 Does not close runtime #70. Does not close #78. Does not unlock
 #61 / #29. Does not stamp north_star_done. Cloud stays locked.
 """
@@ -28,11 +33,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from sos.errors import (
+    CTL_HTTP_UNREACHABLE_REASON,
+    CtlHttpUnreachable,
+)
 from sos.lab_ctl import (
     ENV_LIVE,
     _admit_handoff,
@@ -46,7 +56,10 @@ from sos.lab_ctl import (
 ENV_CTL_HTTP = "PANORAMIX_CTL_HTTP"
 ENV_CTL_BEARER = "PANORAMIX_CTL_HTTP_BEARER"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-CTL_HTTP_TIMEOUT_SEC = 30.0
+# Short so operator list/detail polls do not hang when serve is down.
+CTL_HTTP_TIMEOUT_SEC = 1.5
+CTL_HTTP_UNREACHABLE_COOLDOWN_SEC = 2.0
+CTL_HTTP_UNREACHABLE_CODE = 0
 RESERVE_TEMPORAL_PREFIX = "/reserve-temporal"
 GET_VERBS = frozenset({"status", "progress", "events"})
 POST_VERBS = frozenset({"admit", "pause", "resume", "cancel"})
@@ -112,7 +125,7 @@ def urllib_request_ctl(
             raw = b""
         return int(exc.code), raw.decode("utf-8", errors="replace")
     except (OSError, URLError, TimeoutError, ValueError):
-        return 0, ""
+        return CTL_HTTP_UNREACHABLE_CODE, ""
 
 
 class LabReserveTemporalHttpHook:
@@ -137,6 +150,8 @@ class LabReserveTemporalHttpHook:
         self.transport = transport or urllib_request_ctl
         self.bearer = str(bearer).strip() if bearer else None
         self.live = bool(live)
+        self.last_unreachable: CtlHttpUnreachable | None = None
+        self._unreachable_until = 0.0
 
     def _headers(self, *, has_body: bool) -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -181,6 +196,11 @@ class LabReserveTemporalHttpHook:
             if body_obj is not None
             else None
         )
+        if (
+            self.last_unreachable is not None
+            and time.monotonic() < self._unreachable_until
+        ):
+            self._raise_unreachable(action)
         try:
             code, stdout = self.transport(
                 method,
@@ -188,11 +208,31 @@ class LabReserveTemporalHttpHook:
                 self._headers(has_body=raw_body is not None),
                 raw_body,
             )
+        except CtlHttpUnreachable:
+            raise
         except Exception:
             return None
+        if int(code) == CTL_HTTP_UNREACHABLE_CODE:
+            self._raise_unreachable(action)
         if not (200 <= int(code) < 300):
+            self._clear_unreachable()
             return None
+        self._clear_unreachable()
         return _parse_json(stdout)
+
+    def _raise_unreachable(self, action: str) -> None:
+        err = CtlHttpUnreachable(
+            action=action,
+            origin=self.base_url,
+            reason=CTL_HTTP_UNREACHABLE_REASON,
+        )
+        self.last_unreachable = err
+        self._unreachable_until = time.monotonic() + CTL_HTTP_UNREACHABLE_COOLDOWN_SEC
+        raise err
+
+    def _clear_unreachable(self) -> None:
+        self.last_unreachable = None
+        self._unreachable_until = 0.0
 
     def admit(
         self, handoff: dict[str, str], payload_bytes: bytes | None

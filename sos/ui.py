@@ -168,6 +168,23 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .badge-inert { color: var(--muted); }
     .badge-http { color: var(--ok); border-color: var(--ok); }
     .badge-apply { color: var(--warn); border-color: var(--warn); }
+    .badge-down { color: var(--bad); border-color: var(--bad); }
+    .lab-serve {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.7rem 0.65rem;
+      border: 1px solid var(--bad);
+      background: #241414;
+      border-radius: 8px;
+    }
+    .lab-serve h3 {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .lab-serve p { margin: 0.25rem 0; font-size: 0.82rem; }
+    tr.lab-serve-down td { color: #f3b4b4; }
     .meta { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.28rem 0.7rem; font-size: 0.86rem; }
     .meta dt { color: var(--muted); }
     .meta dd { margin: 0; word-break: break-all; }
@@ -348,6 +365,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Light auto-refresh is opt-in, or on when
     <code>durable_hook</code> is active; it stops when the selected
     job is terminal and does not invent progress.
+    When <code>PANORAMIX_CTL_HTTP</code> is set but
+    <code>runtime.serve</code> is down, admit/status/progress fail
+    closed with <code>ctl_http_unreachable</code> (lab serve down) —
+    not a hung poll, not pretend durable.
     Not a SPA framework. Not Slack.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
@@ -584,6 +605,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const payload = await res.json();
       if (!res.ok) {
         flash(payload.error ? JSON.stringify(payload) : ("HTTP " + res.status));
+        if (payload.id) selectedId = payload.id;
+        await refresh();
         return;
       }
       selectedId = payload.id;
@@ -654,9 +677,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
 
     function durable(job) {
       if (!job) return false;
+      if (labServeDown(job)) return false;
       if (job.pause_resume === true) return true;
       const backed = job.local && job.local.backed;
       return backed === "runtime";
+    }
+
+    function labServeDown(job) {
+      if (!job) return false;
+      if (job.error === "ctl_http_unreachable") return true;
+      if (job.lab_serve && job.lab_serve.reachable === false) return true;
+      const prog = (lastProgress && job && lastProgress.id === job.id) ? lastProgress : null;
+      if (prog && (prog.error === "ctl_http_unreachable" || prog.source === "unreachable")) {
+        return true;
+      }
+      return false;
     }
 
     function syncLifecycleButtons(job) {
@@ -850,8 +885,15 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const completed = prog && prog.stages_completed;
       const fraction = prog && prog.fraction;
       const source = prog && prog.source;
+      if (source === "unreachable" || (prog && prog.error === "ctl_http_unreachable") ||
+          (job && job.error === "ctl_http_unreachable")) {
+        line.textContent = "lab serve down — PANORAMIX_CTL_HTTP unreachable "
+          + "(ctl_http_unreachable). Fail closed — not durable. Not iec chunk progress.";
+        wrap.appendChild(line);
+        return wrap;
+      }
       const durable = source === "durable" ||
-        (source !== "stub" && (completed != null || fraction != null));
+        (source !== "stub" && source !== "unreachable" && (completed != null || fraction != null));
       if (durable && (completed != null || fraction != null ||
           (prog && Array.isArray(prog.timeline) && prog.timeline.length))) {
         const title = document.createElement("h3");
@@ -912,6 +954,25 @@ OPERATOR_HTML = """<!DOCTYPE html>
         line.textContent = "No named stub stages (status only). Not iec chunk progress.";
       }
       wrap.appendChild(line);
+      return wrap;
+    }
+
+    function renderLabServe(job) {
+      const wrap = document.createElement("div");
+      wrap.className = "lab-serve";
+      const title = document.createElement("h3");
+      title.textContent = "Lab serve down (thinner)";
+      wrap.appendChild(title);
+      const line = document.createElement("p");
+      const afford = (job && job.lab_serve) || {};
+      line.textContent = afford.note
+        || job.message
+        || "lab serve down — PANORAMIX_CTL_HTTP origin is unreachable (ctl_http_unreachable). Fail closed — not durable.";
+      wrap.appendChild(line);
+      const honesty = document.createElement("p");
+      honesty.className = "hint";
+      honesty.textContent = "Start runtime.serve or unset PANORAMIX_CTL_HTTP. Not a hung poll. Not #70 Done.";
+      wrap.appendChild(honesty);
       return wrap;
     }
 
@@ -1290,6 +1351,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       for (const node of rows) dl.appendChild(node);
       host.appendChild(dl);
+      if (labServeDown(job)) {
+        host.appendChild(renderLabServe(job));
+      }
       host.appendChild(renderProgress(job));
       if (job.status === "failed" || job.status === "canceled") {
         host.appendChild(renderTerminal(job));
@@ -1372,7 +1436,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const tbody = document.createElement("tbody");
       for (const job of jobs) {
         const tr = document.createElement("tr");
-        tr.className = "job" + (job.id === selectedId ? " selected" : "");
+        tr.className = "job" + (job.id === selectedId ? " selected" : "")
+          + (labServeDown(job) ? " lab-serve-down" : "");
         tr.addEventListener("click", () => {
           selectedId = job.id;
           detailJob = job;
@@ -1388,7 +1453,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const tdC = document.createElement("td"); tdC.textContent = job.class || "";
         const tdD = document.createElement("td"); tdD.textContent = (job.local && job.local.demo) || "—";
         const tdSt = document.createElement("td");
-        tdSt.textContent = (job.local && job.local.stage) || "—";
+        tdSt.textContent = labServeDown(job)
+          ? "lab-serve down"
+          : ((job.local && job.local.stage) || "—");
         const tdG = document.createElement("td"); tdG.className = "id"; tdG.textContent = shortDigest(job.payload_digest);
         const tdI = document.createElement("td"); tdI.className = "id"; tdI.textContent = job.id.slice(0, 8);
         const tdU = document.createElement("td"); tdU.className = "id"; tdU.textContent = fmtTs(job.updated_at);
@@ -1478,6 +1545,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     async function refresh(opts) {
       const fromTimer = !!(opts && opts.fromTimer);
       try {
+        await loadInfo();
         const res = await fetch(listUrl());
         const body = await res.json();
         if (!res.ok) {
@@ -1526,6 +1594,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const hook = (info && info.jobs && info.jobs.durable_hook) || {};
       const kind = hook.kind || "inert";
       el.className = "badge";
+      if (kind === "ctl_http" && (hook.reachable === false || hook.error === "ctl_http_unreachable")) {
+        el.classList.add("badge-down");
+        el.textContent = "Lab serve down — PANORAMIX_CTL_HTTP unreachable (ctl_http_unreachable). Fail closed — not durable. Not #70 Done.";
+        return;
+      }
       if (kind === "ctl_http" && hook.durable_path === true) {
         el.classList.add("badge-http");
         el.textContent = "Durable path active — loopback ctl HTTP"

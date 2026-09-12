@@ -15,7 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from sos.errors import StubOnly
+from sos.errors import (
+    CTL_HTTP_UNREACHABLE_DETAIL,
+    ERROR_CTL_HTTP_UNREACHABLE,
+    CtlHttpUnreachable,
+    StubOnly,
+)
 from sos.http import SosApp
 from sos.jobs import EVENTS_SOURCE_DURABLE, PROGRESS_SOURCE_DURABLE, JobStore
 from sos.lab_ctl import (
@@ -25,6 +30,7 @@ from sos.lab_ctl import (
     lab_hook_from_env,
 )
 from sos.lab_ctl_http import (
+    CTL_HTTP_TIMEOUT_SEC,
     ENV_CTL_BEARER,
     ENV_CTL_HTTP,
     LabReserveTemporalHttpHook,
@@ -32,6 +38,7 @@ from sos.lab_ctl_http import (
     http_hook_from_env,
     normalize_ctl_http_base,
 )
+from sos.runtime_hook import HOOK_KIND_CTL_HTTP, describe_runtime_hook
 from sos.runtime_hook import InertRuntimeHandoffHook, resolve_runtime_hook
 
 
@@ -397,6 +404,151 @@ class OptInFakeHttpTests(unittest.TestCase):
             LabReserveTemporalHttpHook("http://10.0.0.2:19215")
 
 
+class UnreachableTests(unittest.TestCase):
+    """Valid loopback origin, serve down — fail closed, not a hung poll."""
+
+    def test_timeout_is_short(self) -> None:
+        self.assertLessEqual(CTL_HTTP_TIMEOUT_SEC, 2.0)
+        self.assertGreater(CTL_HTTP_TIMEOUT_SEC, 0.0)
+
+    def test_admit_connection_refused_is_named_error(self) -> None:
+        hook = LabReserveTemporalHttpHook(LOOPBACK, transport=lambda *_a, **_k: (0, ""))
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        with self.assertRaises(CtlHttpUnreachable) as ctx:
+            store.submit({"demo": "reserve", "seconds": 8})
+        err = ctx.exception
+        self.assertEqual(err.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertEqual(err.http_status, 503)
+        self.assertIn("lab serve down", err.fields["detail"])
+        body = err.to_dict()
+        self.assertEqual(body["error"], "ctl_http_unreachable")
+        self.assertIn("id", body)
+        job = store.get(body["id"])
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertEqual(job.local["backed"], "stub")
+        self.assertIs(job.to_dict()["pause_resume"], False)
+        self.assertEqual(job.to_dict()["lab_serve"]["error"], ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertIs(job.to_dict()["lab_serve"]["reachable"], False)
+        self.assertIn("lab serve down", job.message or "")
+
+    def test_http_admit_returns_503(self) -> None:
+        hook = LabReserveTemporalHttpHook(LOOPBACK, transport=lambda *_a, **_k: (0, ""))
+        app = SosApp(JobStore(step_seconds=0.02, runtime_hook=hook))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "seconds": 8}).encode(),
+        )
+        self.assertEqual(created.status, 503)
+        body = json.loads(created.body.decode("utf-8"))
+        self.assertEqual(body["error"], "ctl_http_unreachable")
+        self.assertIn("lab serve down", body["detail"])
+        listed = json.loads(app.handle("GET", "/v0/jobs").body.decode("utf-8"))
+        self.assertEqual(len(listed["jobs"]), 1)
+        job = listed["jobs"][0]
+        self.assertEqual(job["error"], "ctl_http_unreachable")
+        self.assertEqual(job["status"], "failed")
+        self.assertIs(job["pause_resume"], False)
+        self.assertIn("lab_serve", job)
+
+    def test_status_progress_attach_affordance(self) -> None:
+        http = _FakeHttp()
+        hook = LabReserveTemporalHttpHook(LOOPBACK, transport=http)
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "reserve", "seconds": 8})
+        self.assertEqual(job.local["backed"], "runtime")
+        self.assertIs(job.to_dict()["pause_resume"], True)
+
+        hook.transport = lambda *_a, **_k: (0, "")
+        hook.last_unreachable = None
+        hook._unreachable_until = 0.0
+        snap = store.get(job.id)
+        self.assertEqual(snap.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertEqual(snap.status, "running")
+        self.assertIs(snap.to_dict()["pause_resume"], False)
+        self.assertIn("lab serve down", snap.message or "")
+
+        progress = store.progress(job.id)
+        self.assertEqual(progress["source"], "unreachable")
+        self.assertEqual(progress["error"], ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertIs(progress["pause_resume"], False)
+        self.assertNotIn("timeline", progress)
+        self.assertIn("lab serve down", progress["note"])
+
+        app = SosApp(store)
+        got = json.loads(app.handle("GET", f"/v0/jobs/{job.id}").body.decode("utf-8"))
+        self.assertEqual(got["error"], "ctl_http_unreachable")
+        prog = json.loads(
+            app.handle("GET", f"/v0/jobs/{job.id}/progress").body.decode("utf-8")
+        )
+        self.assertEqual(prog["source"], "unreachable")
+        self.assertEqual(prog["error"], "ctl_http_unreachable")
+
+        with self.assertRaises(CtlHttpUnreachable):
+            store.pause(job.id)
+        still = store.get(job.id)
+        self.assertEqual(still.status, "running")
+        self.assertEqual(still.error, ERROR_CTL_HTTP_UNREACHABLE)
+
+    def test_loopback_refused_is_fast(self) -> None:
+        import socket
+        import time
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        hook = LabReserveTemporalHttpHook(f"http://127.0.0.1:{port}")
+        started = time.monotonic()
+        with self.assertRaises(CtlHttpUnreachable) as ctx:
+            hook.admit(
+                {
+                    "kind": "job",
+                    "class": "cpu",
+                    "payload_digest": "sha256:" + "ab" * 32,
+                    "status": "queued",
+                },
+                None,
+            )
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(ctx.exception.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertEqual(ctx.exception.fields["action"], "admit")
+        desc = describe_runtime_hook(hook)
+        self.assertEqual(desc["kind"], HOOK_KIND_CTL_HTTP)
+        self.assertIs(desc["durable_path"], False)
+        self.assertIs(desc["reachable"], False)
+        self.assertEqual(desc["error"], ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertIn("lab serve down", desc["note"])
+
+    def test_http_error_still_falls_back_to_stub(self) -> None:
+        """Serve is up (HTTP 500) — existing fail-closed-to-stub, not unreachable."""
+        http = _FakeHttp()
+        http.fail_next = True
+        hook = LabReserveTemporalHttpHook(LOOPBACK, transport=http)
+        store = JobStore(step_seconds=0.02, runtime_hook=hook)
+        job = store.submit({"demo": "echo", "message": "fallback"})
+        self.assertEqual(job.local["backed"], "stub")
+        self.assertIsNone(job.error)
+        with self.assertRaises(StubOnly):
+            store.pause(job.id)
+
+    def test_without_env_stays_inert(self) -> None:
+        self.assertIsNone(http_hook_from_env({}))
+        store = JobStore(step_seconds=0.02)
+        job = store.submit({"demo": "echo", "message": "ok"})
+        self.assertEqual(job.local["backed"], "stub")
+        self.assertIsNone(job.error)
+        self.assertNotEqual(job.status, "failed")
+        store.cancel(job.id)
+
+    def test_detail_message_is_stable(self) -> None:
+        self.assertIn("lab serve down", CTL_HTTP_UNREACHABLE_DETAIL)
+        self.assertIn("not durable", CTL_HTTP_UNREACHABLE_DETAIL.lower())
+        self.assertIn("Not #70 Done", CTL_HTTP_UNREACHABLE_DETAIL)
+
+
 class LoopbackServerTests(unittest.TestCase):
     """One real stdlib loopback listen — still recorded, no Temporal."""
 
@@ -495,6 +647,8 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("Not guest→mesh ctl", text)
         self.assertIn("PANORAMIX_CTL_HTTP", text)
         self.assertIn("fb901542", text)
+        self.assertIn("ctl_http_unreachable", text)
+        self.assertIn("lab-serve down", text)
         self.assertNotIn("Fixes #70", text)
         self.assertNotIn("Fixes #78", text)
         imports = [

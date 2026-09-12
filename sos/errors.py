@@ -154,3 +154,52 @@ class IllegalTransition(SosError):
             action=action,
             detail=f"cannot {action} job in status {status}",
         )
+
+
+ERROR_CTL_HTTP_UNREACHABLE = "ctl_http_unreachable"
+CTL_HTTP_UNREACHABLE_REASON = "connection refused / timeout"
+CTL_HTTP_UNREACHABLE_DETAIL = (
+    "lab serve down — PANORAMIX_CTL_HTTP origin is unreachable "
+    "(connection refused / timeout). Fail closed — not durable. "
+    "Start runtime.serve or unset PANORAMIX_CTL_HTTP. Not #70 Done."
+)
+
+
+def lab_serve_affordance(*, origin: str | None = None) -> dict[str, Any]:
+    """Stable operator payload when loopback ctl HTTP cannot connect."""
+    payload: dict[str, Any] = {
+        "reachable": False,
+        "error": ERROR_CTL_HTTP_UNREACHABLE,
+        "note": CTL_HTTP_UNREACHABLE_DETAIL,
+    }
+    if origin:
+        payload["origin"] = origin
+    return payload
+
+
+class CtlHttpUnreachable(SosError):
+    """Opt-in CTL_HTTP set, but runtime.serve refused / timed out.
+
+    Fail closed. Do not pretend durable. Not guest→mesh ctl.
+    """
+
+    http_status = 503
+
+    def __init__(
+        self,
+        *,
+        action: str,
+        origin: str | None = None,
+        reason: str = CTL_HTTP_UNREACHABLE_REASON,
+        job_id: str | None = None,
+    ) -> None:
+        fields: dict[str, Any] = {
+            "action": action,
+            "reason": reason,
+            "detail": CTL_HTTP_UNREACHABLE_DETAIL,
+        }
+        if origin:
+            fields["origin"] = origin
+        if job_id:
+            fields["id"] = job_id
+        super().__init__(ERROR_CTL_HTTP_UNREACHABLE, **fields)
