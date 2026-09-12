@@ -484,7 +484,9 @@ def _hook_stage_names(durable: dict[str, Any], total: int) -> list[str | None] |
         raw_stages = blob.get("stages")
         if isinstance(raw_stages, list) and raw_stages:
             names = [_slice_label(item) for item in raw_stages[:total]]
-            if any(names):
+            # A short stages[] list is elapsed (or a prefix), not a
+            # name override — do not drop day-one admit/project/fold/complete.
+            if any(names) and len(raw_stages) >= total:
                 while len(names) < total:
                     names.append(None)
                 return names
