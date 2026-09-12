@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 import unittest
+from urllib.request import urlopen
 
 from sos.events_export import (
     EVENTS_EXPORT_NOTE,
@@ -13,7 +15,7 @@ from sos.events_export import (
     parse_events_format,
     parse_kind_filter,
 )
-from sos.http import SosApp
+from sos.http import SosApp, SosServer, bind_handler
 from sos.jobs import EVENTS_SOURCE_DURABLE, EVENTS_SOURCE_MEMORY, JobStore
 
 
@@ -281,6 +283,33 @@ class EventsExportHttpTests(unittest.TestCase):
         self.assertEqual(names, ["admit", "fail"])
         self.assertEqual(jsonl.headers["X-Sos-Events-Source"], "durable")
         app.handle("POST", f"/v0/jobs/{job_id}/cancel")
+
+    def test_live_handler_headers_are_latin1(self) -> None:
+        """HTTP headers must be latin-1; em-dash in the note crashed serve."""
+        EVENTS_EXPORT_NOTE.encode("latin-1")
+        app = SosApp(JobStore(step_seconds=0.02))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "echo", "message": "hi"}).encode(),
+        )
+        job_id = _json(created)["id"]
+        httpd = SosServer(("127.0.0.1", 0), bind_handler(app))
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = httpd.server_address
+            url = f"http://{host}:{port}/v0/jobs/{job_id}/events?kind=fail&format=jsonl"
+            with urlopen(url, timeout=2) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.read(), b"")
+                note = resp.headers.get("X-Sos-Events-Note")
+                self.assertIn("not a SIEM", note)
+                self.assertIn("not regulatory defensibility", note)
+                note.encode("latin-1")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

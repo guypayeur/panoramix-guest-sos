@@ -30,15 +30,15 @@ KIND_ALIASES: dict[str, frozenset[str]] = {
 }
 
 EVENTS_EXPORT_NOTE = (
-    "Local salvage of this job's event trail — not a SIEM; "
+    "Local salvage of this job's event trail - not a SIEM; "
     "not regulatory defensibility; not iec /v1/audit/events product"
 )
 MEMORY_EVENTS_NOTE = (
-    "Process-memory event trail — not a SIEM; "
+    "Process-memory event trail - not a SIEM; "
     "not regulatory defensibility; not a regulatory audit product"
 )
 DURABLE_EVENTS_NOTE = (
-    "Durable reserve-temporal JSONL trail — not a SIEM; "
+    "Durable reserve-temporal JSONL trail - not a SIEM; "
     "not regulatory defensibility; not iec /v1/audit/events product"
 )
 
