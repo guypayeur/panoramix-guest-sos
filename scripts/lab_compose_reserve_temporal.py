@@ -14,8 +14,10 @@ the plan plus in-process re-admit smokes (CI / no Temporal). Fail closed
 without a usable runtime checkout on the live path.
 
 Honesty: not guest→mesh ctl. Not SIEM. Not IFRS17. Pin 0.5.
-Optional durable stage elapsed from runtime tip 9ba95bbb (or main);
-omit when missing — never invent. Handoff docs panel is operator
+Optional durable stage elapsed from runtime tip 9ba95bbb / docs tip
+5dc191cb (or main); omit when missing — never invent. Optional
+wall_elapsed_ms when hook progress/status JSON includes it; omit
+when missing — never invent. Handoff docs panel is operator
 clarity, not a second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. north_star_done false.
 Cloud stays locked.

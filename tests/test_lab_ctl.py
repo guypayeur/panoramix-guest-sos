@@ -45,6 +45,8 @@ class _FakeCtl:
         self.paused = False
         self.canceled = False
         self.admitted: list[dict[str, str]] = []
+        self.wall_elapsed_ms: int | None = None
+        self.status_wall_elapsed_ms: int | None = None
 
     def __call__(
         self, argv: list[str], *, cwd: Path, env: dict[str, str]
@@ -83,33 +85,35 @@ class _FakeCtl:
         if work_id != CTL_ID:
             return 1, json.dumps({"ok": False, "error": "unknown id"}), ""
         if action == "status":
-            return 0, json.dumps(
-                {
-                    "ok": True,
-                    "id": CTL_ID,
-                    "handoff": {"id": CTL_ID, "status": self.status},
-                    "ctl": "status",
-                }
-            ), ""
+            status_body: dict = {
+                "ok": True,
+                "id": CTL_ID,
+                "handoff": {"id": CTL_ID, "status": self.status},
+                "ctl": "status",
+            }
+            if self.status_wall_elapsed_ms is not None:
+                status_body["wall_elapsed_ms"] = self.status_wall_elapsed_ms
+            return 0, json.dumps(status_body), ""
         if action == "progress":
-            return 0, json.dumps(
-                {
-                    "ok": True,
-                    "id": CTL_ID,
-                    "ctl": "progress",
+            progress_body: dict = {
+                "ok": True,
+                "id": CTL_ID,
+                "ctl": "progress",
+                "stage": 2,
+                "stages_total": 4,
+                "stages_completed": 2,
+                "fraction": 0.5,
+                "progress": {
                     "stage": 2,
                     "stages_total": 4,
                     "stages_completed": 2,
                     "fraction": 0.5,
-                    "progress": {
-                        "stage": 2,
-                        "stages_total": 4,
-                        "stages_completed": 2,
-                        "fraction": 0.5,
-                    },
-                    "north_star_done": False,
-                }
-            ), ""
+                },
+                "north_star_done": False,
+            }
+            if self.wall_elapsed_ms is not None:
+                progress_body["wall_elapsed_ms"] = self.wall_elapsed_ms
+            return 0, json.dumps(progress_body), ""
         if action == "events":
             return 0, json.dumps(
                 {
@@ -246,6 +250,7 @@ class OptInFakeCtlTests(unittest.TestCase):
         self.assertEqual(progress["stages_completed"], 2)
         self.assertEqual(progress["fraction"], 0.5)
         self.assertIn("path-slices", progress["note"].lower())
+        self.assertNotIn("wall_elapsed_ms", progress)
 
         events = self.store.events(job.id)
         self.assertEqual(events["source"], EVENTS_SOURCE_DURABLE)
@@ -314,6 +319,29 @@ class OptInFakeCtlTests(unittest.TestCase):
         self.assertEqual(json.loads(resumed.body.decode("utf-8"))["status"], "running")
         canceled = app.handle("POST", f"/v0/jobs/{job_id}/cancel")
         self.assertEqual(json.loads(canceled.body.decode("utf-8"))["status"], "canceled")
+
+    def test_wall_elapsed_from_progress_or_status_or_omit(self) -> None:
+        omitted = self.store.progress(
+            self.store.submit({"demo": "reserve", "seconds": 8}).id
+        )
+        self.assertEqual(omitted["source"], PROGRESS_SOURCE_DURABLE)
+        self.assertNotIn("wall_elapsed_ms", omitted)
+
+        self.ctl.wall_elapsed_ms = 2400
+        from_progress = self.store.progress(
+            self.store.submit({"demo": "reserve", "seconds": 8}).id
+        )
+        self.assertEqual(from_progress["wall_elapsed_ms"], 2400)
+        self.assertEqual(from_progress["wall_source"], "progress")
+        self.assertIn("not a forecast", from_progress["wall_note"].lower())
+
+        self.ctl.wall_elapsed_ms = None
+        self.ctl.status_wall_elapsed_ms = 750
+        from_status = self.store.progress(
+            self.store.submit({"demo": "reserve", "seconds": 8}).id
+        )
+        self.assertEqual(from_status["wall_elapsed_ms"], 750)
+        self.assertEqual(from_status["wall_source"], "status")
 
     def test_ctl_failure_fails_closed_to_stub(self) -> None:
         def boom(argv, *, cwd, env):

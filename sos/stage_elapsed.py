@@ -1,13 +1,18 @@
-"""Optional per-stage elapsed for the durable path-slice timeline.
+"""Optional per-stage elapsed and optional durable job wall.
 
 Prefer hook-provided ``stages[].elapsed_ms`` (or equivalent) when the
 number is real. Runtime tip ``9ba95bbb`` (or main, PR #110) can
-supply those on durable progress; older tips omit the field.
+supply those on durable progress; docs tip ``5dc191cb`` (PR #112)
+pins that lineage on main. Older tips omit the field.
 Else derive from durable ``GET /v0/jobs/{id}/events`` timestamps
 when both ends parse. Otherwise omit — never invent.
 
-Not iec planner. Not a forecast. Not SIEM. Does not stamp
-``north_star_done``.
+Optional job ``wall_elapsed_ms`` (or equivalent) is accepted from
+durable progress/status JSON when present. Omit when absent —
+never invent, never copy the guest created_at clock.
+
+Not iec planner. Not a forecast. Not IFRS17. Not iec SPA.
+Not SIEM. Does not stamp ``north_star_done``.
 """
 
 from __future__ import annotations
@@ -20,10 +25,27 @@ from sos.events_export import event_matches_kinds
 
 ELAPSED_SOURCE_PROGRESS = "progress"
 ELAPSED_SOURCE_EVENTS = "events"
+WALL_SOURCE_PROGRESS = "progress"
+WALL_SOURCE_STATUS = "status"
 
 _PROGRESS_STAGE_LIST_KEYS = ("stages", "timeline", "slices")
 _MS_KEYS = ("elapsed_ms", "duration_ms")
 _SEC_KEYS = ("elapsed_s", "duration_s", "elapsed_sec", "duration_sec")
+_WALL_MS_KEYS = (
+    "wall_elapsed_ms",
+    "wall_ms",
+    "job_elapsed_ms",
+    "job_wall_ms",
+)
+_WALL_SEC_KEYS = (
+    "wall_elapsed_s",
+    "wall_s",
+    "job_elapsed_s",
+    "job_wall_s",
+    "wall_elapsed_sec",
+)
+_WALL_EQUIV_MS_KEYS = ("elapsed_ms",)
+_WALL_EQUIV_SEC_KEYS = ("elapsed_s", "elapsed_sec")
 _TS_KEYS = ("ts", "at", "timestamp", "time")
 _NAME_KEYS = ("name", "slice", "stage")
 
@@ -49,24 +71,68 @@ def _as_nonneg_number(value: Any) -> float | None:
     return number
 
 
-def elapsed_ms_from_mapping(item: dict[str, Any] | None) -> int | None:
-    """Read an honest elapsed from a progress/event record. Omit if absent."""
-    if not isinstance(item, dict):
-        return None
-    for key in _MS_KEYS:
+def _ms_from_keys(
+    item: dict[str, Any], ms_keys: tuple[str, ...], sec_keys: tuple[str, ...]
+) -> int | None:
+    for key in ms_keys:
         if key not in item:
             continue
         number = _as_nonneg_number(item.get(key))
         if number is None:
             return None
         return int(round(number))
-    for key in _SEC_KEYS:
+    for key in sec_keys:
         if key not in item:
             continue
         number = _as_nonneg_number(item.get(key))
         if number is None:
             return None
         return int(round(number * 1000))
+    return None
+
+
+def elapsed_ms_from_mapping(item: dict[str, Any] | None) -> int | None:
+    """Read an honest elapsed from a progress/event record. Omit if absent."""
+    if not isinstance(item, dict):
+        return None
+    return _ms_from_keys(item, _MS_KEYS, _SEC_KEYS)
+
+
+def wall_elapsed_ms_from_mapping(item: dict[str, Any] | None) -> int | None:
+    """Read an honest job wall from one mapping. Omit if absent / invalid.
+
+    Prefer explicit ``wall_elapsed_ms`` (or wall/job equivalents). Generic
+    root ``elapsed_ms`` / ``elapsed_s`` is accepted as equivalent.
+    Does not walk ``stages[]``. Never invents.
+    """
+    if not isinstance(item, dict):
+        return None
+    explicit = _ms_from_keys(item, _WALL_MS_KEYS, _WALL_SEC_KEYS)
+    if explicit is not None:
+        return explicit
+    if any(key in item for key in (*_WALL_MS_KEYS, *_WALL_SEC_KEYS)):
+        return None
+    return _ms_from_keys(item, _WALL_EQUIV_MS_KEYS, _WALL_EQUIV_SEC_KEYS)
+
+
+def wall_elapsed_ms_from_durable(durable: dict[str, Any] | None) -> int | None:
+    """Wall from progress/status JSON (top-level or nested progress).
+
+    Omit when missing. Never invent. Never sum path-slice elapsed.
+    """
+    if not isinstance(durable, dict):
+        return None
+    blobs = _progress_blobs(durable)
+    for blob in blobs:
+        explicit = _ms_from_keys(blob, _WALL_MS_KEYS, _WALL_SEC_KEYS)
+        if explicit is not None:
+            return explicit
+        if any(key in blob for key in (*_WALL_MS_KEYS, *_WALL_SEC_KEYS)):
+            return None
+    for blob in blobs:
+        equiv = _ms_from_keys(blob, _WALL_EQUIV_MS_KEYS, _WALL_EQUIV_SEC_KEYS)
+        if equiv is not None:
+            return equiv
     return None
 
 

@@ -151,6 +151,7 @@ class LabReserveTemporalHttpHook:
         self.bearer = str(bearer).strip() if bearer else None
         self.live = bool(live)
         self.last_unreachable: CtlHttpUnreachable | None = None
+        self.last_status_payload: dict[str, Any] | None = None
         self._unreachable_until = 0.0
 
     def _headers(self, *, has_body: bool) -> dict[str, str]:
@@ -258,9 +259,11 @@ class LabReserveTemporalHttpHook:
 
     def status(self, job_id: str, runtime_ref: dict[str, Any] | None) -> str | None:
         work_id = _ctl_id(job_id, runtime_ref)
+        self.last_status_payload = None
         if work_id is None:
             return None
         payload = self._invoke("status", work_id=work_id)
+        self.last_status_payload = payload
         if payload is None:
             return None
         return _lifecycle_status(payload)
