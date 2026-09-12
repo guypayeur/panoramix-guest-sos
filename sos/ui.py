@@ -401,6 +401,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>runtime.serve</code> is down, admit/status/progress fail
     closed with <code>ctl_http_unreachable</code> (lab serve down) —
     not a hung poll, not pretend durable.
+    HTTP timeout while the origin is listening is
+    <code>ctl_admit_timeout</code> on admit — not lab-serve-down.
+    Status/progress timeout while ctl is up is a missed poll.
     Admit that exceeds guest timeout before a running id is
     <code>ctl_admit_timeout</code> (runtime #143; live|parity is
     minutes-class; iec-local same-job also needs a running id for

@@ -90,6 +90,7 @@ from sos.handoff_vocab import (
 )
 from sos.lab_ctl import APPLY_REL, CTL_ADMIT_TIMEOUT_SEC
 from sos.lab_ctl_http import (
+    CTL_HTTP_ADMIT_TIMEOUT_SEC,
     CTL_HTTP_TIMEOUT_SEC,
     ENV_CTL_BEARER,
     ENV_CTL_HTTP,
@@ -218,7 +219,7 @@ HONESTY_LINES = (
     "opt-in catalog does not stamp north_star_done",
     "opt-in catalog does not unlock #61 / #29",
     "opt-in catalog does not invent walls or flip comparison flags",
-    "live|parity durable admit must return a running id within guest timeouts (HTTP 1.5s / ctl-apply admit 2s)",
+    "live|parity durable admit must return a running id within guest timeouts (HTTP admit 8s / poll 1.5s / ctl-apply admit 2s)",
     "async admit depends on runtime #143 (serve/CLI); guest polls progress/events once running",
     "admit timeout is ctl_admit_timeout (not lab-serve-down); fail closed — no stub progress",
     "lab-compose --catalog parity is mid-flight poll + cancel (not wait-for-succeed; not invented walls)",
@@ -342,6 +343,7 @@ def async_admit_plan(catalog: str | None = None) -> dict[str, Any]:
         "when": "catalog live|parity (minutes-class); recorded stays sync-fast",
         "depends_on": "panoramix-runtime#143",
         "guest_http_timeout_sec": CTL_HTTP_TIMEOUT_SEC,
+        "guest_http_admit_timeout_sec": CTL_HTTP_ADMIT_TIMEOUT_SEC,
         "guest_ctl_apply_admit_timeout_sec": CTL_ADMIT_TIMEOUT_SEC,
         "returns": "running id (cw_…) while work continues",
         "poll": (

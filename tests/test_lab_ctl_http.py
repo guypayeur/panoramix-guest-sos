@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,7 +18,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from sos.errors import (
     CTL_HTTP_UNREACHABLE_DETAIL,
+    ERROR_CTL_ADMIT_TIMEOUT,
     ERROR_CTL_HTTP_UNREACHABLE,
+    CtlAdmitTimeout,
     CtlHttpUnreachable,
     StubOnly,
 )
@@ -30,13 +33,18 @@ from sos.lab_ctl import (
     lab_hook_from_env,
 )
 from sos.lab_ctl_http import (
+    CTL_HTTP_ADMIT_TIMEOUT_SEC,
+    CTL_HTTP_TIMEOUT_CODE,
     CTL_HTTP_TIMEOUT_SEC,
     ENV_CTL_BEARER,
     ENV_CTL_HTTP,
     LabReserveTemporalHttpHook,
     ctl_http_base_from_env,
     http_hook_from_env,
+    is_http_timeout,
     normalize_ctl_http_base,
+    origin_listening,
+    urllib_request_ctl,
 )
 from sos.runtime_hook import HOOK_KIND_CTL_HTTP, describe_runtime_hook
 from sos.runtime_hook import InertRuntimeHandoffHook, resolve_runtime_hook
@@ -66,6 +74,7 @@ class _FakeHttp:
         url: str,
         headers: dict[str, str],
         body: bytes | None,
+        **_kwargs: object,
     ) -> tuple[int, str]:
         self.calls.append((method, url, dict(headers), body))
         if self.require_bearer:
@@ -438,6 +447,7 @@ class UnreachableTests(unittest.TestCase):
     def test_timeout_is_short(self) -> None:
         self.assertLessEqual(CTL_HTTP_TIMEOUT_SEC, 2.0)
         self.assertGreater(CTL_HTTP_TIMEOUT_SEC, 0.0)
+        self.assertGreater(CTL_HTTP_ADMIT_TIMEOUT_SEC, CTL_HTTP_TIMEOUT_SEC)
 
     def test_admit_connection_refused_is_named_error(self) -> None:
         hook = LabReserveTemporalHttpHook(LOOPBACK, transport=lambda *_a, **_k: (0, ""))
@@ -575,6 +585,157 @@ class UnreachableTests(unittest.TestCase):
         self.assertIn("lab serve down", CTL_HTTP_UNREACHABLE_DETAIL)
         self.assertIn("not durable", CTL_HTTP_UNREACHABLE_DETAIL.lower())
         self.assertIn("Not #70 Done", CTL_HTTP_UNREACHABLE_DETAIL)
+        self.assertIn("not listening", CTL_HTTP_UNREACHABLE_DETAIL)
+        self.assertIn("listening is not this error", CTL_HTTP_UNREACHABLE_DETAIL)
+
+
+class TimeoutVsUnreachableTests(unittest.TestCase):
+    """Slow-but-up ctl is ctl_admit_timeout; down origin stays unreachable."""
+
+    def test_is_http_timeout_classifies_reason_shapes(self) -> None:
+        from urllib.error import URLError
+
+        self.assertTrue(is_http_timeout(TimeoutError("timed out")))
+        self.assertTrue(is_http_timeout(URLError(TimeoutError("timed out"))))
+        self.assertTrue(is_http_timeout(URLError("timed out")))
+        refused = URLError(ConnectionRefusedError("Connection refused"))
+        self.assertFalse(is_http_timeout(refused))
+        self.assertFalse(is_http_timeout(ConnectionRefusedError()))
+
+    def test_origin_listening_probe(self) -> None:
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        try:
+            self.assertTrue(origin_listening(f"http://127.0.0.1:{port}"))
+        finally:
+            sock.close()
+        self.assertFalse(origin_listening(f"http://127.0.0.1:{port}"))
+
+    def test_admit_timeout_while_listening_is_not_unreachable(self) -> None:
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK,
+            transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, ""),
+            listen_probe=lambda: True,
+        )
+        with self.assertRaises(CtlAdmitTimeout) as ctx:
+            hook.admit(
+                {
+                    "kind": "job",
+                    "class": "cpu",
+                    "payload_digest": "sha256:" + "ab" * 32,
+                    "status": "queued",
+                },
+                None,
+            )
+        self.assertEqual(ctx.exception.error, ERROR_CTL_ADMIT_TIMEOUT)
+        self.assertIsNone(hook.last_unreachable)
+
+    def test_admit_timeout_when_not_listening_is_unreachable(self) -> None:
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK,
+            transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, ""),
+            listen_probe=lambda: False,
+        )
+        with self.assertRaises(CtlHttpUnreachable) as ctx:
+            hook.admit(
+                {
+                    "kind": "job",
+                    "class": "cpu",
+                    "payload_digest": "sha256:" + "ab" * 32,
+                    "status": "queued",
+                },
+                None,
+            )
+        self.assertEqual(ctx.exception.error, ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertEqual(ctx.exception.fields["action"], "admit")
+
+    def test_status_timeout_while_listening_is_missed_poll(self) -> None:
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK,
+            transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, ""),
+            listen_probe=lambda: True,
+        )
+        ref = {"id": CTL_ID, "ctl": "reserve-temporal"}
+        self.assertIsNone(hook.status(CTL_ID, ref))
+        self.assertIsNone(hook.progress(CTL_ID, ref))
+        self.assertIsNone(hook.last_unreachable)
+
+    def test_status_timeout_when_not_listening_is_unreachable(self) -> None:
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK,
+            transport=lambda *_a, **_k: (CTL_HTTP_TIMEOUT_CODE, ""),
+            listen_probe=lambda: False,
+        )
+        with self.assertRaises(CtlHttpUnreachable):
+            hook.status(CTL_ID, {"id": CTL_ID, "ctl": "reserve-temporal"})
+
+    def test_listening_hang_is_admit_timeout_not_unreachable(self) -> None:
+        class HangHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                threading.Event().wait(2.0)
+
+            def do_GET(self) -> None:
+                threading.Event().wait(2.0)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HangHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address
+            hook = LabReserveTemporalHttpHook(
+                f"http://{host}:{port}",
+                admit_timeout_sec=0.25,
+                request_timeout_sec=0.25,
+            )
+            started = time.monotonic()
+            with self.assertRaises(CtlAdmitTimeout) as ctx:
+                hook.admit(
+                    {
+                        "kind": "job",
+                        "class": "cpu",
+                        "payload_digest": "sha256:" + "ab" * 32,
+                        "status": "queued",
+                    },
+                    None,
+                )
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 2.0)
+            self.assertEqual(ctx.exception.error, ERROR_CTL_ADMIT_TIMEOUT)
+            self.assertNotEqual(ctx.exception.error, ERROR_CTL_HTTP_UNREACHABLE)
+            self.assertIsNone(hook.last_unreachable)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_urllib_classifies_string_timed_out(self) -> None:
+        from urllib.error import URLError
+
+        def boom(*_a, **_k):
+            raise URLError("timed out")
+
+        import sos.lab_ctl_http as lab_http
+
+        original = lab_http.urlopen
+        lab_http.urlopen = boom  # type: ignore[assignment]
+        try:
+            code, body = urllib_request_ctl(
+                "POST",
+                "http://127.0.0.1:9/reserve-temporal/admit",
+                {},
+                b"{}",
+                timeout=0.2,
+            )
+        finally:
+            lab_http.urlopen = original
+        self.assertEqual(code, CTL_HTTP_TIMEOUT_CODE)
+        self.assertEqual(body, "")
 
 
 class LoopbackServerTests(unittest.TestCase):
@@ -683,6 +844,9 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("ctl_admit_timeout", text)
         self.assertIn("#143", text)
         self.assertIn("live|parity", text)
+        self.assertIn("CTL_HTTP_ADMIT_TIMEOUT_SEC", text)
+        self.assertIn("origin_listening", text)
+        self.assertIn("missed poll", text)
         self.assertNotIn("Fixes #70", text)
         self.assertNotIn("Fixes #78", text)
         imports = [

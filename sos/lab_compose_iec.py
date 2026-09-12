@@ -88,6 +88,8 @@ HONESTY_LINES = (
     "does not close runtime #70 / #78",
     "does not unlock cloud #61 / #29",
     "north_star_done false",
+    "admit timeout while ctl is listening is ctl_admit_timeout (not lab-serve-down)",
+    "fail closed when ctl is unreachable",
 )
 
 COMPOSE_HOOK_ID = "cw_aaaaaaaaaaaaaaaa"

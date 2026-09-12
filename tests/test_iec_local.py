@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from sos.errors import (
+    ERROR_CTL_HTTP_UNREACHABLE,
     ERROR_DURABLE_ADMIT_FAILED,
     SAME_JOB_STUB_DETAIL,
     DurableAdmitFailed,
@@ -49,8 +50,10 @@ from sos.lab_ctl import (
     resolve_ctl_kind,
 )
 from sos.lab_ctl_http import (
+    CTL_HTTP_TIMEOUT_CODE,
     ENV_CTL_HTTP,
     IEC_LOCAL_PREFIX,
+    LabReserveTemporalHttpHook,
     http_hook_from_env,
 )
 from sos.runtime_hook import describe_runtime_hook
@@ -247,6 +250,49 @@ class CtlKindTests(unittest.TestCase):
         self.assertEqual(desc["ctl"], CTL_KIND_IEC_LOCAL)
         self.assertIs(desc["durable_path"], True)
         self.assertIn("does not run IFRS17", desc["note"])
+
+    def test_admit_then_status_timeout_is_201_not_lab_serve_down(self) -> None:
+        """#79: slow-but-up ctl after admit must not stamp lab-serve-down."""
+
+        def transport(method, url, headers, body, **_kwargs):
+            del method, headers, body
+            if url.split("?")[0].endswith("/iec-local/admit"):
+                return 200, json.dumps(
+                    {
+                        "ok": True,
+                        "id": COMPOSE_HOOK_ID,
+                        "handoff": {
+                            "id": COMPOSE_HOOK_ID,
+                            "status": "running",
+                        },
+                    }
+                )
+            return CTL_HTTP_TIMEOUT_CODE, ""
+
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK_IEC,
+            transport=transport,
+            listen_probe=lambda: True,
+        )
+        self.assertEqual(hook.ctl, CTL_KIND_IEC_LOCAL)
+        app = SosApp(JobStore(step_seconds=0.01, runtime_hook=hook))
+        created = app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "reserve", "catalog": "reserve_ifrs17"}).encode(),
+        )
+        self.assertEqual(created.status, 201)
+        body = _json(created)
+        self.assertNotEqual(body.get("error"), ERROR_CTL_HTTP_UNREACHABLE)
+        self.assertIsNone(body.get("error"))
+        self.assertEqual(body["status"], "running")
+        self.assertEqual(body["local"]["backed"], "runtime")
+        self.assertNotIn("lab_serve", body)
+        self.assertIsNone(hook.last_unreachable)
+
+        progress = _json(app.handle("GET", f"/v0/jobs/{body['id']}/progress"))
+        self.assertNotEqual(progress.get("source"), "unreachable")
+        self.assertNotEqual(progress.get("error"), ERROR_CTL_HTTP_UNREACHABLE)
 
     def test_http_env_19215_stays_reserve_temporal(self) -> None:
         hook = http_hook_from_env({ENV_CTL_HTTP: "http://127.0.0.1:19215"})

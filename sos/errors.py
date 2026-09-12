@@ -181,17 +181,19 @@ class ReAdmitUnavailable(SosError):
 
 
 ERROR_CTL_HTTP_UNREACHABLE = "ctl_http_unreachable"
-CTL_HTTP_UNREACHABLE_REASON = "connection refused / timeout"
+CTL_HTTP_UNREACHABLE_REASON = "connection refused / origin not listening"
 CTL_HTTP_UNREACHABLE_DETAIL = (
     "lab serve down — PANORAMIX_CTL_HTTP origin is unreachable "
-    "(connection refused / timeout). Fail closed — not durable. "
-    "Start runtime.serve or unset PANORAMIX_CTL_HTTP. Not #70 Done."
+    "(connection refused or not listening). Fail closed — not durable. "
+    "Start runtime.serve or unset PANORAMIX_CTL_HTTP. HTTP timeout "
+    "while the origin is listening is not this error. Not #70 Done."
 )
 ERROR_CTL_ADMIT_TIMEOUT = "ctl_admit_timeout"
 CTL_ADMIT_TIMEOUT_REASON = "admit exceeded guest timeout"
 CTL_ADMIT_TIMEOUT_DETAIL = (
     "durable admit exceeded guest timeout "
-    "(HTTP 1.5s / ctl-apply admit 2s) before a running id returned. "
+    "(HTTP admit 8s / poll 1.5s / ctl-apply admit 2s) before a "
+    "running id returned. Origin was listening — not lab-serve-down. "
     "live|parity is minutes-class — admit must return running while "
     "work continues (runtime #143). Fail closed — not durable, "
     "not stub progress. Poll GET /progress and GET /events mid-flight "
@@ -226,9 +228,11 @@ def lab_serve_affordance(*, origin: str | None = None) -> dict[str, Any]:
 
 
 class CtlHttpUnreachable(SosError):
-    """Opt-in CTL_HTTP set, but runtime.serve refused / timed out.
+    """Opt-in CTL_HTTP set, but runtime.serve refused / is not listening.
 
     Fail closed. Do not pretend durable. Not guest→mesh ctl.
+    HTTP timeout while the origin is listening is CtlAdmitTimeout
+    (admit) or a missed poll — not this error.
     """
 
     http_status = 503
