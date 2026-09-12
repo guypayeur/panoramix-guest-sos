@@ -30,19 +30,24 @@ gap-report tip ``84cb202`` (PR #124 gap-report);
 gap-report docs tip ``aa4f09e`` (PR #126 stamp link, or main);
 merge tip ``5086d0f`` (PR #128 ``iec_parity_pack merge``, or main);
 merge docs tip ``6ecb645`` (PR #130 stamp link, or main);
-guest emit tip ``b859466`` (#52); guest gap-report tip
-``eb48605`` (#60). Wall feature tip remains
+apply-metrics tip ``5d399f7`` (PR #132 ``iec_parity_pack
+apply-metrics``, or main); guest emit tip ``b859466`` (#52);
+guest gap-report tip ``eb48605`` (#60); guest merge tip
+``39064d5`` (#64). Wall feature tip remains
 ``9b6646e8``. Guest fragment can feed optional tips / measured
 durable into ``python3 -m runtime.iec_parity_pack skeleton``
 via ``--from-json`` (file or stdin) or flags; omit durable when
-missing. Dry-run / live also record a ``pack_fill.merge`` hint
-(cd+cmd when ``PANORAMIX_RUNTIME_ROOT`` known, else a copy-paste
-template) for ``python3 -m runtime.iec_parity_pack merge …
---from-json`` against the off-box pack, then a
-``pack_fill.gap_report`` hint for ``gap-report``. Hint only —
-does not run merge or gap-report. Never invent
-``metrics.wall_time_sec``. assist ≠ fill; assist ≠ Done;
-merge ≠ fill; merge ≠ Done; gap-report ≠ Done. Does not write the full live pack.
+missing. Dry-run / live also record a ``pack_fill.apply_metrics``
+hint (cd+cmd when ``PANORAMIX_RUNTIME_ROOT`` known, else a
+copy-paste template) for ``python3 -m runtime.iec_parity_pack
+apply-metrics … --from-durable-panoramix`` against the off-box
+pack (does not supply wall numbers), a ``pack_fill.merge`` hint
+for ``merge … --from-json``, then a ``pack_fill.gap_report``
+hint for ``gap-report``. Hint only — does not run apply-metrics,
+merge, or gap-report. Never invent ``metrics.wall_time_sec``.
+assist ≠ fill; assist ≠ Done; apply-metrics ≠ fill;
+apply-metrics ≠ Done; merge ≠ fill; merge ≠ Done;
+gap-report ≠ Done. Does not write the full live pack.
 Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done or #70 UX Done. Cloud stays locked.
@@ -80,21 +85,27 @@ RUNTIME_WALL_DOCS_PIN = "6511cec7"
 # Docs tip #126 links that stamp on main (or tip aa4f09e).
 # Merge tip #128 names the WSL merge assist-smoke stamp (merge ≠ fill).
 # Docs tip #130 links that stamp on main (or tip 6ecb645).
+# Apply-metrics tip #132 names the WSL apply-metrics stamp (apply-metrics ≠ fill).
 RUNTIME_PACK_TIP = "b81130f2187109eabc2342df6345ca877e98023f"
 RUNTIME_PACK_DOCS_PIN = "63a168d"
 RUNTIME_PACK_GAP_REPORT_PIN = "84cb202"
 RUNTIME_PACK_GAP_REPORT_DOCS_PIN = "aa4f09e"
 RUNTIME_PACK_MERGE_PIN = "5086d0f"
 RUNTIME_PACK_MERGE_DOCS_PIN = "6ecb645"
+RUNTIME_PACK_APPLY_METRICS_PIN = "5d399f7"
 OFFBOX_IEC_PARITY_PACK = "~/panoramix-lab/evidence-70/iec-parity/iec-parity.json"
 GAP_REPORT_CMD = "python3 -m runtime.iec_parity_pack gap-report"
 MERGE_CMD = "python3 -m runtime.iec_parity_pack merge"
 MERGE_FROM_JSON = "--from-json -"
+APPLY_METRICS_CMD = "python3 -m runtime.iec_parity_pack apply-metrics"
+APPLY_METRICS_FROM_DURABLE = "--from-durable-panoramix"
 RUNTIME_ROOT_TEMPLATE = "/path/to/panoramix-runtime"
 # Guest main after #52 (emit tips + optional durable). Checkout HEAD wins.
 GUEST_PACK_TIP = "b859466dcd079eb063b615728b258a686f79749a"
 # Guest main after #60 (gap-report hint). Mention only — emit tip stays #52.
 GUEST_GAP_REPORT_TIP = "eb48605"
+# Guest main after #64 (merge docs pin). Mention only — emit tip stays #52.
+GUEST_MERGE_TIP = "39064d5"
 ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
 ENV_GUEST_TIP = "PANORAMIX_GUEST_TIP"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
@@ -126,8 +137,12 @@ HONESTY_LINES = (
     "pack-fill merge docs tip 6ecb645 / PR #130 (or main) links WSL merge stamp (merge ≠ fill; merge ≠ Done; assist ≠ Done)",
     "pack-fill merge hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run merge; merge ≠ fill; merge ≠ Done)",
     "pack-fill merge+gap-report pairing (hint only; merge ≠ fill; merge ≠ Done; assist ≠ Done; gap-report ≠ Done)",
+    "pack-fill apply-metrics tip 5d399f7 / PR #132 (or main) names WSL apply-metrics assist-smoke stamp lineage (apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done; smoke walls ≠ Done)",
+    "pack-fill apply-metrics hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run apply-metrics; does not supply wall numbers; apply-metrics ≠ fill; apply-metrics ≠ Done)",
+    "pack-fill apply-metrics+merge+gap-report pairing (hint only; apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done; merge ≠ fill; merge ≠ Done; gap-report ≠ Done)",
     "never invent metrics.wall_time_sec",
     "assist ≠ fill; assist ≠ Done",
+    "apply-metrics ≠ fill; apply-metrics ≠ Done",
     "merge ≠ fill; merge ≠ Done",
     "gap-report ≠ Done",
     "pack-fill assist for runtime #78 D only (does not write the live pack)",
@@ -523,6 +538,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
         "merge_pr": 128,
         "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
         "merge_docs_pr": 130,
+        "apply_metrics_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
+        "apply_metrics_pr": 132,
         "guest_emit_tip": GUEST_PACK_TIP,
         "guest_pr": 52,
         "from_json": True,
@@ -557,6 +574,8 @@ def skeleton_handoff_plan() -> dict[str, Any]:
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
             f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
             "(PR #130, or main). "
+            f"Apply-metrics tip {RUNTIME_PACK_APPLY_METRICS_PIN} "
+            "(PR #132, or main). "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -610,6 +629,8 @@ def gap_report_plan(
         "merge_pr": 128,
         "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
         "merge_docs_pr": 130,
+        "apply_metrics_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
+        "apply_metrics_pr": 132,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
         "invent": False,
@@ -619,24 +640,30 @@ def gap_report_plan(
         "iec_spa": False,
         "writes_live_pack": False,
         "assist_ne_fill": True,
+        "apply_metrics_ne_fill": True,
+        "apply_metrics_ne_done": True,
         "merge_ne_fill": True,
         "merge_ne_done": True,
         "gap_report_ne_done": True,
         "north_star_done": False,
         "note": (
             "After pack_fill.merge (python3 -m runtime.iec_parity_pack "
-            "merge … --from-json), run python3 -m runtime.iec_parity_pack "
-            "gap-report against that pack. merge+gap-report pairing. "
-            "Hint only — does not run gap-report here or in CI. "
+            "merge … --from-json) and optional pack_fill.apply_metrics, "
+            "run python3 -m runtime.iec_parity_pack "
+            "gap-report against that pack. apply-metrics+merge+gap-report "
+            "pairing. Hint only — does not run gap-report here or in CI. "
             "When PANORAMIX_RUNTIME_ROOT is known, hint is cd+cmd; "
             "else a copy-paste template. Never invent metrics.wall_time_sec. "
-            "Never stamp north_star_done. merge ≠ fill; merge ≠ Done; "
+            "Never stamp north_star_done. apply-metrics ≠ fill; "
+            "apply-metrics ≠ Done; merge ≠ fill; merge ≠ Done; "
             "assist ≠ fill; assist ≠ Done; gap-report ≠ Done. "
             f"Runtime tip {RUNTIME_PACK_GAP_REPORT_DOCS_PIN} (PR #126, or main). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
             f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
             "(PR #130, or main). "
+            f"Apply-metrics tip {RUNTIME_PACK_APPLY_METRICS_PIN} "
+            "(PR #132, or main). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
         ),
@@ -680,6 +707,8 @@ def merge_plan(
         "docs_pr": 122,
         "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
         "merge_docs_pr": 130,
+        "apply_metrics_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
+        "apply_metrics_pr": 132,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "guest_gap_report_tip": GUEST_GAP_REPORT_TIP,
         "guest_gap_report_pr": 60,
@@ -708,6 +737,92 @@ def merge_plan(
             f"Runtime tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
             f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
             "(PR #130, or main). "
+            f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
+            f"Apply-metrics tip {RUNTIME_PACK_APPLY_METRICS_PIN} "
+            "(PR #132, or main). "
+            f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
+            "Does not write the live pack. Not #70 Done. Not #78 Done."
+        ),
+    }
+
+
+def apply_metrics_plan(
+    *,
+    runtime_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Hint for ``runtime.iec_parity_pack apply-metrics``. Does not run it.
+
+    When ``PANORAMIX_RUNTIME_ROOT`` is known, show cd+cmd. Else a
+    copy-paste template. apply-metrics+merge+gap-report pairing.
+    apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done.
+    Does not supply wall numbers. Never invent walls. Does not
+    write the pack.
+    """
+    known = _known_runtime_root(runtime_root)
+    template = known is None
+    cd = known if known is not None else RUNTIME_ROOT_TEMPLATE
+    hint = (
+        f"cd {cd} && {APPLY_METRICS_CMD} {OFFBOX_IEC_PARITY_PACK} "
+        f"{APPLY_METRICS_FROM_DURABLE}"
+    )
+    return {
+        "cmd": APPLY_METRICS_CMD,
+        "pack": OFFBOX_IEC_PARITY_PACK,
+        "from_durable_panoramix": True,
+        "from_durable_arg": APPLY_METRICS_FROM_DURABLE,
+        "cd": cd,
+        "hint": hint,
+        "template": template,
+        "runtime_root_known": not template,
+        "executes": False,
+        "executes_in_ci": False,
+        "supplies_wall_numbers": False,
+        "runtime_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
+        "or": "main",
+        "runtime_pr": 132,
+        "merge_tip": RUNTIME_PACK_MERGE_PIN,
+        "merge_pr": 128,
+        "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
+        "merge_docs_pr": 130,
+        "gap_report_tip": RUNTIME_PACK_GAP_REPORT_PIN,
+        "gap_report_pr": 124,
+        "gap_report_docs_tip": RUNTIME_PACK_GAP_REPORT_DOCS_PIN,
+        "gap_report_docs_pr": 126,
+        "docs_tip": RUNTIME_PACK_DOCS_PIN,
+        "docs_pr": 122,
+        "wall_feature_tip": RUNTIME_WALL_PIN,
+        "guest_merge_tip": GUEST_MERGE_TIP,
+        "guest_merge_pr": 64,
+        "omit_when_missing": True,
+        "invent": False,
+        "invent_wall_time_sec": False,
+        "forecast": False,
+        "ifrs17": False,
+        "iec_spa": False,
+        "writes_live_pack": False,
+        "assist_ne_fill": True,
+        "apply_metrics_ne_fill": True,
+        "apply_metrics_ne_done": True,
+        "merge_ne_fill": True,
+        "merge_ne_done": True,
+        "gap_report_ne_done": True,
+        "north_star_done": False,
+        "note": (
+            "After merge (pack_fill.merge), write operator-measured live "
+            "walls with python3 -m runtime.iec_parity_pack apply-metrics "
+            "… --from-durable-panoramix (derive panoramix seconds from "
+            "already-present durable.wall_elapsed_ms.panoramix; refuse if "
+            "missing). Hint does not supply wall numbers. Then run "
+            "gap-report (pack_fill.gap_report). "
+            "apply-metrics+merge+gap-report pairing. "
+            "Hint only — does not run apply-metrics here or in CI. "
+            "When PANORAMIX_RUNTIME_ROOT is known, hint is cd+cmd; "
+            "else a copy-paste template. Never invent metrics.wall_time_sec. "
+            "Never stamp north_star_done. apply-metrics ≠ fill; "
+            "apply-metrics ≠ Done; assist ≠ Done; merge ≠ fill; "
+            "merge ≠ Done; gap-report ≠ Done. "
+            f"Runtime tip {RUNTIME_PACK_APPLY_METRICS_PIN} (PR #132, or main). "
+            f"Merge tip remains {RUNTIME_PACK_MERGE_PIN} (PR #128). "
             f"Gap-report tip remains {RUNTIME_PACK_GAP_REPORT_PIN} (PR #124). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Does not write the live pack. Not #70 Done. Not #78 Done."
@@ -774,6 +889,8 @@ def pack_fill_plan(
         "merge_pr": 128,
         "merge_docs_tip": RUNTIME_PACK_MERGE_DOCS_PIN,
         "merge_docs_pr": 130,
+        "apply_metrics_tip": RUNTIME_PACK_APPLY_METRICS_PIN,
+        "apply_metrics_pr": 132,
         "schema_pr": 118,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
@@ -784,6 +901,8 @@ def pack_fill_plan(
         "iec_spa": False,
         "writes_live_pack": False,
         "assist_ne_fill": True,
+        "apply_metrics_ne_fill": True,
+        "apply_metrics_ne_done": True,
         "merge_ne_fill": True,
         "merge_ne_done": True,
         "gap_report_ne_done": True,
@@ -792,6 +911,7 @@ def pack_fill_plan(
         "tip_sources": sources,
         "fragment": fragment,
         "skeleton_handoff": skeleton_handoff_plan(),
+        "apply_metrics": apply_metrics_plan(runtime_root=runtime_root),
         "merge": merge_plan(runtime_root=runtime_root),
         "gap_report": gap_report_plan(runtime_root=runtime_root),
         "note": (
@@ -801,12 +921,16 @@ def pack_fill_plan(
             "(file or stdin) or flags. Overlay with "
             "python3 -m runtime.iec_parity_pack merge … --from-json "
             "(pack_fill.merge hint: cd+cmd when PANORAMIX_RUNTIME_ROOT "
-            "known, else a copy-paste template). Then run "
+            "known, else a copy-paste template). Then apply-metrics "
+            "(pack_fill.apply_metrics hint: cd+cmd when "
+            "PANORAMIX_RUNTIME_ROOT known, else a copy-paste template; "
+            "does not supply wall numbers) and run "
             "python3 -m runtime.iec_parity_pack gap-report against that pack "
-            "(pack_fill.gap_report hint). merge+gap-report pairing. "
-            "Hint only — does not run merge or gap-report. Assist for "
-            "runtime #78 D fill checklist only. Does not write the full "
-            "live pack. Does not stamp #70 UX Done / north_star_done. "
+            "(pack_fill.gap_report hint). apply-metrics+merge+gap-report "
+            "pairing. Hint only — does not run apply-metrics, merge, or "
+            "gap-report. Assist for runtime #78 D fill checklist only. "
+            "Does not write the full live pack. Does not stamp #70 UX Done "
+            "/ north_star_done. "
             f"Runtime tip {RUNTIME_PACK_TIP} (#120 skeleton|validate, or main). "
             f"Docs tip {RUNTIME_PACK_DOCS_PIN} (PR #122 WSL assist-smoke "
             "stamp lineage). "
@@ -817,13 +941,17 @@ def pack_fill_plan(
             f"Merge tip {RUNTIME_PACK_MERGE_PIN} (PR #128, or main). "
             f"Merge docs tip {RUNTIME_PACK_MERGE_DOCS_PIN} "
             "(PR #130, or main). "
+            f"Apply-metrics tip {RUNTIME_PACK_APPLY_METRICS_PIN} "
+            "(PR #132, or main). "
             "Schema / checklist era remains #118. "
             f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             f"Guest gap-report tip {GUEST_GAP_REPORT_TIP} (PR #60). "
+            f"Guest merge tip {GUEST_MERGE_TIP} (PR #64). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Durable wall/stage elapsed only when measured from the hooked "
             "run. Omit when missing. Never invent. Never invent "
             "metrics.wall_time_sec. assist ≠ fill; assist ≠ Done; "
+            "apply-metrics ≠ fill; apply-metrics ≠ Done; "
             "merge ≠ fill; merge ≠ Done; gap-report ≠ Done. "
             "Not a forecast. Not IFRS17. Not iec SPA. Not #70 Done."
         ),

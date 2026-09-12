@@ -27,19 +27,24 @@ runtime.iec_parity_pack skeleton|validate, or main); docs tip
 tip 84cb202 (PR #124 gap-report); gap-report docs tip
 aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
 (PR #128 iec_parity_pack merge, or main); merge docs tip
-6ecb645 (PR #130 stamp link, or main); guest emit
-tip b859466 (#52); guest gap-report tip eb48605 (#60).
-Wall feature tip remains 9b6646e8. Guest
-fragment can feed optional tips / measured durable into
-python3 -m runtime.iec_parity_pack skeleton via --from-json
-(file or stdin) or flags; omit durable when missing. Dry-run /
-live record pack_fill.merge (cd+cmd when
-PANORAMIX_RUNTIME_ROOT known, else a copy-paste template) for
-python3 -m runtime.iec_parity_pack merge … --from-json, then
-pack_fill.gap_report for gap-report (merge+gap-report pairing).
-Hint only — does not run merge or gap-report. Never
-invent metrics.wall_time_sec. assist ≠ fill; assist ≠ Done;
-merge ≠ fill; merge ≠ Done; gap-report ≠ Done.
+6ecb645 (PR #130 stamp link, or main); apply-metrics tip
+5d399f7 (PR #132 iec_parity_pack apply-metrics, or main);
+guest emit tip b859466 (#52); guest gap-report tip eb48605
+(#60); guest merge tip 39064d5 (#64). Wall feature tip
+remains 9b6646e8. Guest fragment can feed optional tips /
+measured durable into python3 -m runtime.iec_parity_pack
+skeleton via --from-json (file or stdin) or flags; omit
+durable when missing. Dry-run / live record
+pack_fill.apply_metrics (cd+cmd when PANORAMIX_RUNTIME_ROOT
+known, else a copy-paste template) for python3 -m
+runtime.iec_parity_pack apply-metrics … --from-durable-panoramix
+(does not supply wall numbers), pack_fill.merge for merge …
+--from-json, then pack_fill.gap_report for gap-report
+(apply-metrics+merge+gap-report pairing). Hint only — does
+not run apply-metrics, merge, or gap-report. Never invent
+metrics.wall_time_sec. assist ≠ fill; assist ≠ Done;
+apply-metrics ≠ fill; apply-metrics ≠ Done; merge ≠ fill;
+merge ≠ Done; gap-report ≠ Done.
 Does not write the full live pack. Not a forecast. Not IFRS17.
 Not iec SPA. Handoff docs panel is operator clarity, not a
 second control plane. Does not close runtime
