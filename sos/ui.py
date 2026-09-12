@@ -358,6 +358,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Optional per-stage elapsed on the durable timeline only when
     progress or events provide real timestamps — omitted when
     missing; never invented.
+    Optional durable <code>wall_elapsed_ms</code> appears on job
+    detail / progress only when the hook progress/status JSON
+    includes it — omitted when missing; never invented.
+    Durable wall is not a forecast, not IFRS17, not iec SPA.
     Event trail prefers durable reserve-temporal JSONL when a hook
     provides it; otherwise process-memory. Filter by kind and
     download JSON / JSONL for local salvage (not a SIEM / not a
@@ -837,6 +841,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return fmtSecs(s);
     }
 
+    function durableWallMs(prog) {
+      if (!prog) return null;
+      const raw = prog.wall_elapsed_ms;
+      if (raw == null || !Number.isFinite(Number(raw)) || Number(raw) < 0) return null;
+      return Number(raw);
+    }
+
     function fmtSecs(s) {
       if (s == null || !Number.isFinite(Number(s))) return "—";
       s = Number(s);
@@ -970,6 +981,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
         text += " Per-stage elapsed only when progress/events provide real timestamps — omitted when missing.";
         line.textContent = text;
         wrap.appendChild(line);
+        const wallMs = durableWallMs(prog);
+        if (wallMs != null) {
+          const wall = document.createElement("p");
+          wall.className = "hint wall";
+          wall.textContent = "Durable wall " + fmtSecs(wallMs / 1000)
+            + " — from reserve-temporal timestamps; not a forecast; not IFRS17; not iec SPA.";
+          wrap.appendChild(wall);
+        }
         return wrap;
       }
       const total = Number((prog && prog.stages_total != null) ? prog.stages_total : local.stages);
@@ -1448,6 +1467,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       if (prog && prog.fraction != null) {
         rows.push(...dlRow("fraction", String(prog.fraction)));
+      }
+      const wallMs = durableWallMs(prog);
+      if (wallMs != null) {
+        rows.push(...dlRow(
+          "durable wall",
+          fmtSecs(wallMs / 1000) + " · not a forecast; not IFRS17; not iec SPA"
+        ));
       }
       const trail = (lastEvents && lastEvents.id === job.id) ? lastEvents : null;
       const evSource = (trail && trail.source) || job.events_source;

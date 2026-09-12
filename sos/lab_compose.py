@@ -13,11 +13,13 @@ on the existing hook seam. Fail-closed without hook or payload
 
 Honesty: fail-closed without env. Not guest→mesh ctl. Not SIEM.
 Not IFRS17. Pin 0.5. WorkHandoff triple only. Optional durable
-stage elapsed from runtime tip ``9ba95bbb`` (or main, PR #110);
-omit when missing — never invent. Handoff docs panel is operator
-clarity, not a second control plane. Does not close runtime
-#70 / #78. Does not unlock #61 / #29. Does not stamp north_star_done.
-Cloud stays locked.
+stage elapsed from runtime tip ``9ba95bbb`` / docs tip
+``5dc191cb`` (PR #112, or main); omit when missing — never invent.
+Optional ``wall_elapsed_ms`` when hook progress/status JSON
+includes it; omit when missing — never invent. Handoff docs
+panel is operator clarity, not a second control plane. Does not close runtime
+#70 / #78. Does not unlock #61 / #29. Does not
+stamp north_star_done. Cloud stays locked.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ DEFAULT_CTL_PORT = 19215
 DEFAULT_BINDING_REL = "bindings/local-reserve-temporal.example.yaml"
 RUNTIME_SERVE_PIN = "fb901542"
 RUNTIME_ELAPSED_PIN = "9ba95bbb"
+RUNTIME_DOCS_PIN = "5dc191cb"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
 
 HONESTY_LINES = (
@@ -50,7 +53,8 @@ HONESTY_LINES = (
     "re-admit is a new admit (not resume-from-failed)",
     "no silent stub re-admit",
     "path-slice elapsed omitted when timestamps missing (never invent)",
-    "optional durable stage elapsed from runtime tip 9ba95bbb (or main)",
+    "optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)",
+    "optional durable wall_elapsed_ms when hook provides it (omit when missing)",
     "handoff docs panel is operator clarity (not a second control plane)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
@@ -104,6 +108,7 @@ class ComposePlan:
             "guest_to_mesh_ctl": False,
             "readmit": readmit_plan(),
             "timeline_elapsed": elapsed_plan(),
+            "wall_elapsed": wall_plan(),
             "handoff_docs": handoff_docs_plan(),
         }
 
@@ -146,18 +151,45 @@ def elapsed_plan() -> dict[str, Any]:
     return {
         "when": "durable progress stages[].elapsed_ms and/or GET /events timestamps",
         "runtime_tip": RUNTIME_ELAPSED_PIN,
+        "docs_tip": RUNTIME_DOCS_PIN,
         "or": "main",
         "runtime_pr": 110,
+        "docs_pr": 112,
         "omit_when_missing": True,
         "invent": False,
         "north_star_done": False,
         "note": (
             "Optional per-stage elapsed on the path-slice timeline. "
             f"Runtime tip {RUNTIME_ELAPSED_PIN} (or main, PR #110) can "
-            "supply durable stages[].elapsed_ms on progress. Prefer "
-            "progress elapsed_ms when present; else derive from durable "
-            "event timestamps. Omit when missing. Never invent. "
+            "supply durable stages[].elapsed_ms on progress. Docs tip "
+            f"{RUNTIME_DOCS_PIN} after PR #112 pins that lineage on main. "
+            "Prefer progress elapsed_ms when present; else derive from "
+            "durable event timestamps. Omit when missing. Never invent. "
             "Not iec planner. Not #70 Done."
+        ),
+    }
+
+
+def wall_plan() -> dict[str, Any]:
+    """Dry-run honesty for optional durable job wall. No invented numbers."""
+    return {
+        "when": "durable progress/status wall_elapsed_ms (or equivalent)",
+        "runtime_tip": RUNTIME_DOCS_PIN,
+        "lineage": RUNTIME_ELAPSED_PIN,
+        "or": "main",
+        "omit_when_missing": True,
+        "invent": False,
+        "forecast": False,
+        "ifrs17": False,
+        "iec_spa": False,
+        "north_star_done": False,
+        "note": (
+            "Optional durable job wall on job detail / progress. "
+            "Accept when hook progress/status JSON includes "
+            "wall_elapsed_ms (or equivalent). Omit when missing. "
+            "Never invent. Not a forecast. Not IFRS17. Not iec SPA. "
+            f"Docs tip {RUNTIME_DOCS_PIN} / lineage {RUNTIME_ELAPSED_PIN}. "
+            "Not #70 Done."
         ),
     }
 

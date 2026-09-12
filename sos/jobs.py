@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sos.compare import compare_vs_priors
-from sos.stage_elapsed import attach_timeline_elapsed
+from sos.stage_elapsed import (
+    WALL_SOURCE_PROGRESS,
+    WALL_SOURCE_STATUS,
+    attach_timeline_elapsed,
+    wall_elapsed_ms_from_durable,
+)
 from sos.errors import (
     CTL_HTTP_UNREACHABLE_DETAIL,
     ERROR_CTL_HTTP_UNREACHABLE,
@@ -115,7 +120,13 @@ DURABLE_PROGRESS_NOTE = (
     "Durable reserve-temporal path-slices — "
     "not iec planner parallelism; not iec chunk progress. "
     "Optional per-stage elapsed from progress or event timestamps "
-    "when present; omitted when missing — never invented"
+    "when present; omitted when missing — never invented. "
+    "Optional wall_elapsed_ms from durable progress/status when "
+    "present; omitted when missing — never invented"
+)
+DURABLE_WALL_NOTE = (
+    "Durable wall from reserve-temporal timestamps — "
+    "not a forecast; not IFRS17; not iec SPA"
 )
 TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
@@ -572,7 +583,38 @@ def _has_progress_counters(data: dict[str, Any]) -> bool:
     return any(key in blob for blob in blobs for key in _PROGRESS_COUNTER_KEYS)
 
 
-def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
+def _attach_wall_elapsed(
+    payload: dict[str, Any],
+    *,
+    durable: dict[str, Any] | None,
+    status: dict[str, Any] | None = None,
+) -> None:
+    """Copy an honest hook wall onto durable progress. Omit when absent."""
+    ms = wall_elapsed_ms_from_durable(durable)
+    source = WALL_SOURCE_PROGRESS if ms is not None else None
+    if ms is None:
+        ms = wall_elapsed_ms_from_durable(status)
+        if ms is not None:
+            source = WALL_SOURCE_STATUS
+    if ms is None:
+        return
+    payload["wall_elapsed_ms"] = ms
+    payload["wall_source"] = source
+    payload["wall_note"] = DURABLE_WALL_NOTE
+
+
+def _hook_status_payload(hook: Any) -> dict[str, Any] | None:
+    """Last ctl status JSON when a lab hook cached it. Else omit."""
+    raw = getattr(hook, "last_status_payload", None)
+    return raw if isinstance(raw, dict) and raw else None
+
+
+def _progress_from_durable(
+    job: Job,
+    durable: dict[str, Any],
+    *,
+    status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Prefer hook counters. Honesty: path-slices, not iec planner parallelism."""
     nested_raw = durable.get("progress")
     nested = (
@@ -608,6 +650,7 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
         payload["timeline"] = timeline
         if elapsed_source:
             payload["elapsed_source"] = elapsed_source
+    _attach_wall_elapsed(payload, durable=durable, status=status)
     _attach_investigate(payload, job, hooked=True)
     return payload
 
@@ -992,7 +1035,11 @@ class JobStore:
                 self._apply_unreachable(job_id, exc)
                 return _progress_from_unreachable(self.get(job_id))
             if durable is not None:
-                return _progress_from_durable(job, durable)
+                return _progress_from_durable(
+                    job,
+                    durable,
+                    status=_hook_status_payload(self.runtime_hook),
+                )
         return job.to_progress()
 
     def events(

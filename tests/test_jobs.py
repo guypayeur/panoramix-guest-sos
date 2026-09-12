@@ -1225,8 +1225,11 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("not iec planner", body["note"].lower())
         self.assertIn("not iec chunk progress", body["note"])
         self.assertIn("omitted when missing", body["note"])
+        self.assertIn("wall_elapsed_ms", body["note"])
         self.assertNotIn("parallelism claimed", body["note"])
         self.assertNotIn("elapsed_source", body)
+        self.assertNotIn("wall_elapsed_ms", body)
+        self.assertNotIn("wall_source", body)
         for item in body["timeline"]:
             self.assertNotIn("elapsed_ms", item)
         catalog = body["investigate"]["catalog"]
@@ -1268,6 +1271,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("stages_completed", stubby)
         self.assertNotIn("fraction", stubby)
         self.assertNotIn("timeline", stubby)
+        self.assertNotIn("wall_elapsed_ms", stubby)
         fallback.cancel(backed.id)
 
     def test_progress_durable_hook_provided_names(self) -> None:
@@ -1563,6 +1567,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("verified @ `d86552e`", text, name)
             self.assertIn("verified @ `3a164cd`", text, name)
             self.assertIn("verified @ `9ba95bbb`", text, name)
+            self.assertIn("5dc191cb", text, name)
+            self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn(".runtime/reserve-temporal/events/", text, name)
             self.assertIn("stages_completed", text, name)
             self.assertIn("stages_total", text, name)
@@ -1625,6 +1631,8 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("/progress", text, name)
             self.assertIn("omitted when missing", text, name)
             self.assertIn("9ba95bbb", text, name)
+            self.assertIn("5dc191cb", text, name)
+            self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("not a second control plane", text, name)
             self.assertIn("/events", text, name)
             self.assertIn("?kind=", text, name)
@@ -1715,7 +1723,10 @@ class JobStoreTests(unittest.TestCase):
             ux,
         )
         self.assertIn("- [x] Optional path-slice stage elapsed", ux)
+        self.assertIn("- [x] Optional durable wall_elapsed_ms", ux)
         self.assertIn("9ba95bbb", ux)
+        self.assertIn("5dc191cb", ux)
+        self.assertIn("wall_elapsed_ms", ux)
         self.assertIn("- [x] Compact handoff docs affordance", ux)
         self.assertIn(
             "| 2.2 Investigate | SPA progress + catalog + Slack | **match** (thinner) |",
@@ -1804,6 +1815,7 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("verified @ `d86552e`", ux)
         self.assertIn("verified @ `3a164cd`", ux)
         self.assertIn("verified @ `9ba95bbb`", ux)
+        self.assertIn("5dc191cb", ux)
         self.assertNotIn("may not yet expose", ux.lower())
         self.assertIn(".runtime/reserve-temporal/events/", ux)
         self.assertIn("stages_completed", ux)

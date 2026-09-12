@@ -19,7 +19,9 @@ from sos.lab_compose import (
     OPAQUE_HANDOFF_BODY,
     elapsed_plan,
     handoff_docs_plan,
+    wall_plan,
     RECORDED_RESERVE_BODY,
+    RUNTIME_DOCS_PIN,
     RUNTIME_ELAPSED_PIN,
     RUNTIME_SERVE_PIN,
     LabComposeReadmitHook,
@@ -72,6 +74,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(DEFAULT_GUEST_PORT, 18280)
         self.assertEqual(RUNTIME_SERVE_PIN, "fb901542")
         self.assertEqual(RUNTIME_ELAPSED_PIN, "9ba95bbb")
+        self.assertEqual(RUNTIME_DOCS_PIN, "5dc191cb")
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
 
@@ -141,15 +144,27 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(elapsed["invent"], False)
         self.assertIs(elapsed["north_star_done"], False)
         self.assertEqual(elapsed["runtime_tip"], "9ba95bbb")
+        self.assertEqual(elapsed["docs_tip"], "5dc191cb")
         self.assertEqual(elapsed["or"], "main")
         self.assertEqual(elapsed_plan()["when"], elapsed["when"])
+        wall = parsed["wall_elapsed"]
+        self.assertIs(wall["omit_when_missing"], True)
+        self.assertIs(wall["invent"], False)
+        self.assertIs(wall["forecast"], False)
+        self.assertIs(wall["ifrs17"], False)
+        self.assertIs(wall["iec_spa"], False)
+        self.assertIs(wall["north_star_done"], False)
+        self.assertEqual(wall["runtime_tip"], "5dc191cb")
+        self.assertEqual(wall["lineage"], "9ba95bbb")
+        self.assertEqual(wall_plan()["when"], wall["when"])
         docs = parsed["handoff_docs"]
         self.assertIs(docs["panel"], True)
         self.assertIs(docs["second_control_plane"], False)
         self.assertIs(docs["north_star_done"], False)
         self.assertEqual(handoff_docs_plan()["note"], docs["note"])
         self.assertIn("path-slice elapsed omitted when timestamps missing (never invent)", plan.honesty)
-        self.assertIn("optional durable stage elapsed from runtime tip 9ba95bbb (or main)", plan.honesty)
+        self.assertIn("optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)", plan.honesty)
+        self.assertIn("optional durable wall_elapsed_ms when hook provides it (omit when missing)", plan.honesty)
         self.assertIn("handoff docs panel is operator clarity (not a second control plane)", plan.honesty)
 
     def test_runtime_root_usable_fail_closed(self) -> None:
@@ -423,9 +438,16 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(smoke["north_star_done"], False)
         elapsed = plan["timeline_elapsed"]
         self.assertEqual(elapsed["runtime_tip"], "9ba95bbb")
+        self.assertEqual(elapsed["docs_tip"], "5dc191cb")
         self.assertEqual(elapsed["or"], "main")
         self.assertIs(elapsed["omit_when_missing"], True)
         self.assertIs(elapsed["invent"], False)
+        wall = plan["wall_elapsed"]
+        self.assertEqual(wall["runtime_tip"], "5dc191cb")
+        self.assertEqual(wall["lineage"], "9ba95bbb")
+        self.assertIs(wall["omit_when_missing"], True)
+        self.assertIs(wall["invent"], False)
+        self.assertIs(wall["forecast"], False)
         self.assertIs(plan["handoff_docs"]["panel"], True)
         self.assertIs(plan["handoff_docs"]["second_control_plane"], False)
         self.assertIs(plan["handoff_docs"]["north_star_done"], False)
@@ -495,6 +517,8 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("no silent stub", text.lower(), name)
             self.assertIn("not resume-from-failed", text.lower(), name)
             self.assertIn("9ba95bbb", text, name)
+            self.assertIn("5dc191cb", text, name)
+            self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("handoff docs", text.lower(), name)
             self.assertIn("omit when missing", text.lower(), name)
             self.assertIn("never invent", text.lower(), name)
@@ -505,6 +529,7 @@ class HonestyTests(unittest.TestCase):
         lab = (ROOT / "docs" / "lab-compose.md").read_text(encoding="utf-8")
         self.assertIn("Handoff docs", lab)
         self.assertIn("timeline_elapsed", lab)
+        self.assertIn("wall_elapsed", lab)
         self.assertIn("omit_when_missing", lab)
         self.assertNotIn("may not yet expose", lab.lower())
 
@@ -534,6 +559,10 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("does **not** mark #70 Done", ux)
         self.assertIn("9ba95bbb", ux)
         self.assertIn("verified @ `9ba95bbb`", ux)
+        self.assertIn("5dc191cb", ux)
+        self.assertIn("wall_elapsed_ms", ux)
+        self.assertIn("- [x] Optional durable wall_elapsed_ms", ux)
+        self.assertNotIn("- [x] Operator/actuary path", ux)
         self.assertNotIn("may not yet expose", ux.lower())
         self.assertIn("- [ ] `north_star_done: true`", ux)
         self.assertNotIn("- [x] Operator/actuary path", ux)
