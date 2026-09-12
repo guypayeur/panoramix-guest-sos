@@ -146,6 +146,25 @@ def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
     from sos.lab_ctl_http import LabReserveTemporalHttpHook
 
     if isinstance(hook, LabReserveTemporalHttpHook):
+        from sos.errors import ERROR_CTL_HTTP_UNREACHABLE
+
+        if hook.last_unreachable is not None:
+            return {
+                "kind": HOOK_KIND_CTL_HTTP,
+                "durable_path": False,
+                "reachable": False,
+                "error": ERROR_CTL_HTTP_UNREACHABLE,
+                "adapter": "LabReserveTemporalHttpHook",
+                "ctl_http": hook.base_url,
+                "guest_to_mesh_ctl": False,
+                "north_star_done": False,
+                "note": (
+                    "lab serve down — PANORAMIX_CTL_HTTP origin is "
+                    "unreachable. Fail closed — not durable. "
+                    "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
+                    "Not #70 Done. north_star_done false."
+                ),
+            }
         return {
             "kind": HOOK_KIND_CTL_HTTP,
             "durable_path": True,

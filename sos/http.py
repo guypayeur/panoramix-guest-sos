@@ -110,9 +110,20 @@ INFO_PAYLOAD = {
                 "seam (not mesh HTTP; not guest→mesh ctl). "
                 "One-shot lab: scripts/lab_compose_reserve_temporal.py "
                 "(runtime.serve + PANORAMIX_CTL_HTTP). "
+                "When PANORAMIX_CTL_HTTP is set but runtime.serve is down, "
+                "admit/status/progress fail closed with ctl_http_unreachable "
+                "(lab-serve down) — not a hung poll, not pretend durable. "
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
+        "ctl_http_unreachable": (
+            "When PANORAMIX_CTL_HTTP is a valid loopback origin but "
+            "runtime.serve is down (connection refused / timeout), "
+            "admit/status/progress fail closed with error "
+            "ctl_http_unreachable (lab-serve down). Not a hung poll. "
+            "Not pretend durable. Without the env, inert stub is "
+            "unchanged. Not #70 Done."
+        ),
         "list": "GET /v0/jobs",
         "list_status": "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",
         "list_status_honesty": (

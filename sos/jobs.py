@@ -25,7 +25,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sos.compare import compare_vs_priors
-from sos.errors import AlreadyTerminal, IllegalTransition, JobNotFound, PayloadUnknown, StubOnly
+from sos.errors import (
+    CTL_HTTP_UNREACHABLE_DETAIL,
+    ERROR_CTL_HTTP_UNREACHABLE,
+    AlreadyTerminal,
+    CtlHttpUnreachable,
+    IllegalTransition,
+    JobNotFound,
+    PayloadUnknown,
+    StubOnly,
+    lab_serve_affordance,
+)
 from sos.handoff import ParsedSubmit, parse_submit, payload_export, HANDOFF_EXPORT_KEYS
 from sos.persist import (
     RESTART_LOST_ERROR,
@@ -74,6 +84,7 @@ from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 DEFAULT_STEP_SECONDS = 0.15
 PROGRESS_SOURCE_STUB = "stub"
 PROGRESS_SOURCE_DURABLE = "durable"
+PROGRESS_SOURCE_UNREACHABLE = "unreachable"
 EVENTS_SOURCE_MEMORY = "memory"
 EVENTS_SOURCE_DURABLE = "durable"
 _PROGRESS_COUNTER_KEYS = (
@@ -171,6 +182,8 @@ class Job:
         recoverability = _recoverability_payload(self)
         if recoverability:
             payload["recoverability"] = recoverability
+        if self.error == ERROR_CTL_HTTP_UNREACHABLE:
+            payload["lab_serve"] = lab_serve_affordance()
         return payload
 
     def to_progress(self) -> dict[str, Any]:
@@ -343,10 +356,21 @@ def _copy_events(events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [dict(item) for item in events] if events else []
 
 
-def _pause_resume_honest(job: Job) -> bool:
-    """True only when a runtime ref / runtime-backed path exists."""
+def _is_runtime_backed(job: Job) -> bool:
+    """True when a runtime ref / runtime-backed path exists."""
     backed = (job.local or {}).get("backed")
     return backed == BACKED_RUNTIME or job.runtime_ref is not None
+
+
+def _pause_resume_honest(job: Job) -> bool:
+    """True only when a live durable path exists.
+
+    Fail closed when CTL_HTTP is opted in but lab serve is down —
+    do not pretend pause/resume still works.
+    """
+    if job.error == ERROR_CTL_HTTP_UNREACHABLE:
+        return False
+    return _is_runtime_backed(job)
 
 
 def _copy_progress_counters(src: dict[str, Any]) -> dict[str, Any]:
@@ -521,6 +545,21 @@ def _progress_from_durable(job: Job, durable: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _progress_from_unreachable(job: Job) -> dict[str, Any]:
+    """Honest progress when opted-in CTL_HTTP cannot connect."""
+    return {
+        "id": job.id,
+        "status": job.status,
+        "message": job.message or CTL_HTTP_UNREACHABLE_DETAIL,
+        "error": ERROR_CTL_HTTP_UNREACHABLE,
+        "backed": (job.local or {}).get("backed"),
+        "pause_resume": False,
+        "source": PROGRESS_SOURCE_UNREACHABLE,
+        "note": CTL_HTTP_UNREACHABLE_DETAIL,
+        "lab_serve": lab_serve_affordance(),
+    }
+
+
 def _normalize_event(item: Any) -> dict[str, Any] | None:
     """Keep JSONL-style records readable: at least ``event`` + copied fields."""
     if not isinstance(item, dict):
@@ -668,7 +707,12 @@ class JobStore:
             self._append_event_locked(job, "submitted", submit_detail)
             self._persist_locked(job)
 
-        runtime_ref = self._try_admit(job)
+        try:
+            runtime_ref = self._try_admit(job)
+        except CtlHttpUnreachable as exc:
+            self._fail_admit_unreachable(job_id, exc)
+            exc.fields["id"] = job_id
+            raise
         if runtime_ref is not None:
             with self._lock:
                 live = self._jobs.get(job_id)
@@ -705,8 +749,46 @@ class JobStore:
     def _try_admit(self, job: Job) -> dict[str, Any] | None:
         try:
             return self.runtime_hook.admit(job.to_handoff(), job.payload_bytes)
+        except CtlHttpUnreachable:
+            raise
         except Exception:
             return None
+
+    def _fail_admit_unreachable(
+        self, job_id: str, exc: CtlHttpUnreachable
+    ) -> None:
+        """Record a failed job. Do not start the stub. Not durable."""
+        del exc
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None:
+                return
+            live.status = STATUS_FAILED
+            live.error = ERROR_CTL_HTTP_UNREACHABLE
+            live.message = CTL_HTTP_UNREACHABLE_DETAIL
+            live.updated_at = self._clock()
+            merged = dict(live.local) if live.local else {}
+            merged["backed"] = BACKED_STUB
+            live.local = merged
+            self._append_event_locked(live, "failed", CTL_HTTP_UNREACHABLE_DETAIL)
+            self._persist_locked(live)
+
+    def _apply_unreachable(self, job_id: str, exc: CtlHttpUnreachable) -> None:
+        """Attach the lab-serve-down affordance. Do not invent ctl status."""
+        del exc
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None:
+                return
+            already = live.error == ERROR_CTL_HTTP_UNREACHABLE
+            live.error = ERROR_CTL_HTTP_UNREACHABLE
+            live.message = CTL_HTTP_UNREACHABLE_DETAIL
+            live.updated_at = self._clock()
+            if not already:
+                self._append_event_locked(
+                    live, ERROR_CTL_HTTP_UNREACHABLE, CTL_HTTP_UNREACHABLE_DETAIL
+                )
+            self._persist_locked(live)
 
     def get(self, job_id: str) -> Job:
         """Snapshot plus hook.status() follow when ``runtime_ref`` exists."""
@@ -735,8 +817,14 @@ class JobStore:
         counters are not scraped from status strings.
         """
         job = self.get(job_id)
+        if job.error == ERROR_CTL_HTTP_UNREACHABLE:
+            return _progress_from_unreachable(job)
         if self._is_durable(job):
-            durable = self._try_runtime_progress(job_id, job.runtime_ref)
+            try:
+                durable = self._try_runtime_progress(job_id, job.runtime_ref)
+            except CtlHttpUnreachable as exc:
+                self._apply_unreachable(job_id, exc)
+                return _progress_from_unreachable(self.get(job_id))
             if durable is not None:
                 return _progress_from_durable(job, durable)
         return job.to_progress()
@@ -821,7 +909,7 @@ class JobStore:
         return self._pause_or_resume(job_id, "resume")
 
     def _is_durable(self, job: Job) -> bool:
-        return _pause_resume_honest(job)
+        return _is_runtime_backed(job)
 
     def _pause_or_resume(self, job_id: str, action: str) -> Job:
         wanted = STATUS_RUNNING if action == "pause" else STATUS_PAUSED
@@ -881,6 +969,9 @@ class JobStore:
             return False
         try:
             return bool(method(job_id, runtime_ref))
+        except CtlHttpUnreachable as exc:
+            self._apply_unreachable(job_id, exc)
+            raise
         except Exception:
             return False
 
@@ -892,6 +983,8 @@ class JobStore:
             return None
         try:
             reported = method(job_id, runtime_ref)
+        except CtlHttpUnreachable:
+            raise
         except Exception:
             return None
         if not isinstance(reported, dict) or not reported:
@@ -908,6 +1001,9 @@ class JobStore:
             return None
         try:
             reported = method(job_id, runtime_ref)
+        except CtlHttpUnreachable as exc:
+            self._apply_unreachable(job_id, exc)
+            return None
         except Exception:
             return None
         if not _has_durable_events(reported):
@@ -928,13 +1024,24 @@ class JobStore:
             runtime_ref = job.runtime_ref
         try:
             reported = self.runtime_hook.status(job_id, runtime_ref)
+        except CtlHttpUnreachable as exc:
+            self._apply_unreachable(job_id, exc)
+            return
         except Exception:
             return
         if not reported or reported not in WORK_STATUSES:
             return
         with self._lock:
             live = self._jobs.get(job_id)
-            if live is None or live.status in TERMINAL or live.status == reported:
+            if live is None or live.status in TERMINAL:
+                return
+            if live.error == ERROR_CTL_HTTP_UNREACHABLE:
+                live.error = None
+                if live.message == CTL_HTTP_UNREACHABLE_DETAIL:
+                    live.message = "status via runtime hook"
+                live.updated_at = self._clock()
+                self._persist_locked(live)
+            if live.status == reported:
                 return
         self._advance(
             job_id,
