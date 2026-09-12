@@ -232,7 +232,22 @@ def _runtime_ref_from_admit(
     status = _lifecycle_status(payload)
     if status:
         ref["status"] = status
+    iec_job_id = _honest_nested_id(payload.get("iec_job_id"))
+    if iec_job_id is None and isinstance(payload.get("handoff"), dict):
+        iec_job_id = _honest_nested_id(payload["handoff"].get("iec_job_id"))
+    if iec_job_id:
+        ref["iec_job_id"] = iec_job_id
     return ref
+
+
+def _honest_nested_id(value: Any) -> str | None:
+    """Pass through a hook/ctl identity. Omit empty / unknown. Never invent."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null", "unknown", "undefined"}:
+        return None
+    return text
 
 
 def _admit_handoff(handoff: dict[str, str]) -> dict[str, str]:
