@@ -373,7 +373,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Historical comparison is thinner: recent same-catalog (or same
     kind/class) jobs in guest history (in-process plus local lab files
     under <code>.sos/jobs</code> / <code>PANORAMIX_SOS_JOBS_DIR</code>
-    when persisted; fail-closed if disabled). Typical/ETA only from
+    when persisted; fail-closed if disabled). Elapsed prefers durable
+    <code>wall_elapsed_ms</code> when the hook or a persisted job field
+    includes it; else created/updated clocks. Typical/ETA only from
     succeeded prior walls when enough samples exist.
     Not a forecast. Not IFRS17. Not iec SPA historical widget.
     Failed/canceled jobs show a terminal/failure summary
@@ -1272,7 +1274,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         : payload.matched_by === "kind_class" ? "same kind/class"
         : "guest history";
       match.textContent = "Matched by " + by + " in guest history (n=" +
-        (payload.priors_n != null ? payload.priors_n : 0) + ").";
+        (payload.priors_n != null ? payload.priors_n : 0) +
+        "). Elapsed prefers durable wall when present.";
       wrap.appendChild(match);
       const thisLine = document.createElement("p");
       const thisElapsed = payload.this && payload.this.elapsed_s;

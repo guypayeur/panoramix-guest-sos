@@ -11,7 +11,8 @@ durable path signals hook.cancel() first (same honesty as pause),
 then prefers hook.status() so Temporal-backed runs show ctl
 lifecycle — not a stale stub clock. Stub-only stays local cancel.
 Historical comparison uses list/get identity (in-process plus local
-lab files when persisted). One-click re-admit posts the existing
+lab files when persisted) and prefers durable wall_elapsed_ms when
+the hook (or a persisted job field) includes it. One-click re-admit posts the existing
 handoff/payload through the same hook seam as a new admit when a
 durable hook is active; fail-closed without hook or payload (no
 silent stub). Default hook stays inert. Does not close
@@ -160,6 +161,7 @@ class Job:
     events_source: str | None = None
     events_durable: bool | None = None
     events_n: int | None = None
+    wall_elapsed_ms: int | None = None
 
     def to_seam(self) -> dict[str, str]:
         """Runtime-aligned projection: id/kind/class/payload_digest/status."""
@@ -1035,11 +1037,13 @@ class JobStore:
                 self._apply_unreachable(job_id, exc)
                 return _progress_from_unreachable(self.get(job_id))
             if durable is not None:
-                return _progress_from_durable(
+                payload = _progress_from_durable(
                     job,
                     durable,
                     status=_hook_status_payload(self.runtime_hook),
                 )
+                self._store_wall_ms(job.id, payload.get("wall_elapsed_ms"))
+                return payload
         return job.to_progress()
 
     def events(
@@ -1057,11 +1061,16 @@ class JobStore:
         """Vs recent same-catalog or same-kind/class jobs in guest history.
 
         Reuses ``list()`` / ``get()`` identity (in-process plus reloaded
-        lab files). No guest→ctl channel. Does not invent typical/ETA
-        without succeeded prior walls.
+        lab files). Prefers durable ``wall_elapsed_ms`` when the hook
+        or a persisted job field includes it. No guest→ctl channel.
+        Does not invent typical/ETA without succeeded prior walls.
         """
-        current = self.get(job_id)
-        peers = [job for job in self.list() if job.id != job_id]
+        current = self._remember_durable_wall(self.get(job_id))
+        peers = [
+            self._remember_durable_wall(job)
+            for job in self.list()
+            if job.id != job_id
+        ]
         return compare_vs_priors(current, peers, now=self._clock())
 
     def list(self, statuses: frozenset[str] | set[str] | None = None) -> list[Job]:
@@ -1123,6 +1132,68 @@ class JobStore:
 
     def _is_durable(self, job: Job) -> bool:
         return _is_runtime_backed(job)
+
+    def _store_wall_ms(self, job_id: str, ms: Any) -> None:
+        """Persist a real durable wall. Omit invalid. Never invent."""
+        if isinstance(ms, bool) or ms is None:
+            return
+        if isinstance(ms, int):
+            wall = ms if ms >= 0 else None
+        elif isinstance(ms, float) and ms >= 0 and ms == ms:
+            wall = int(round(ms))
+        else:
+            return
+        if wall is None:
+            return
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is None or live.wall_elapsed_ms == wall:
+                return
+            live.wall_elapsed_ms = wall
+            self._persist_locked(live)
+
+    def _remember_durable_wall(self, job: Job) -> Job:
+        """Prefer hook wall when present; keep a persisted wall for priors.
+
+        Terminal jobs that already have a real wall are left alone so
+        restart priors stay honest without a live hook. Never invents
+        a wall from guest clocks.
+        """
+        if job.status in TERMINAL and job.wall_elapsed_ms is not None:
+            return job
+        if (
+            not self._is_durable(job)
+            or job.error == ERROR_CTL_HTTP_UNREACHABLE
+        ):
+            return job
+        durable: dict[str, Any] | None = None
+        method = getattr(self.runtime_hook, "progress", None)
+        if callable(method):
+            try:
+                reported = method(job.id, job.runtime_ref)
+            except CtlHttpUnreachable:
+                reported = None
+            except Exception:
+                reported = None
+            if isinstance(reported, dict) and reported:
+                durable = reported
+        ms = wall_elapsed_ms_from_durable(durable)
+        if ms is None:
+            try:
+                self.runtime_hook.status(job.id, job.runtime_ref)
+            except CtlHttpUnreachable:
+                return job
+            except Exception:
+                return job
+            ms = wall_elapsed_ms_from_durable(_hook_status_payload(self.runtime_hook))
+        if ms is None:
+            return job
+        self._store_wall_ms(job.id, ms)
+        with self._lock:
+            live = self._jobs.get(job.id)
+            if live is None:
+                return job
+            return self._snapshot(live)
 
     def _pause_or_resume(self, job_id: str, action: str) -> Job:
         wanted = STATUS_RUNNING if action == "pause" else STATUS_PAUSED
@@ -1242,6 +1313,9 @@ class JobStore:
             return
         except Exception:
             return
+        self._store_wall_ms(
+            job_id, wall_elapsed_ms_from_durable(_hook_status_payload(self.runtime_hook))
+        )
         if not reported or reported not in WORK_STATUSES:
             return
         with self._lock:
@@ -1280,6 +1354,7 @@ class JobStore:
             events_source=job.events_source,
             events_durable=job.events_durable,
             events_n=job.events_n,
+            wall_elapsed_ms=job.wall_elapsed_ms,
         )
 
     def _advance(

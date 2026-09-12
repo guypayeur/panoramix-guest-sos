@@ -157,9 +157,12 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(wall["iec_spa"], False)
         self.assertIs(wall["north_star_done"], False)
         self.assertEqual(wall["runtime_tip"], "9b6646e8")
+        self.assertEqual(wall["docs_tip"], "6511cec7")
         self.assertEqual(wall["or"], "main")
         self.assertEqual(wall["runtime_pr"], 114)
+        self.assertEqual(wall["docs_pr"], 116)
         self.assertEqual(wall_plan()["when"], wall["when"])
+        self.assertIn("compare", wall["note"].lower())
         docs = parsed["handoff_docs"]
         self.assertIs(docs["panel"], True)
         self.assertIs(docs["second_control_plane"], False)
@@ -168,6 +171,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIn("path-slice elapsed omitted when timestamps missing (never invent)", plan.honesty)
         self.assertIn("optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)", plan.honesty)
         self.assertIn("optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)", plan.honesty)
+        self.assertIn("compare prefers durable wall_elapsed_ms when present (runtime tip 9b6646e8 / main; omit when missing)", plan.honesty)
         self.assertIn("handoff docs panel is operator clarity (not a second control plane)", plan.honesty)
 
     def test_runtime_root_usable_fail_closed(self) -> None:
@@ -447,8 +451,10 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(elapsed["invent"], False)
         wall = plan["wall_elapsed"]
         self.assertEqual(wall["runtime_tip"], "9b6646e8")
+        self.assertEqual(wall["docs_tip"], "6511cec7")
         self.assertEqual(wall["or"], "main")
         self.assertEqual(wall["runtime_pr"], 114)
+        self.assertEqual(wall["docs_pr"], 116)
         self.assertIs(wall["omit_when_missing"], True)
         self.assertIs(wall["invent"], False)
         self.assertIs(wall["forecast"], False)
@@ -523,7 +529,9 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("9ba95bbb", text, name)
             self.assertIn("5dc191cb", text, name)
             self.assertIn("9b6646e8", text, name)
+            self.assertIn("6511cec7", text, name)
             self.assertIn("wall_elapsed_ms", text, name)
+            self.assertIn("compare prefers", text.lower(), name)
             self.assertIn("handoff docs", text.lower(), name)
             self.assertIn("omit when missing", text.lower(), name)
             self.assertIn("never invent", text.lower(), name)

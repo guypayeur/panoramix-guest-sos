@@ -189,8 +189,11 @@ INFO_PAYLOAD = {
             "guest process history plus local lab files when persisted "
             "(.sos/jobs or PANORAMIX_SOS_JOBS_DIR). recent same-catalog "
             "jobs when catalog is on the job, else same kind/class. "
-            "Elapsed from created/updated timestamps; typical/ETA only "
-            "from succeeded prior walls when two or more samples exist. "
+            "Elapsed prefers durable wall_elapsed_ms when the hook or a "
+            "persisted job field includes it (runtime tip 9b6646e8 / "
+            "main, PR #114); else created/updated timestamps. "
+            "Typical/ETA only from succeeded prior walls when two or "
+            "more samples exist. Omit when missing; never invent. "
             "Fail-closed if persistence is disabled or the dir is "
             "unwritable. not a forecast; not IFRS17; not iec SPA "
             "historical widget. No guest→ctl HTTP."
@@ -202,9 +205,11 @@ INFO_PAYLOAD = {
             "note": (
                 "Local lab job records for compare / recoverability. "
                 "Fail-closed if disabled or unwritable. Reloads recent "
-                "succeeded priors across guest restart. Does not invent "
-                "typical/ETA. Not a SIEM. Not a six-month audit "
-                "product. Not a cross-host DB. Not #70 Done."
+                "succeeded priors across guest restart. Optional "
+                "wall_elapsed_ms when a durable hook returned it. "
+                "Does not invent typical/ETA or walls. Not a SIEM. "
+                "Not a six-month audit product. Not a cross-host DB. "
+                "Not #70 Done."
             ),
         },
         "pause": "POST /v0/jobs/{id}/pause",
