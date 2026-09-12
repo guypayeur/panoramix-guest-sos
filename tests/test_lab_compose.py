@@ -714,6 +714,10 @@ class PackFillTests(unittest.TestCase):
             documented_guest_tip=None,
         )
         self.assertNotIn("durable", stub)
+        self.assertTrue(set(hooked).issubset({"tips", "durable"}))
+        self.assertNotIn("metrics", hooked)
+        self.assertNotIn("wall_time_sec", json.dumps(hooked))
+        self.assertNotIn("north_star_done", json.dumps(hooked))
 
     def test_never_invent_from_guest_clocks_or_junk(self) -> None:
         clocks = pack_fill_fragment(
@@ -760,11 +764,9 @@ class PackFillTests(unittest.TestCase):
             stages_only["durable"]["stage_elapsed_ms"]["panoramix"],
             [80],
         )
-        allowed = set(hooked) | set(stages_only)
-        self.assertTrue(allowed.issubset({"tips", "durable"}))
-        self.assertNotIn("metrics", hooked)
-        self.assertNotIn("wall_time_sec", json.dumps(hooked))
-        self.assertNotIn("north_star_done", json.dumps(hooked))
+        self.assertTrue(set(stages_only).issubset({"tips", "durable"}))
+        self.assertNotIn("metrics", stages_only)
+        self.assertNotIn("wall_time_sec", json.dumps(stages_only))
 
     def test_skeleton_handoff_refuses_invented_walls(self) -> None:
         handoff = skeleton_handoff_plan()
