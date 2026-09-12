@@ -22,7 +22,8 @@ when missing — never invent. Compare prefers that wall when
 present. Dry-run / live emit a small paste fragment for runtime
 #78 D pack fill (tips when known; optional durable only when
 measured from the hooked run). Runtime tip b81130f (#120
-runtime.iec_parity_pack skeleton|validate, or main); guest emit
+runtime.iec_parity_pack skeleton|validate, or main); docs tip
+63a168d (PR #122 WSL assist-smoke stamp lineage); guest emit
 tip b859466 (#52). Wall feature tip remains 9b6646e8. Guest
 fragment can feed optional tips / measured durable into
 python3 -m runtime.iec_parity_pack skeleton via --from-json
