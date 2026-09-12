@@ -273,6 +273,7 @@ class CtlKindTests(unittest.TestCase):
             LOOPBACK_IEC,
             transport=transport,
             listen_probe=lambda: True,
+            ctl=CTL_KIND_IEC_LOCAL,
         )
         self.assertEqual(hook.ctl, CTL_KIND_IEC_LOCAL)
         app = SosApp(JobStore(step_seconds=0.01, runtime_hook=hook))
