@@ -166,6 +166,7 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("never invented", body["jobs"]["progress_honesty"])
         self.assertIn("9ba95bbb", body["jobs"]["progress_honesty"])
         self.assertIn("5dc191cb", body["jobs"]["progress_honesty"])
+        self.assertIn("9b6646e8", body["jobs"]["progress_honesty"])
         self.assertIn("wall_elapsed_ms", body["jobs"]["progress_honesty"])
         self.assertIn("not a forecast", body["jobs"]["progress_honesty"])
         self.assertIn("not IFRS17", body["jobs"]["progress_honesty"])
