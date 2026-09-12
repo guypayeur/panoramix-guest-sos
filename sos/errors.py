@@ -191,7 +191,7 @@ ERROR_CTL_ADMIT_TIMEOUT = "ctl_admit_timeout"
 CTL_ADMIT_TIMEOUT_REASON = "admit exceeded guest timeout"
 CTL_ADMIT_TIMEOUT_DETAIL = (
     "durable admit exceeded guest timeout "
-    "(HTTP 1.5s / subprocess admit 2s) before a running id returned. "
+    "(HTTP 1.5s / ctl-apply admit 2s) before a running id returned. "
     "live|parity is minutes-class — admit must return running while "
     "work continues (runtime #143). Fail closed — not durable, "
     "not stub progress. Poll GET /progress and GET /events mid-flight "

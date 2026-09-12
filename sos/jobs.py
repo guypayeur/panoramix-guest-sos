@@ -867,7 +867,7 @@ class JobStore:
                 if live is not None and live.status not in TERMINAL:
                     self._bind_runtime_locked(live, runtime_ref)
             return self.get(job_id)
-        if _minutes_class(job):
+        if _minutes_class(job) and durable_hook_active(self.runtime_hook):
             exc = DurableAdmitFailed(job_id, reason="hook_refused")
             self._fail_admit_closed(
                 job_id,

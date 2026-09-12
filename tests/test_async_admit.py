@@ -164,6 +164,16 @@ class MinutesClassFailClosedTests(unittest.TestCase):
         self.assertNotEqual(job.status, "failed")
         store.cancel(job.id)
 
+    def test_inert_parity_still_stubs(self) -> None:
+        """Default inert hook is not a durable path — live|parity stay UX seed."""
+        store = JobStore(step_seconds=0.02)
+        job = store.submit({"demo": "reserve", "catalog": "parity", "seconds": 0})
+        self.assertEqual(job.local["backed"], "stub")
+        self.assertEqual(job.local["catalog"], "parity")
+        self.assertIsNone(job.error)
+        self.assertNotEqual(job.status, "failed")
+        store.cancel(job.id)
+
 
 class TimeoutHonestyTests(unittest.TestCase):
     def test_http_admit_timeout_is_named_error(self) -> None:

@@ -21,9 +21,9 @@ Invokes ``python3 -m runtime.apply reserve-temporal`` only — never
 Admit must return a running ``cw_…`` id within ``CTL_ADMIT_TIMEOUT_SEC``
 so the guest UI can poll progress/events mid-flight. live|parity walls are
 minutes-class — that return depends on runtime #143. Admit timeout
-is ctl_admit_timeout and fails closed (not stub progress). Does not close runtime #70. Does
-not close #78. Does not unlock #61 / #29. Does not stamp
-north_star_done. Cloud stays locked.
+is ctl_admit_timeout and fails closed (not stub progress).
+Does not close runtime #70. Does not close #78. Does not unlock
+#61 / #29. Does not stamp north_star_done. Cloud stays locked.
 """
 
 from __future__ import annotations
