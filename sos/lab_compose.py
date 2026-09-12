@@ -23,9 +23,14 @@ Not IFRS17. Not iec SPA. Handoff docs
 panel is operator clarity, not a second control plane. Dry-run /
 live emit a small paste fragment for runtime #78 D pack fill
 (``tips`` when known; optional ``durable`` only when measured
-from the hooked run). Documented runtime tip ``411aa68``
-(#118 checklist era, or main); wall feature tip remains
-``9b6646e8``. Does not write the full live pack. Does not close runtime
+from the hooked run). Documented runtime tip ``b81130f``
+(#120 ``runtime.iec_parity_pack skeleton|validate``, or main);
+guest emit tip ``b859466`` (#52). Wall feature tip remains
+``9b6646e8``. Guest fragment can feed optional tips / measured
+durable into ``python3 -m runtime.iec_parity_pack skeleton``
+via ``--from-json`` (file or stdin) or flags; omit durable when
+missing. Never invent ``metrics.wall_time_sec``. assist ≠ fill;
+assist ≠ Done. Does not write the full live pack. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done or #70 UX Done. Cloud stays locked.
 """
@@ -55,10 +60,11 @@ RUNTIME_ELAPSED_PIN = "9ba95bbb"
 RUNTIME_DOCS_PIN = "5dc191cb"
 RUNTIME_WALL_PIN = "9b6646e8"
 RUNTIME_WALL_DOCS_PIN = "6511cec7"
-# Runtime #118 live-pack schema / #78 D checklist era (or main).
-RUNTIME_PACK_TIP = "411aa68bd1dd9c8a11d4ec98b3570acb5b90b4d9"
-# Guest main after #50. Checkout HEAD wins when present.
-GUEST_PACK_TIP = "4e2251c7d8374dbec408e0febb0a33f4c00f33c2"
+# Runtime #120 iec_parity_pack skeleton|validate (or main).
+# Schema / #78 D checklist era remains #118.
+RUNTIME_PACK_TIP = "b81130f2187109eabc2342df6345ca877e98023f"
+# Guest main after #52 (emit tips + optional durable). Checkout HEAD wins.
+GUEST_PACK_TIP = "b859466dcd079eb063b615728b258a686f79749a"
 ENV_RUNTIME_TIP = "PANORAMIX_RUNTIME_TIP"
 ENV_GUEST_TIP = "PANORAMIX_GUEST_TIP"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
@@ -81,6 +87,9 @@ HONESTY_LINES = (
     "handoff docs panel is operator clarity (not a second control plane)",
     "pack-fill tips from checkout / env / documented tip (omit when missing)",
     "pack-fill durable wall/stage elapsed only when measured from hooked run (omit when missing; never invent)",
+    "pack-fill emit fragment can feed runtime.iec_parity_pack skeleton via --from-json / flags (measured durable only; omit when missing)",
+    "never invent metrics.wall_time_sec",
+    "assist ≠ fill; assist ≠ Done",
     "pack-fill assist for runtime #78 D only (does not write the live pack)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
@@ -457,6 +466,44 @@ def pack_fill_fragment(
     return fragment
 
 
+def skeleton_handoff_plan() -> dict[str, Any]:
+    """Guest emit → ``runtime.iec_parity_pack skeleton``. Assist ≠ fill."""
+    return {
+        "cmd": "python3 -m runtime.iec_parity_pack skeleton",
+        "validate_cmd": "python3 -m runtime.iec_parity_pack validate",
+        "runtime_tip": RUNTIME_PACK_TIP,
+        "runtime_pr": 120,
+        "guest_emit_tip": GUEST_PACK_TIP,
+        "guest_pr": 52,
+        "from_json": True,
+        "stdin": True,
+        "flags": (
+            "--from-json",
+            "--panoramix-runtime-tip",
+            "--guest-tip",
+            "--durable-wall-elapsed-ms-panoramix",
+            "--durable-stage-elapsed-ms-panoramix",
+        ),
+        "durable_only_when_measured": True,
+        "omit_when_missing": True,
+        "invent": False,
+        "invent_wall_time_sec": False,
+        "writes_live_pack": False,
+        "assist_ne_fill": True,
+        "north_star_done": False,
+        "note": (
+            "Guest pack_fill.fragment can feed optional tips / measured "
+            "durable into python3 -m runtime.iec_parity_pack skeleton via "
+            "--from-json (file or stdin -) or CLI flags. Durable only when "
+            "measured. Omit when missing. Never invent metrics.wall_time_sec. "
+            "Never stamp north_star_done. assist ≠ fill; assist ≠ Done. "
+            f"Runtime tip {RUNTIME_PACK_TIP} (PR #120, or main). "
+            f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
+            "Does not write the live pack. Not #70 Done. Not #78 Done."
+        ),
+    }
+
+
 def pack_fill_plan(
     *,
     guest_root: str | Path | None = None,
@@ -505,28 +552,37 @@ def pack_fill_plan(
         ),
         "runtime_tip": RUNTIME_PACK_TIP,
         "or": "main",
-        "runtime_pr": 118,
+        "runtime_pr": 120,
+        "schema_pr": 118,
         "wall_feature_tip": RUNTIME_WALL_PIN,
         "omit_when_missing": True,
         "invent": False,
+        "invent_wall_time_sec": False,
         "forecast": False,
         "ifrs17": False,
         "iec_spa": False,
         "writes_live_pack": False,
+        "assist_ne_fill": True,
         "ux_done": False,
         "north_star_done": False,
         "tip_sources": sources,
         "fragment": fragment,
+        "skeleton_handoff": skeleton_handoff_plan(),
         "note": (
             "Small JSON fragment to paste into the off-box iec-parity pack "
-            "under tips / optional durable. Assist for runtime #78 D fill "
+            "under tips / optional durable, or feed to "
+            "python3 -m runtime.iec_parity_pack skeleton via --from-json "
+            "(file or stdin) or flags. Assist for runtime #78 D fill "
             "checklist only. Does not write the full live pack. "
             "Does not stamp #70 UX Done / north_star_done. "
-            f"Runtime tip {RUNTIME_PACK_TIP} (#118 checklist era, or main). "
+            f"Runtime tip {RUNTIME_PACK_TIP} (#120 skeleton|validate, or main). "
+            "Schema / checklist era remains #118. "
+            f"Guest emit tip {GUEST_PACK_TIP} (PR #52). "
             f"Wall feature tip remains {RUNTIME_WALL_PIN}. "
             "Durable wall/stage elapsed only when measured from the hooked "
-            "run. Omit when missing. Never invent. Not a forecast. "
-            "Not IFRS17. Not iec SPA. Not #70 Done."
+            "run. Omit when missing. Never invent. Never invent "
+            "metrics.wall_time_sec. assist ≠ fill; assist ≠ Done. "
+            "Not a forecast. Not IFRS17. Not iec SPA. Not #70 Done."
         ),
     }
 
