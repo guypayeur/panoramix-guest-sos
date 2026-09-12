@@ -13,9 +13,12 @@ the in-process stub. Opt-in lab adapters on this same seam:
 
 - ``PANORAMIX_CTL_HTTP`` (preferred when set) injects
   ``LabReserveTemporalHttpHook`` and talks to loopback ctl HTTP
-  (``POST/GET /reserve-temporal/…``). Non-loopback / unset fails closed.
+  (``POST/GET /reserve-temporal/…`` or ``/iec-local/…`` on port
+  **19216** / ``PANORAMIX_CTL_KIND=iec-local``). Non-loopback / unset
+  fails closed. Guest does not run IFRS17 math.
 - ``PANORAMIX_RUNTIME_ROOT`` injects ``LabReserveTemporalHook`` and
-  invokes local ``python3 -m runtime.apply reserve-temporal``.
+  invokes local ``python3 -m runtime.apply reserve-temporal`` (or
+  ``iec-local`` when that ctl is selected).
 
 Neither is a second control plane and neither is guest→mesh ctl.
 Unset fails closed (inert).
@@ -168,7 +171,9 @@ def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
 
     if isinstance(hook, LabReserveTemporalHttpHook):
         from sos.errors import ERROR_CTL_HTTP_UNREACHABLE
+        from sos.lab_ctl import CTL_KIND_IEC_LOCAL
 
+        iec = hook.ctl == CTL_KIND_IEC_LOCAL
         if hook.last_unreachable is not None:
             return {
                 "kind": HOOK_KIND_CTL_HTTP,
@@ -176,13 +181,16 @@ def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
                 "reachable": False,
                 "error": ERROR_CTL_HTTP_UNREACHABLE,
                 "adapter": "LabReserveTemporalHttpHook",
+                "ctl": hook.ctl,
                 "ctl_http": hook.base_url,
                 "guest_to_mesh_ctl": False,
+                "ifrs17_guest": False,
                 "north_star_done": False,
                 "note": (
                     "lab serve down — PANORAMIX_CTL_HTTP origin is "
                     "unreachable. Fail closed — not durable. "
                     "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
+                    "Guest does not run IFRS17 math. "
                     "Not #70 Done. north_star_done false."
                 ),
             }
@@ -190,24 +198,40 @@ def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
             "kind": HOOK_KIND_CTL_HTTP,
             "durable_path": True,
             "adapter": "LabReserveTemporalHttpHook",
+            "ctl": hook.ctl,
             "ctl_http": hook.base_url,
             "guest_to_mesh_ctl": False,
+            "ifrs17_guest": False,
             "north_star_done": False,
             "note": (
-                "Durable path active via loopback ctl HTTP. "
-                "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
+                "Durable path active via loopback "
+                + ("iec-local " if iec else "")
+                + "ctl HTTP. Guest does not run IFRS17 math"
+                + (
+                    " — runtime binding wraps the operator iec checkout."
+                    if iec
+                    else "."
+                )
+                + " Not guest→mesh ctl. Not SIEM. Not IFRS17. "
                 "Not #70 Done. north_star_done false."
             ),
         }
     if isinstance(hook, LabReserveTemporalHook):
+        from sos.lab_ctl import CTL_KIND_IEC_LOCAL
+
+        iec = hook.ctl == CTL_KIND_IEC_LOCAL
         return {
             "kind": HOOK_KIND_CTL_APPLY,
             "durable_path": True,
             "adapter": "LabReserveTemporalHook",
+            "ctl": hook.ctl,
             "guest_to_mesh_ctl": False,
+            "ifrs17_guest": False,
             "north_star_done": False,
             "note": (
-                "Durable path via local reserve-temporal apply hook. "
+                "Durable path via local "
+                + ("iec-local" if iec else "reserve-temporal")
+                + " apply hook. Guest does not run IFRS17 math. "
                 "Not guest→mesh ctl. Not SIEM. Not IFRS17. "
                 "Not #70 Done. north_star_done false."
             ),

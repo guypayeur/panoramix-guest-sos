@@ -88,6 +88,18 @@ class HttpAppTests(unittest.TestCase):
             ],
         )
         self.assertEqual(body["jobs"]["reserve_catalogs"], ["recorded", "live", "parity"])
+        self.assertNotIn("reserve_ifrs17", body["jobs"]["reserve_catalogs"])
+        iec = body["jobs"]["iec_local"]
+        self.assertEqual(iec["ctl"], "iec-local")
+        self.assertEqual(iec["ctl_port"], 19216)
+        self.assertEqual(iec["catalog"], "reserve_ifrs17")
+        self.assertEqual(
+            iec["digest"],
+            "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c",
+        )
+        self.assertIs(iec["ifrs17_guest"], False)
+        self.assertIs(iec["north_star_done"], False)
+        self.assertIn("does not run IFRS17", iec["note"])
         self.assertEqual(
             body["jobs"]["reserve_digest_parity"],
             "sha256:e180d2c2e3589b8762f92efa1bedb3d53ffeeb16648581ba13d537bcd3311102",
@@ -284,6 +296,9 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("recorded_params", html)
             self.assertIn('value="recorded"', html)
             self.assertIn('value="parity"', html)
+            self.assertIn('value="reserve_ifrs17"', html)
+            self.assertIn("iec-local same-job", html)
+            self.assertIn("lab-compose-iec-local.md", html)
             self.assertIn("parity-scale", html)
             self.assertNotIn("north-star Done", html)
             self.assertIn("Job detail", html)
@@ -338,7 +353,8 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("/reserve-temporal/", html)
             self.assertIn("durable-badge", html)
             self.assertIn("No pretend durable path", html)
-            self.assertIn("Durable path active — loopback ctl HTTP", html)
+            self.assertIn("Durable path active — loopback", html)
+            self.assertIn("ctl HTTP", html)
             self.assertIn("ctl_http_unreachable", html)
             self.assertIn("lab serve down", html.lower())
             self.assertIn("ctl_admit_timeout", html)

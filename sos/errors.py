@@ -204,6 +204,13 @@ DURABLE_ADMIT_FAILED_DETAIL = (
     "Depends on runtime #143 async admit. Not #70 Done. "
     "north_star_done false."
 )
+SAME_JOB_STUB_DETAIL = (
+    "iec-local same-job (reserve_ifrs17) is not a guest stub. "
+    "Guest does not run IFRS17 math. Point PANORAMIX_CTL_HTTP at "
+    "iec-local ctl (19216) so the runtime binding can wrap the "
+    "operator iec checkout (POST /v1/jobs). Fail closed — no stub "
+    "progress. Not #70 Done. north_star_done false."
+)
 
 
 def lab_serve_affordance(*, origin: str | None = None) -> dict[str, Any]:

@@ -37,9 +37,13 @@ from sos.handoff_vocab import (
     RECORDED_PARAMS,
     RESERVE_CATALOG_ALIASES,
     RESERVE_CATALOG_RECORDED,
+    RESERVE_CATALOG_SAME_JOB,
     RESERVE_PARAM_KEYS,
     RESERVE_WORKLOAD,
     RESOURCE_CLASSES,
+    SAME_JOB_CATALOG_ALIASES,
+    SAME_JOB_PARAMS,
+    SAME_JOB_PAYLOAD_DIGEST,
     WORK_KINDS,
 )
 
@@ -214,6 +218,11 @@ def parity_params() -> dict[str, Any]:
 
 def params_for_catalog(catalog: str) -> dict[str, Any]:
     name = str(catalog or RESERVE_CATALOG_RECORDED).strip().lower()
+    if name in SAME_JOB_CATALOG_ALIASES:
+        raise InvalidDemo(
+            "reserve catalog reserve_ifrs17 / same-job is the iec-local "
+            "identity, not the thinner recorded|live|parity kernel"
+        )
     resolved = RESERVE_CATALOG_ALIASES.get(name)
     if resolved == "recorded":
         return recorded_params()
@@ -222,8 +231,20 @@ def params_for_catalog(catalog: str) -> dict[str, Any]:
     if resolved == "parity":
         return parity_params()
     raise InvalidDemo(
-        f"reserve catalog must be recorded|live|parity (got {catalog!r})"
+        "reserve catalog must be recorded|live|parity or "
+        f"reserve_ifrs17|same-job (got {catalog!r})"
     )
+
+
+def same_job_params() -> dict[str, Any]:
+    """Pinned iec reserve_ifrs17 identity. Mirrors runtime.reserve_iec."""
+    return dict(SAME_JOB_PARAMS)
+
+
+def resolve_same_job_catalog(catalog: str | None) -> str | None:
+    """reserve_ifrs17 / same-job, or None."""
+    name = str(catalog or "").strip().lower()
+    return SAME_JOB_CATALOG_ALIASES.get(name)
 
 
 def payload_for(params: dict[str, Any]) -> dict[str, Any]:
@@ -286,6 +307,72 @@ def _parse_reserve_int(raw: Any, *, name: str, minimum: int) -> int:
     return raw
 
 
+def parse_same_job_demo(body: dict[str, Any]) -> ParsedSubmit:
+    """iec-local same-job identity. Guest does not run IFRS17 math.
+
+    Payload bytes match ``runtime.reserve_iec.same_job_payload`` /
+    ``SAME_JOB_DIGEST`` on panoramix-runtime **main** @ ``d480dc8``
+    (docs/iec-local.md). Class is cpu only. Thinner reserve ints
+    (accounts/horizon/…) are refused. Optional label/stages/seconds
+    are local UX only and are **not** in the digest. Fail-closed on
+    the stub — runtime binding runs the iec checkout.
+    """
+    catalog_raw = body.get("catalog", RESERVE_CATALOG_SAME_JOB)
+    if not isinstance(catalog_raw, str):
+        raise InvalidDemo("reserve catalog must be a string")
+    catalog = resolve_same_job_catalog(catalog_raw)
+    if catalog is None:
+        raise InvalidDemo(
+            "same-job catalog must be reserve_ifrs17|same-job "
+            f"(got {catalog_raw!r})"
+        )
+    for key in RESERVE_PARAM_KEYS:
+        if key in body:
+            raise InvalidDemo(
+                "same-job catalog refuses thinner reserve params "
+                f"{key!r} (identity is pinned reserve_ifrs17; "
+                "guest does not run IFRS17 math)"
+            )
+    if "class" not in body:
+        cls = "cpu"
+    else:
+        class_raw = body.get("class")
+        cls = str(class_raw or "").strip().lower() if isinstance(class_raw, str) else ""
+        if cls != "cpu":
+            raise InvalidClass(
+                class_raw if isinstance(class_raw, str) else type(class_raw).__name__,
+            )
+    work = same_job_params()
+    blob = canonical_json_bytes(work)
+    digest = digest_bytes(blob)
+    if digest != SAME_JOB_PAYLOAD_DIGEST:
+        raise InvalidDemo(
+            "same-job digest drifted from runtime.reserve_iec.SAME_JOB_DIGEST "
+            f"(got {digest}; need {SAME_JOB_PAYLOAD_DIGEST})"
+        )
+    local = {
+        "demo": DEMO_RESERVE,
+        "catalog": catalog,
+        "class": cls,
+        "same_job": True,
+        "ifrs17_guest": False,
+        "workload": work["workload"],
+        "revision": work["revision"],
+        "source_file": work["source_file"],
+        "mode": work["mode"],
+    }
+    label = body.get("label")
+    if isinstance(label, str) and label.strip():
+        local["label"] = label.strip()[:MAX_RESERVE_LABEL]
+    return ParsedSubmit(
+        kind="job",
+        resource_class=cls,
+        payload_digest=digest,
+        local=local,
+        payload_bytes=blob,
+    )
+
+
 def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
     """UX-seed reserve shortcut → synthesized job + stable payload digest.
 
@@ -294,11 +381,14 @@ def parse_reserve_demo(body: dict[str, Any]) -> ParsedSubmit:
     / digest_for on panoramix-runtime main (docs/reserve.md). Local
     ``label`` / ``stages`` / ``seconds`` are stub UX and are **not** in the
     digest. Guest emits WorkHandoff JSON only — it never calls
-    ``runtime.apply compute-work``.
+    ``runtime.apply compute-work``. Catalog ``reserve_ifrs17`` / ``same-job``
+    is the iec-local identity (not this thinner kernel).
     """
     catalog_raw = body.get("catalog", RESERVE_CATALOG_RECORDED)
     if not isinstance(catalog_raw, str):
         raise InvalidDemo("reserve catalog must be a string")
+    if resolve_same_job_catalog(catalog_raw) is not None:
+        return parse_same_job_demo(body)
     params = params_for_catalog(catalog_raw)
     catalog = RESERVE_CATALOG_ALIASES[catalog_raw.strip().lower()]
 

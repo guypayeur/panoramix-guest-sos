@@ -38,6 +38,7 @@ _WALL_MS_KEYS = (
     "wall_ms",
     "job_elapsed_ms",
     "job_wall_ms",
+    "api_e2e_ms",
 )
 _WALL_SEC_KEYS = (
     "wall_elapsed_s",
@@ -143,6 +144,9 @@ def _progress_blobs(durable: dict[str, Any]) -> list[dict[str, Any]]:
     nested = durable.get("progress")
     if isinstance(nested, dict):
         blobs.append(nested)
+    walls = durable.get("walls")
+    if isinstance(walls, dict) and walls.get("invented") is not True:
+        blobs.append(walls)
     return blobs
 
 

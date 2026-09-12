@@ -44,6 +44,7 @@ from sos.errors import (
     ERROR_CTL_ADMIT_TIMEOUT,
     ERROR_CTL_HTTP_UNREACHABLE,
     ERROR_DURABLE_ADMIT_FAILED,
+    SAME_JOB_STUB_DETAIL,
     AlreadyTerminal,
     CtlAdmitTimeout,
     CtlHttpUnreachable,
@@ -71,6 +72,7 @@ from sos.handoff_vocab import (
     CATALOG_CROSSCHECK_NOTE,
     LIVE_PAYLOAD_DIGEST,
     CTL_ADMIT,
+    CTL_IEC_LOCAL_ADMIT,
     DEFAULT_SLEEP_SECONDS,
     DEMO_ECHO,
     DEMO_RESERVE,
@@ -78,6 +80,8 @@ from sos.handoff_vocab import (
     FAILED_OR_CANCELED,
     HANDOFF_DOCS_NOTE,
     LAB_COMPOSE_DOCS,
+    LAB_COMPOSE_IEC_DOCS,
+    LAB_COMPOSE_IEC_SCRIPT,
     LAB_COMPOSE_SCRIPT,
     LAST_EVENTS_N,
     OWNERSHIP_NOTE,
@@ -86,6 +90,9 @@ from sos.handoff_vocab import (
     RECOVERABILITY_NOTE,
     RESERVE_CATALOG_LIVE,
     RESERVE_CATALOG_PARITY,
+    RESERVE_CATALOG_SAME_JOB,
+    SAME_JOB_CATALOG_ALIASES,
+    SAME_JOB_PAYLOAD_DIGEST,
     STATUS_CANCELED,
     STATUS_FAILED,
     STATUS_PAUSED,
@@ -130,16 +137,25 @@ STUB_PROGRESS_NOTE = (
     "not iec chunk progress or parallelism"
 )
 DURABLE_PROGRESS_NOTE = (
-    "Durable reserve-temporal path-slices — "
-    "not iec planner parallelism; not iec chunk progress. "
-    "Optional per-stage elapsed from progress or event timestamps "
-    "when present; omitted when missing — never invented. "
-    "Optional wall_elapsed_ms from durable progress/status when "
-    "present; omitted when missing — never invented"
+    "Durable hook progress (reserve-temporal path-slices or iec-local "
+    "phase/fraction) — not iec planner parallelism; not iec chunk "
+    "progress. Guest does not run IFRS17 math. Optional per-stage "
+    "elapsed from progress or event timestamps when present; omitted "
+    "when missing — never invented. Optional wall_elapsed_ms / "
+    "api_e2e_ms from durable progress/status/walls when present; "
+    "omitted when missing — never invented"
 )
 DURABLE_WALL_NOTE = (
-    "Durable wall from reserve-temporal timestamps — "
-    "not a forecast; not IFRS17; not iec SPA"
+    "Durable wall from hook timestamps (reserve-temporal or iec-local "
+    "api_e2e) — not a forecast; not invented; not IFRS17; not iec SPA; "
+    "guest does not run IFRS17"
+)
+SAME_JOB_PROGRESS_NOTE = (
+    "iec-local same-job progress from the runtime binding "
+    "(operator iec checkout / POST /v1/jobs). Guest does not run "
+    "IFRS17 math. Phase/fraction when the hook supplies them. "
+    "Walls (api_e2e_ms / wall_elapsed_ms) omitted when missing — "
+    "never invented. Not #70 Done. north_star_done false"
 )
 TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
@@ -416,11 +432,14 @@ def _handoff_docs_payload(job: Job) -> dict[str, Any]:
         "note": HANDOFF_DOCS_NOTE,
         "handoff": f"GET /v0/jobs/{job.id}/handoff",
         "payload": f"GET /v0/jobs/{job.id}/payload",
-        "re_admit": CTL_ADMIT,
+        "re_admit": CTL_IEC_LOCAL_ADMIT if _same_job(job) else CTL_ADMIT,
         "re_admit_http": f"POST /v0/jobs/{job.id}/re-admit",
         "lab_compose": LAB_COMPOSE_DOCS,
         "lab_compose_script": LAB_COMPOSE_SCRIPT,
+        "lab_compose_iec": LAB_COMPOSE_IEC_DOCS,
+        "lab_compose_iec_script": LAB_COMPOSE_IEC_SCRIPT,
         "not_control_plane": True,
+        "ifrs17_guest": False,
         "north_star_done": False,
     }
 
@@ -454,6 +473,16 @@ def _minutes_class(job: Job) -> bool:
     if catalog in MINUTES_CLASS_CATALOGS:
         return True
     return job.payload_digest in MINUTES_CLASS_DIGESTS
+
+
+def _same_job(job: Job) -> bool:
+    """Pinned iec reserve_ifrs17 identity. Not the thinner kernel."""
+    catalog = str((job.local or {}).get("catalog") or "").strip().lower()
+    if catalog in SAME_JOB_CATALOG_ALIASES or catalog == RESERVE_CATALOG_SAME_JOB:
+        return True
+    if (job.local or {}).get("same_job") is True:
+        return True
+    return job.payload_digest == SAME_JOB_PAYLOAD_DIGEST
 
 
 def _pause_resume_honest(job: Job) -> bool:
@@ -661,6 +690,32 @@ def _progress_from_durable(
             payload[key] = top[key]
         elif key in nested:
             payload[key] = nested[key]
+    for key in ("phase", "pct"):
+        if durable.get(key) is not None:
+            payload[key] = durable[key]
+        elif isinstance(nested_raw, dict) and nested_raw.get(key) is not None:
+            payload[key] = nested_raw[key]
+    walls = durable.get("walls")
+    if isinstance(walls, dict) and walls.get("invented") is not True:
+        honest_walls = {
+            key: walls[key]
+            for key in (
+                "api_e2e_ms",
+                "wall_elapsed_ms",
+                "method_wall_time_s",
+                "started_at",
+                "completed_at",
+                "contract",
+                "invented",
+            )
+            if key in walls and walls[key] is not None
+        }
+        if honest_walls:
+            payload["walls"] = honest_walls
+    if _same_job(job):
+        payload["same_job"] = True
+        payload["ifrs17_guest"] = False
+        payload["note"] = SAME_JOB_PROGRESS_NOTE
     if nested:
         payload["progress"] = nested
     elif isinstance(nested_raw, dict):
@@ -867,6 +922,18 @@ class JobStore:
                 if live is not None and live.status not in TERMINAL:
                     self._bind_runtime_locked(live, runtime_ref)
             return self.get(job_id)
+        if _same_job(job):
+            exc = DurableAdmitFailed(
+                job_id,
+                reason="same_job_stub",
+                detail=SAME_JOB_STUB_DETAIL,
+            )
+            self._fail_admit_closed(
+                job_id,
+                error=ERROR_DURABLE_ADMIT_FAILED,
+                message=SAME_JOB_STUB_DETAIL,
+            )
+            raise exc
         if _minutes_class(job) and durable_hook_active(self.runtime_hook):
             exc = DurableAdmitFailed(job_id, reason="hook_refused")
             self._fail_admit_closed(

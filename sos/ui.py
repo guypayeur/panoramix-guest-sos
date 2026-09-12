@@ -403,7 +403,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
     not a hung poll, not pretend durable.
     Admit that exceeds guest timeout before a running id is
     <code>ctl_admit_timeout</code> (runtime #143; live|parity is
-    minutes-class) — fail closed, not stub progress, not lab-serve-down.
+    minutes-class; iec-local same-job also needs a running id for
+    mid-flight poll) — fail closed, not stub progress, not lab-serve-down.
     Once admit returns a running id the UI polls
     <code>GET /progress</code> / <code>GET /events</code> mid-flight.
     Not a SPA framework. Not Slack.
@@ -419,6 +420,16 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>PANORAMIX_RUNTIME_ROOT</code> may invoke
     <code>reserve-temporal</code> locally on the existing hook seam
     (not guest→mesh ctl; not #70 Done).
+    Catalog <code>reserve_ifrs17</code> (alias <code>same-job</code>)
+    admits the pinned iec same-job via loopback <code>iec-local</code>
+    ctl (<code>PANORAMIX_CTL_HTTP</code> port <strong>19216</strong>).
+    Guest does <strong>not</strong> run IFRS17 math — the runtime
+    binding wraps the operator iec checkout
+    (<code>POST /v1/jobs</code>). Durable progress is phase/fraction
+    (no invented path-slices). Walls
+    (<code>api_e2e_ms</code>) omit when missing; never invented.
+    Lab-compose: <code>docs/lab-compose-iec-local.md</code>.
+    Does not close runtime #70 / #78. Cloud stays locked.
     Recorded digest matches
     <code>runtime.reserve.digest_for(recorded_params())</code> on
     panoramix-runtime main (<code>docs/reserve.md</code>).
@@ -447,7 +458,14 @@ OPERATOR_HTML = """<!DOCTYPE html>
             <option value="recorded" selected>recorded (CI)</option>
             <option value="live">live</option>
             <option value="parity">parity (parity-scale)</option>
+            <option value="reserve_ifrs17">reserve_ifrs17 (iec-local same-job)</option>
           </select>
+          <p class="hint" id="same-job-hint" hidden>iec-local same-job: guest does
+            <strong>not</strong> run IFRS17 math. Runtime binding wraps the
+            operator iec checkout. Fail-closed without
+            <code>PANORAMIX_CTL_HTTP</code> on ctl <strong>19216</strong>.
+            Not invented path-slices. Not #70 Done.</p>
+          <div id="reserve-stub-fields">
           <label for="label">Label (local UX)</label>
           <input id="label" value="reserve-shaped" autocomplete="off">
           <label for="stages">Stages (local UX)</label>
@@ -457,6 +475,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
             <option value="cpu" selected>cpu</option>
             <option value="gpu">gpu (label only — no GPU kernels)</option>
           </select>
+          </div>
         </div>
         <div class="row">
           <button type="submit">Submit</button>
@@ -469,6 +488,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         Echo returns the message. Sleep waits (default 2, max 30) and can be canceled while queued or running.
         Reserve (shaped) defaults to the <strong>recorded</strong> catalog. Stages/seconds are local stub UX only
         (admit → project → fold, …) so cancel mid-flight is visible — still an in-memory thread, not engines, not IFRS17 math.
+        Catalog <code>reserve_ifrs17</code> is the iec-local same-job identity (not the thinner kernel).
         Ctl: GET /v0/jobs/{id}/handoff (kind/class/payload_digest/status) and /payload (canonical bytes).
         Guest never calls runtime.apply compute-work. The seam kind is job — never a demo label.</p>
       <p id="flash"></p>
@@ -586,17 +606,26 @@ OPERATOR_HTML = """<!DOCTYPE html>
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
 
+    function isSameJobCatalog(value) {
+      const raw = String(value || "").trim().toLowerCase();
+      return raw === "reserve_ifrs17" || raw === "same-job";
+    }
+
     function syncDemoFields() {
       const demo = $("demo").value;
+      const sameJob = demo === "reserve" && isSameJobCatalog($("catalog").value);
       $("echo-fields").hidden = demo !== "echo";
       $("sleep-fields").hidden = demo !== "sleep";
       $("reserve-fields").hidden = demo !== "reserve";
-      if (demo === "reserve" && $("sleep-fields").hidden) {
+      if (demo === "reserve" && !sameJob && $("sleep-fields").hidden) {
         // Reuse the seconds input for reserve duration.
         $("sleep-fields").hidden = false;
       }
+      if ($("same-job-hint")) $("same-job-hint").hidden = !sameJob;
+      if ($("reserve-stub-fields")) $("reserve-stub-fields").hidden = sameJob;
     }
     $("demo").addEventListener("change", syncDemoFields);
+    $("catalog").addEventListener("change", syncDemoFields);
     $("fill-sleep").addEventListener("click", () => {
       $("demo").value = "sleep";
       $("seconds").value = "8";
@@ -622,18 +651,23 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
         body = { demo: "sleep", seconds };
       } else if (demo === "reserve") {
-        const seconds = Number($("seconds").value);
-        const stages = Number($("stages").value);
-        if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
-        if (!Number.isInteger(stages)) { flash("Stages must be an integer."); return; }
-        body = {
-          demo: "reserve",
-          catalog: $("catalog").value,
-          label: $("label").value,
-          stages,
-          seconds,
-          class: $("resource-class").value
-        };
+        const catalog = $("catalog").value;
+        if (isSameJobCatalog(catalog)) {
+          body = { demo: "reserve", catalog: "reserve_ifrs17" };
+        } else {
+          const seconds = Number($("seconds").value);
+          const stages = Number($("stages").value);
+          if (!Number.isFinite(seconds)) { flash("Seconds must be a number."); return; }
+          if (!Number.isInteger(stages)) { flash("Stages must be an integer."); return; }
+          body = {
+            demo: "reserve",
+            catalog,
+            label: $("label").value,
+            stages,
+            seconds,
+            class: $("resource-class").value
+          };
+        }
       } else {
         body = { demo: "echo", message: $("message").value };
       }
@@ -850,9 +884,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
 
     function durableWallMs(prog) {
       if (!prog) return null;
-      const raw = prog.wall_elapsed_ms;
+      const walls = prog.walls && typeof prog.walls === "object" ? prog.walls : {};
+      if (walls.invented === true) return null;
+      const raw = prog.wall_elapsed_ms != null ? prog.wall_elapsed_ms
+        : (walls.wall_elapsed_ms != null ? walls.wall_elapsed_ms : walls.api_e2e_ms);
       if (raw == null || !Number.isFinite(Number(raw)) || Number(raw) < 0) return null;
       return Number(raw);
+    }
+
+    function isSameJob(job, prog) {
+      if (prog && prog.same_job === true) return true;
+      const local = (job && job.local) || {};
+      if (local.same_job === true || isSameJobCatalog(local.catalog)) return true;
+      const digest = job && job.payload_digest;
+      return digest === "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c";
     }
 
     function fmtSecs(s) {
@@ -945,6 +990,40 @@ OPERATOR_HTML = """<!DOCTYPE html>
           + "runtime #143 admit-return-running. Fail closed — not stub "
           + "progress, not lab-serve-down. Not iec chunk progress.";
         wrap.appendChild(line);
+        return wrap;
+      }
+      if (isSameJob(job, prog)) {
+        const title = document.createElement("h3");
+        title.textContent = "iec-local same-job (runtime binding)";
+        wrap.appendChild(title);
+        const phase = prog && prog.phase;
+        const frac = Number(prog && (prog.fraction != null ? prog.fraction : null));
+        const pct = Number(prog && (prog.pct != null ? prog.pct : null));
+        let text = "Guest does not run IFRS17 math. Runtime binding wraps the operator iec checkout (POST /v1/jobs).";
+        if (phase != null && String(phase)) {
+          text = "Phase " + phase + " — " + text;
+        }
+        if (Number.isFinite(frac)) {
+          text += " Fraction " + frac + ".";
+        } else if (Number.isFinite(pct)) {
+          text += " pct " + pct + ".";
+        }
+        if (source === "durable") {
+          text += " Durable phase/fraction when the hook supplies them — no invented path-slices.";
+        } else if (job && job.error === "durable_admit_failed") {
+          text += " Fail-closed without iec-local ctl — no stub progress.";
+        }
+        text += " Not #70 Done. north_star_done false.";
+        line.textContent = text;
+        wrap.appendChild(line);
+        const wallMs = durableWallMs(prog);
+        if (wallMs != null) {
+          const wall = document.createElement("p");
+          wall.className = "hint wall";
+          wall.textContent = "Durable wall " + fmtSecs(wallMs / 1000)
+            + " — iec-local api_e2e (omit when missing; never invent). Not a forecast; not IFRS17-in-guest; not iec SPA.";
+          wrap.appendChild(wall);
+        }
         return wrap;
       }
       const durable = source === "durable" ||
@@ -1753,14 +1832,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       if (kind === "ctl_http" && hook.durable_path === true) {
         el.classList.add("badge-http");
-        el.textContent = "Durable path active — loopback ctl HTTP"
+        const iec = hook.ctl === "iec-local";
+        el.textContent = "Durable path active — loopback "
+          + (iec ? "iec-local " : "")
+          + "ctl HTTP"
           + (hook.ctl_http ? (" " + hook.ctl_http) : "")
-          + ". Not guest→mesh ctl. Not #70 Done.";
+          + ". Guest does not run IFRS17 math. Not guest→mesh ctl. Not #70 Done.";
         return;
       }
       if (kind === "ctl_apply" && hook.durable_path === true) {
         el.classList.add("badge-apply");
-        el.textContent = "Durable path — local reserve-temporal apply hook. Not guest→mesh ctl. Not #70 Done.";
+        const iec = hook.ctl === "iec-local";
+        el.textContent = "Durable path — local "
+          + (iec ? "iec-local" : "reserve-temporal")
+          + " apply hook. Guest does not run IFRS17 math. Not guest→mesh ctl. Not #70 Done.";
         return;
       }
       el.classList.add("badge-inert");

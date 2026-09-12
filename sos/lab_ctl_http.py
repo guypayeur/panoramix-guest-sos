@@ -17,8 +17,11 @@ fails closed (caller keeps the inert stub). Optional
 the binding has ``ctl.require``. Optional
 ``PANORAMIX_RESERVE_TEMPORAL_LIVE=1`` adds ``live=1`` on admit.
 
-Calls only ``/reserve-temporal/{admit,status,progress,events,pause,resume,cancel}``.
-Never ``runtime.apply compute-work``. Does not import the runtime package.
+Calls ``/reserve-temporal/{admit,status,progress,events,pause,resume,cancel}``
+or, when ``PANORAMIX_CTL_KIND=iec-local`` / ctl port **19216**,
+``/iec-local/{admit,status,progress,pause,resume,cancel}`` (no events
+verb — iec-local has none). Never ``runtime.apply compute-work``.
+Does not import the runtime package.
 
 When the origin is valid but runtime.serve is down (connection
 refused), admit/status/progress fail closed with
@@ -56,11 +59,17 @@ from sos.lab_ctl import (
     _parse_json,
     _runtime_ref_from_admit,
     _truthy,
+    resolve_ctl_kind,
 )
 
 ENV_CTL_HTTP = "PANORAMIX_CTL_HTTP"
 ENV_CTL_BEARER = "PANORAMIX_CTL_HTTP_BEARER"
+ENV_CTL_KIND = "PANORAMIX_CTL_KIND"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+CTL_KIND_RESERVE_TEMPORAL = "reserve-temporal"
+CTL_KIND_IEC_LOCAL = "iec-local"
+CTL_KINDS = frozenset({CTL_KIND_RESERVE_TEMPORAL, CTL_KIND_IEC_LOCAL})
+DEFAULT_IEC_LOCAL_PORT = 19216
 # Short so operator list/detail polls do not hang when serve is down.
 CTL_HTTP_TIMEOUT_SEC = 1.5
 CTL_HTTP_UNREACHABLE_COOLDOWN_SEC = 2.0
@@ -68,8 +77,11 @@ CTL_HTTP_UNREACHABLE_CODE = 0
 # Distinct from connection-refused so admit timeout is not "lab serve down".
 CTL_HTTP_TIMEOUT_CODE = -1
 RESERVE_TEMPORAL_PREFIX = "/reserve-temporal"
+IEC_LOCAL_PREFIX = "/iec-local"
 GET_VERBS = frozenset({"status", "progress", "events"})
 POST_VERBS = frozenset({"admit", "pause", "resume", "cancel"})
+IEC_LOCAL_GET_VERBS = frozenset({"status", "progress"})
+IEC_LOCAL_POST_VERBS = frozenset({"admit", "pause", "resume", "cancel"})
 
 HttpTransport = Callable[..., tuple[int, str]]
 
@@ -143,9 +155,12 @@ def urllib_request_ctl(
 
 
 class LabReserveTemporalHttpHook:
-    """Existing hook seam → loopback ``/reserve-temporal/*`` HTTP.
+    """Existing hook seam → loopback ctl HTTP.
 
-    Honesty: lab opt-in only. Does not close #70 / #78. Cloud locked.
+    Default prefix is ``/reserve-temporal/*``. When ``ctl`` is
+    ``iec-local`` (port 19216 or ``PANORAMIX_CTL_KIND``) the prefix is
+    ``/iec-local/*``. Honesty: lab opt-in only. Guest does not run
+    IFRS17 math. Does not close #70 / #78. Cloud locked.
     Not guest→mesh ctl.
     """
 
@@ -156,6 +171,7 @@ class LabReserveTemporalHttpHook:
         transport: HttpTransport | None = None,
         bearer: str | None = None,
         live: bool = False,
+        ctl: str = CTL_KIND_RESERVE_TEMPORAL,
     ) -> None:
         origin = normalize_ctl_http_base(base_url)
         if origin is None:
@@ -164,6 +180,16 @@ class LabReserveTemporalHttpHook:
         self.transport = transport or urllib_request_ctl
         self.bearer = str(bearer).strip() if bearer else None
         self.live = bool(live)
+        self.ctl = (
+            str(ctl).strip()
+            if ctl in CTL_KINDS
+            else resolve_ctl_kind(origin=origin)
+        )
+        self.prefix = (
+            IEC_LOCAL_PREFIX
+            if self.ctl == CTL_KIND_IEC_LOCAL
+            else RESERVE_TEMPORAL_PREFIX
+        )
         self.last_unreachable: CtlHttpUnreachable | None = None
         self.last_status_payload: dict[str, Any] | None = None
         self._unreachable_until = 0.0
@@ -184,9 +210,14 @@ class LabReserveTemporalHttpHook:
         handoff: dict[str, str] | None = None,
         resource_class: str | None = None,
     ) -> dict[str, Any] | None:
-        if action not in GET_VERBS and action not in POST_VERBS:
-            return None
-        method = "GET" if action in GET_VERBS else "POST"
+        if self.ctl == CTL_KIND_IEC_LOCAL:
+            if action not in IEC_LOCAL_GET_VERBS and action not in IEC_LOCAL_POST_VERBS:
+                return None
+            method = "GET" if action in IEC_LOCAL_GET_VERBS else "POST"
+        else:
+            if action not in GET_VERBS and action not in POST_VERBS:
+                return None
+            method = "GET" if action in GET_VERBS else "POST"
         query: dict[str, str] = {}
         body_obj: dict[str, Any] | None = None
         if action == "admit":
@@ -204,7 +235,7 @@ class LabReserveTemporalHttpHook:
             query["id"] = work_id
         qs = urlencode(query) if query else ""
         url = urlunsplit(
-            ("http", urlsplit(self.base_url).netloc, f"{RESERVE_TEMPORAL_PREFIX}/{action}", qs, "")
+            ("http", urlsplit(self.base_url).netloc, f"{self.prefix}/{action}", qs, "")
         )
         raw_body = (
             (json.dumps(body_obj, separators=(",", ":")) + "\n").encode("utf-8")
@@ -268,7 +299,7 @@ class LabReserveTemporalHttpHook:
         )
         if payload is None:
             return None
-        return _runtime_ref_from_admit(payload, handoff.get("id"))
+        return _runtime_ref_from_admit(payload, handoff.get("id"), ctl=self.ctl)
 
     def cancel(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)
@@ -313,6 +344,8 @@ class LabReserveTemporalHttpHook:
         work_id = _ctl_id(job_id, runtime_ref)
         if work_id is None:
             return None
+        if self.ctl == CTL_KIND_IEC_LOCAL:
+            return None
         return self._invoke("events", work_id=work_id)
 
 
@@ -331,4 +364,5 @@ def http_hook_from_env(
         transport=transport,
         bearer=bearer_from_env(source),
         live=_truthy(source.get(ENV_LIVE)),
+        ctl=resolve_ctl_kind(source, origin=base),
     )
