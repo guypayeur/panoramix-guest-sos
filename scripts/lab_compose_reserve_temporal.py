@@ -31,9 +31,11 @@ aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
 5d399f7 (PR #132 iec_parity_pack apply-metrics, or main);
 apply-metrics docs tip 3904ee4 (PR #134 stamp link, or
 main); apply-notes tip 48a8645 (PR #136 iec_parity_pack
-apply-notes, or main); guest emit tip b859466 (#52); guest
+apply-notes, or main); apply-notes docs tip 6807509 (PR
+#138 stamp link, or main); guest emit tip b859466 (#52); guest
 gap-report tip eb48605 (#60); guest merge tip 39064d5 (#64);
-guest apply-metrics tip 7c09f32 (#68). Wall feature tip
+guest apply-metrics tip 7c09f32 (#68); guest apply-notes tip
+e5562c3 (#70). Wall feature tip
 remains 9b6646e8. Guest fragment can feed optional tips /
 measured durable into python3 -m runtime.iec_parity_pack
 skeleton via --from-json (file or stdin) or flags; omit
@@ -51,7 +53,11 @@ invent UX strings. assist ≠ fill; assist ≠ Done;
 apply-notes ≠ fill; apply-notes ≠ Done;
 apply-metrics ≠ fill; apply-metrics ≠ Done; merge ≠ fill;
 merge ≠ Done; gap-report ≠ Done.
-Does not write the full live pack. Not a forecast. Not IFRS17.
+Does not write the full live pack. Operator live #78 D pack
+is off-box at ~/panoramix-lab/evidence-70/iec-parity-live-20260912/
+with STRICT stamp-48a8645-iec-parity-live/ — live fill ≠ Done;
+north_star_done false; comparable false; does not unlock cloud.
+Not a forecast. Not IFRS17.
 Not iec SPA. Handoff docs panel is operator clarity, not a
 second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. north_star_done false.
