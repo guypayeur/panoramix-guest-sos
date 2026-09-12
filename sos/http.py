@@ -19,9 +19,18 @@ import re
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from sos.errors import SosError
+from sos.events_export import (
+    EVENTS_EXPORT_NOTE,
+    EVENTS_FORMAT_JSON,
+    EVENTS_FORMAT_JSONL,
+    download_filename,
+    events_to_jsonl,
+    parse_events_format,
+    parse_kind_filter,
+)
 from sos.handoff_vocab import (
     CTL_ADMIT,
     CTL_CANCEL,
@@ -106,6 +115,8 @@ INFO_PAYLOAD = {
         },
         "progress": "GET /v0/jobs/{id}/progress",
         "events": "GET /v0/jobs/{id}/events",
+        "events_filter": "GET /v0/jobs/{id}/events?kind=admit,StageCompleted,pause,resume,cancel,succeed,fail",
+        "events_export": "GET /v0/jobs/{id}/events?format=jsonl",
         "compare": "GET /v0/jobs/{id}/compare",
         "progress_honesty": (
             "durable reserve-temporal path-slices when a hook provides them "
@@ -118,10 +129,14 @@ INFO_PAYLOAD = {
         ),
         "events_honesty": (
             "durable reserve-temporal JSONL trail when a hook provides it; "
-            "else process-memory fallback; not a SIEM; "
-            "not iec /v1/audit/events product; not a regulatory audit. "
+            "else process-memory fallback; filter by kind "
+            "(admit / StageCompleted / pause / resume / cancel / "
+            "succeed/fail / …); export JSON or JSONL for local salvage; "
+            "not a SIEM; not iec /v1/audit/events product; "
+            "not a regulatory audit; not regulatory defensibility. "
             f"Operator/ctl: {CTL_EVENTS}"
         ),
+        "events_export_honesty": EVENTS_EXPORT_NOTE,
         "investigate_honesty": (
             "catalog identity already on the job (name + short digest) "
             "for cross-check; not a data-catalog product. "
@@ -241,13 +256,21 @@ class SosApp:
 
     def handle(self, method: str, path: str, body: bytes = b"") -> HttpResponse:
         method = method.upper()
-        path = urlsplit(path).path or "/"
+        split = urlsplit(path)
+        path = split.path or "/"
+        query = parse_qs(split.query, keep_blank_values=False)
         try:
-            return self._route(method, path, body)
+            return self._route(method, path, body, query)
         except SosError as err:
             return _json_response(err.http_status, err.to_dict())
 
-    def _route(self, method: str, path: str, body: bytes) -> HttpResponse:
+    def _route(
+        self,
+        method: str,
+        path: str,
+        body: bytes,
+        query: dict[str, list[str]] | None = None,
+    ) -> HttpResponse:
         if path == "/health":
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
@@ -303,7 +326,7 @@ class SosApp:
         if events:
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
-            return _json_response(200, self.store.events(events.group(1)))
+            return self._events_response(events.group(1), query or {})
         compare = _COMPARE_RE.match(path)
         if compare:
             if method != "GET":
@@ -331,6 +354,54 @@ class SosApp:
             self.store.persist_dir
         )
         return payload
+
+    def _events_response(
+        self, job_id: str, query: dict[str, list[str]]
+    ) -> HttpResponse:
+        """JSON envelope or JSONL salvage. Filter by kind. Not a SIEM."""
+        raw_kinds = list(query.get("kind") or []) + list(query.get("kinds") or [])
+        kinds = parse_kind_filter(raw_kinds)
+        fmt_raw = (query.get("format") or query.get("export") or [None])[0]
+        try:
+            fmt = parse_events_format(fmt_raw)
+        except ValueError as exc:
+            raise SosError(
+                "invalid_format",
+                format=str(exc),
+                allowed=sorted((EVENTS_FORMAT_JSON, EVENTS_FORMAT_JSONL)),
+                detail="events export format is json or jsonl",
+            ) from exc
+        download = (query.get("download") or [""])[0].lower() in {
+            "1",
+            "true",
+            "yes",
+            "download",
+        }
+        payload = self.store.events(job_id, kinds or None)
+        honesty = {
+            "X-Sos-Events-Note": EVENTS_EXPORT_NOTE,
+            "X-Sos-Events-Source": str(payload.get("source") or "memory"),
+        }
+        if fmt == EVENTS_FORMAT_JSONL:
+            body = events_to_jsonl(payload.get("events") or [])
+            headers = {
+                **honesty,
+                "Content-Disposition": (
+                    f'attachment; filename="{download_filename(job_id, fmt)}"'
+                ),
+            }
+            return HttpResponse(
+                status=200,
+                body=body,
+                content_type="application/x-ndjson",
+                headers=headers,
+            )
+        headers = dict(honesty)
+        if download:
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{download_filename(job_id, EVENTS_FORMAT_JSON)}"'
+            )
+        return _json_response(200, payload, extra_headers=headers)
 
     def _create_job(self, body: bytes) -> HttpResponse:
         payload = _read_json_object(body)
@@ -370,8 +441,7 @@ def bind_handler(app: SosApp) -> type[BaseHTTPRequestHandler]:
                 self._write(_json_response(413, {"error": "payload_too_large"}))
                 return
             body = self.rfile.read(length) if length else b""
-            path = self.path.split("?", 1)[0]
-            self._write(app.handle(method, path, body))
+            self._write(app.handle(method, self.path, body))
 
         def _write(self, resp: HttpResponse) -> None:
             self.send_response(resp.status)

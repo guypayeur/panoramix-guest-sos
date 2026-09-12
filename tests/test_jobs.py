@@ -1491,6 +1491,9 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("not #70 done", text.lower(), name)
             self.assertIn("/progress", text, name)
             self.assertIn("/events", text, name)
+            self.assertIn("?kind=", text, name)
+            self.assertIn("format=jsonl", text, name)
+            self.assertIn("regulatory defensibility", text, name)
             self.assertIn("/compare", text, name)
             self.assertIn("does **not** auto-retry", text, name)
             self.assertIn("ctl-mediated", text, name)
@@ -1527,6 +1530,8 @@ class JobStoreTests(unittest.TestCase):
         self.assertIn("PANORAMIX_SOS_JOBS_DIR", ux)
         self.assertIn(".sos/jobs", ux)
         self.assertIn("- [x] Thinner history persistence", ux)
+        self.assertIn("- [x] Thinner job-scoped events export / filter", ux)
+        self.assertIn("not regulatory defensibility", ux)
         self.assertIn("local event trail", ux.lower())
         self.assertIn("not iec chunk progress", ux.lower())
         self.assertIn("**match** (thinner)", ux)
@@ -1566,6 +1571,8 @@ class JobStoreTests(unittest.TestCase):
             "| 4.1 Audit trail | `GET /v1/audit/events?job_id=…` | **match** (thinner) |",
             ux,
         )
+        self.assertIn("?kind=", ux)
+        self.assertIn("?format=jsonl", ux)
         self.assertNotIn(
             "| 4.1 Audit trail | `GET /v1/audit/events?job_id=…` | **partial** |",
             ux,
