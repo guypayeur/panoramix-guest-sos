@@ -99,6 +99,17 @@ OPERATOR_HTML = """<!DOCTYPE html>
       font-size: 0.75rem;
     }
     .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.7rem; }
+    .auto-refresh-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0;
+      width: auto;
+    }
+    .auto-refresh-label input { width: auto; }
+    #status-filter { width: auto; min-width: 9rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     th, td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
     th { color: var(--muted); font-weight: 550; font-size: 0.75rem; }
@@ -332,6 +343,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
     payload export for operator/ctl re-admit
     (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
     Cancel/fail does not auto-retry. Pause/resume remains durable-only.
+    Job list can filter by real status
+    (queued / running / paused / succeeded / failed / canceled).
+    Light auto-refresh is opt-in, or on when
+    <code>durable_hook</code> is active; it stops when the selected
+    job is terminal and does not invent progress.
+    Not a SPA framework. Not Slack.
     <strong>Stub fallback</strong> (default, in-process) vs
     <strong>operator binding path</strong>: operator/ctl reads
     <code>GET /v0/jobs/{id}/handoff</code> and <code>/payload</code>
@@ -400,6 +417,26 @@ OPERATOR_HTML = """<!DOCTYPE html>
     </section>
     <section>
       <h2>Jobs (newest first)</h2>
+      <div class="row" id="list-controls" style="margin:0 0 0.55rem">
+        <label for="status-filter" style="margin:0">Status</label>
+        <select id="status-filter">
+          <option value="" selected>All</option>
+          <option value="queued">queued</option>
+          <option value="running">running</option>
+          <option value="paused">paused</option>
+          <option value="succeeded">succeeded</option>
+          <option value="failed">failed</option>
+          <option value="canceled">canceled</option>
+        </select>
+        <label class="auto-refresh-label" for="auto-refresh">
+          <input type="checkbox" id="auto-refresh">
+          Auto-refresh
+        </label>
+        <button type="button" class="secondary" id="refresh-btn">Refresh now</button>
+      </div>
+      <p class="hint" id="refresh-hint" style="margin-top:0">Filter uses real job.status only.
+        Light auto-refresh is opt-in, or on when the durable hook is active.
+        Stops when the selected job is terminal. Does not invent progress.</p>
       <div id="list"><p class="empty">No jobs yet.</p></div>
       <h2 style="margin-top:1.1rem">Job detail</h2>
       <div class="row" style="margin:0 0 0.55rem">
@@ -474,12 +511,16 @@ OPERATOR_HTML = """<!DOCTYPE html>
   <script>
     let selectedId = null;
     let jobs = [];
+    let detailJob = null;
     let pendingCancelId = null;
     let lastSeamText = "";
     let lastProgress = null;
     let lastEvents = null;
     let lastCompare = null;
     let eventKindFilter = "";
+    let refreshTimer = null;
+    let durableHookActive = false;
+    const REFRESH_MS = 2000;
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -1264,23 +1305,65 @@ OPERATOR_HTML = """<!DOCTYPE html>
       renderEvents(job);
     }
 
+    function statusFilter() {
+      return ($("status-filter") && $("status-filter").value) || "";
+    }
+
+    function listUrl() {
+      const status = statusFilter();
+      return status ? ("/v0/jobs?status=" + encodeURIComponent(status)) : "/v0/jobs";
+    }
+
+    function autoRefreshWanted() {
+      return !!( $("auto-refresh") && $("auto-refresh").checked );
+    }
+
+    function stopAutoRefreshTimer() {
+      if (refreshTimer != null) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    function startAutoRefreshTimer() {
+      stopAutoRefreshTimer();
+      if (!autoRefreshWanted()) return;
+      refreshTimer = setInterval(() => { refresh({ fromTimer: true }); }, REFRESH_MS);
+    }
+
+    function syncRefreshHint(job) {
+      const hint = $("refresh-hint");
+      if (!hint) return;
+      const base = "Filter uses real job.status only. Light auto-refresh is opt-in, or on when the durable hook is active. Stops when the selected job is terminal. Does not invent progress.";
+      if (!autoRefreshWanted()) {
+        hint.textContent = base;
+        return;
+      }
+      if (job && !live(job.status)) {
+        hint.textContent = "Auto-refresh stopped — selected job is terminal (" + job.status + "). No invented progress.";
+        return;
+      }
+      hint.textContent = "Auto-refresh on (light). Polls list + selected job from the API. Stops on terminal. No invented progress.";
+    }
+
+    function pickSelectedJob() {
+      if (detailJob && selectedId && detailJob.id === selectedId) return detailJob;
+      if (selectedId) {
+        const listed = jobs.find(j => j.id === selectedId);
+        if (listed) return listed;
+      }
+      return jobs[0] || null;
+    }
+
     function render() {
       const host = $("list");
       host.replaceChildren();
+      const filter = statusFilter();
       if (!jobs.length) {
         const p = document.createElement("p");
         p.className = "empty";
-        p.textContent = "No jobs yet.";
+        p.textContent = filter ? ("No jobs with status " + filter + ".") : "No jobs yet.";
         host.appendChild(p);
-        renderDetail(null);
-        $("cancel-btn").disabled = true;
-        $("cancel-btn").textContent = "Cancel selected job";
-        $("pause-btn").disabled = true;
-        $("resume-btn").disabled = true;
-        $("export-json-btn").disabled = true;
-        $("export-jsonl-btn").disabled = true;
-        syncLifecycleButtons(null);
-        return;
       }
       const table = document.createElement("table");
       const thead = document.createElement("thead");
@@ -1292,7 +1375,13 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tr.className = "job" + (job.id === selectedId ? " selected" : "");
         tr.addEventListener("click", () => {
           selectedId = job.id;
-          loadProgress(job.id).then(() => loadEvents(job.id)).then(() => loadCompare(job.id)).then(() => render());
+          detailJob = job;
+          loadProgress(job.id).then(() => loadEvents(job.id)).then(() => loadCompare(job.id)).then(() => {
+            render();
+            if (autoRefreshWanted() && live(job.status)) startAutoRefreshTimer();
+            else if (!live(job.status)) stopAutoRefreshTimer();
+            syncRefreshHint(job);
+          });
         });
         const tdS = document.createElement("td"); tdS.appendChild(pill(job.status));
         const tdK = document.createElement("td"); tdK.textContent = job.kind;
@@ -1321,12 +1410,27 @@ OPERATOR_HTML = """<!DOCTYPE html>
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
-      host.appendChild(table);
+      if (jobs.length) host.appendChild(table);
 
-      const selected = jobs.find(j => j.id === selectedId) || jobs[0];
-      selectedId = selected.id;
-      renderDetail(selected);
-      syncLifecycleButtons(selected);
+      const selected = pickSelectedJob();
+      if (selected) {
+        selectedId = selected.id;
+        detailJob = selected;
+        renderDetail(selected);
+        syncLifecycleButtons(selected);
+      } else {
+        selectedId = null;
+        detailJob = null;
+        renderDetail(null);
+        $("cancel-btn").disabled = true;
+        $("cancel-btn").textContent = "Cancel selected job";
+        $("pause-btn").disabled = true;
+        $("resume-btn").disabled = true;
+        $("export-json-btn").disabled = true;
+        $("export-jsonl-btn").disabled = true;
+        syncLifecycleButtons(null);
+      }
+      syncRefreshHint(selected);
     }
 
     async function loadProgress(id) {
@@ -1371,23 +1475,46 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
     }
 
-    async function refresh() {
+    async function refresh(opts) {
+      const fromTimer = !!(opts && opts.fromTimer);
       try {
-        const res = await fetch("/v0/jobs");
+        const res = await fetch(listUrl());
         const body = await res.json();
+        if (!res.ok) {
+          flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+          return;
+        }
         jobs = body.jobs || [];
-        const selected = jobs.find(j => j.id === selectedId) || jobs[0];
+        let selected = selectedId ? (jobs.find(j => j.id === selectedId) || null) : null;
+        if (selectedId && !selected) {
+          try {
+            const one = await fetch("/v0/jobs/" + selectedId);
+            if (one.ok) selected = await one.json();
+          } catch (e) { selected = null; }
+        }
+        if (!selected && jobs[0]) selected = jobs[0];
         if (selected) {
           selectedId = selected.id;
+          detailJob = selected;
           await loadProgress(selectedId);
           await loadEvents(selectedId);
           await loadCompare(selectedId);
         } else {
+          selectedId = null;
+          detailJob = null;
           lastProgress = null;
           lastEvents = null;
           lastCompare = null;
         }
         render();
+        if (selected && !live(selected.status)) {
+          stopAutoRefreshTimer();
+        } else if (autoRefreshWanted() && refreshTimer == null) {
+          startAutoRefreshTimer();
+        }
+        if (fromTimer && selected && !live(selected.status)) {
+          stopAutoRefreshTimer();
+        }
       } catch (e) {
         flash("poll failed: " + e.message);
       }
@@ -1421,15 +1548,30 @@ OPERATOR_HTML = """<!DOCTYPE html>
         const info = await res.json();
         $("info-line").textContent = info.product + " · " + info.status + " · engines " + info.engines;
         renderDurableBadge(info);
+        const hook = (info && info.jobs && info.jobs.durable_hook) || {};
+        durableHookActive = hook.durable_path === true;
+        if (durableHookActive && $("auto-refresh")) {
+          $("auto-refresh").checked = true;
+        }
       } catch (e) {
         $("info-line").textContent = "info unavailable";
       }
     }
 
+    $("status-filter").addEventListener("change", () => { refresh(); });
+    $("auto-refresh").addEventListener("change", () => {
+      const selected = pickSelectedJob();
+      if (autoRefreshWanted() && (!selected || live(selected.status))) {
+        startAutoRefreshTimer();
+      } else {
+        stopAutoRefreshTimer();
+      }
+      syncRefreshHint(selected);
+    });
+    $("refresh-btn").addEventListener("click", () => { refresh(); });
+
     syncDemoFields();
-    loadInfo();
-    refresh();
-    setInterval(refresh, 1000);
+    loadInfo().then(() => refresh());
   </script>
 </body>
 </html>

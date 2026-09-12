@@ -763,11 +763,14 @@ class JobStore:
         peers = [job for job in self.list() if job.id != job_id]
         return compare_vs_priors(current, peers, now=self._clock())
 
-    def list(self) -> list[Job]:
+    def list(self, statuses: frozenset[str] | set[str] | None = None) -> list[Job]:
+        """Newest first. Optional ``statuses`` is real ``job.status`` only."""
         with self._lock:
             ids = list(self._jobs.keys())
         jobs = [self.get(job_id) for job_id in ids]
         jobs.reverse()  # insertion order, newest first
+        if statuses:
+            jobs = [job for job in jobs if job.status in statuses]
         return jobs
 
     def cancel(self, job_id: str) -> Job:

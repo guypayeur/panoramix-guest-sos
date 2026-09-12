@@ -10,6 +10,7 @@ from sos.handoff_vocab import (
     LOCAL_DEMOS,
     RESOURCE_CLASSES,
     WORK_KINDS,
+    WORK_STATUSES,
 )
 
 
@@ -67,6 +68,20 @@ class InvalidDemo(SosError):
             "invalid_demo",
             detail=detail,
             allowed=sorted(LOCAL_DEMOS),
+        )
+
+
+class InvalidStatus(SosError):
+    def __init__(self, status: str) -> None:
+        super().__init__(
+            "invalid_status",
+            status=status,
+            allowed=list(WORK_STATUSES),
+            detail=(
+                "Job list filter uses real job.status only "
+                "(queued/running/paused/succeeded/failed/canceled). "
+                "Unknown values such as accepted or cancelled are rejected."
+            ),
         )
 
 

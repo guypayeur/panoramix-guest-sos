@@ -437,6 +437,25 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(ids[0], b.id)
         self.assertEqual(ids[1], a.id)
 
+    def test_list_status_filter_honest(self) -> None:
+        live = self.store.submit({"demo": "sleep", "seconds": 8})
+        done = self.store.submit({"demo": "echo", "message": "done"})
+        wait_status(self.store, done.id, {"succeeded"})
+        succeeded = [job.id for job in self.store.list(statuses={"succeeded"})]
+        self.assertEqual(succeeded, [done.id])
+        live_ids = {job.id for job in self.store.list(statuses={"queued", "running", "paused"})}
+        self.assertIn(live.id, live_ids)
+        self.assertNotIn(done.id, live_ids)
+        canceled = self.store.cancel(live.id)
+        self.assertEqual(canceled.status, "canceled")
+        self.assertEqual(
+            [job.id for job in self.store.list(statuses={"canceled"})],
+            [live.id],
+        )
+        self.assertEqual(self.store.list(statuses={"failed"}), [])
+        unfiltered = {job.id for job in self.store.list()}
+        self.assertEqual(unfiltered, {live.id, done.id})
+
     def test_unknown_kind(self) -> None:
         with self.assertRaises(InvalidKind) as ctx:
             self.store.submit(
@@ -1503,6 +1522,16 @@ class JobStoreTests(unittest.TestCase):
             self.assertIn("iec spa historical widget", text.lower(), name)
             self.assertIn("PANORAMIX_SOS_JOBS_DIR", text, name)
             self.assertIn(".sos/jobs", text, name)
+            self.assertIn("/v0/jobs?status=", text, name)
+            self.assertTrue(
+                "stops on terminal" in text.lower() or "stop on terminal" in text.lower(),
+                name,
+            )
+            self.assertTrue(
+                "does not invent progress" in text.lower()
+                or "no invented progress" in text.lower(),
+                name,
+            )
             self.assertIn(
                 "sha256:77e9299f4b8ea4aeed46f71b91cc947d56e9bd169d795e70845123fef53d7e4e",
                 text,
@@ -1524,6 +1553,14 @@ class JobStoreTests(unittest.TestCase):
         self.assertNotIn("no historical-run comparison", ux)
         self.assertIn("historical comparison is **match (thinner)**", ux.lower())
         self.assertIn("history persistence is **match (thinner)**", ux.lower())
+        self.assertIn("job list status filter + light auto-refresh is **match (thinner)**", ux.lower())
+        self.assertIn("stops on terminal", ux.lower())
+        self.assertIn("no invented progress", ux.lower())
+        self.assertIn("no full spa framework", ux.lower())
+        self.assertIn("GET /v0/jobs?status=", ux)
+        self.assertIn("- [x] Thinner job-list status filter + light auto-refresh", ux)
+        self.assertNotIn("- [x] Operator/actuary path", ux)
+        self.assertNotIn("- [x] Side-by-side recorded", ux)
         self.assertIn("| History persistence | guest restart wipes in-process priors | **match** (thinner) |", ux)
         self.assertIn("Thinner historical-run comparison", ux)
         self.assertIn("Thinner history persistence", ux)

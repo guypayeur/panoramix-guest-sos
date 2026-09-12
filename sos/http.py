@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from sos.errors import SosError
+from sos.errors import InvalidStatus, SosError
 from sos.events_export import (
     EVENTS_EXPORT_NOTE,
     EVENTS_FORMAT_JSON,
@@ -113,6 +113,20 @@ INFO_PAYLOAD = {
                 "Not a perf baseline until runtime #83 + remeasure. Not #70 Done."
             ),
         },
+        "list": "GET /v0/jobs",
+        "list_status": "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",
+        "list_status_honesty": (
+            "Filter is the real job.status from the store. "
+            "Repeat or comma-separate to OR known statuses. "
+            "Unknown values (accepted, cancelled) are 400 invalid_status. "
+            "Not a SPA query language."
+        ),
+        "auto_refresh_honesty": (
+            "Operator UI light poll of list + selected job detail. "
+            "Opt-in checkbox, or on when jobs.durable_hook.durable_path. "
+            "Stops when the selected job is terminal. "
+            "Does not invent progress. Not a SPA framework."
+        ),
         "progress": "GET /v0/jobs/{id}/progress",
         "events": "GET /v0/jobs/{id}/events",
         "events_filter": "GET /v0/jobs/{id}/events?kind=admit,StageCompleted,pause,resume,cancel,succeed,fail",
@@ -215,6 +229,22 @@ _EVENTS_RE = re.compile(r"^/v0/jobs/([^/]+)/events$")
 _COMPARE_RE = re.compile(r"^/v0/jobs/([^/]+)/compare$")
 
 
+def parse_job_status_filter(
+    query: dict[str, list[str]],
+) -> frozenset[str] | None:
+    """Parse ``?status=`` into known WORK_STATUSES. None means unfiltered."""
+    raw: list[str] = []
+    for item in query.get("status", []):
+        raw.extend(part.strip() for part in item.split(","))
+    wanted = [value for value in raw if value]
+    if not wanted:
+        return None
+    unknown = [value for value in wanted if value not in WORK_STATUSES]
+    if unknown:
+        raise InvalidStatus(unknown[0])
+    return frozenset(wanted)
+
+
 @dataclass
 class HttpResponse:
     status: int
@@ -285,7 +315,13 @@ class SosApp:
             return _html_response(OPERATOR_HTML)
         if path == "/v0/jobs":
             if method == "GET":
-                return _json_response(200, {"jobs": [j.to_dict() for j in self.store.list()]})
+                statuses = parse_job_status_filter(query or {})
+                payload: dict[str, Any] = {
+                    "jobs": [j.to_dict() for j in self.store.list(statuses=statuses)]
+                }
+                if statuses is not None:
+                    payload["status"] = [name for name in WORK_STATUSES if name in statuses]
+                return _json_response(200, payload)
             if method == "POST":
                 return self._create_job(body)
             return _json_response(405, {"error": "method_not_allowed", "path": path})

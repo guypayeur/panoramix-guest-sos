@@ -15,7 +15,8 @@ from sos.handoff_vocab import (
     RECORDED_CANONICAL_JSON,
     RECORDED_PAYLOAD_DIGEST,
 )
-from sos.http import INFO_PAYLOAD, SosApp
+from sos.errors import InvalidStatus
+from sos.http import INFO_PAYLOAD, SosApp, parse_job_status_filter
 from sos.jobs import JobStore
 
 
@@ -120,6 +121,18 @@ class HttpAppTests(unittest.TestCase):
         self.assertIs(hook["north_star_done"], False)
         self.assertIs(hook["guest_to_mesh_ctl"], False)
         self.assertIn("No pretend", hook["note"])
+        self.assertEqual(body["jobs"]["list"], "GET /v0/jobs")
+        self.assertEqual(
+            body["jobs"]["list_status"],
+            "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",
+        )
+        self.assertIn("real job.status", body["jobs"]["list_status_honesty"])
+        self.assertIn("invalid_status", body["jobs"]["list_status_honesty"])
+        self.assertIn("cancelled", body["jobs"]["list_status_honesty"])
+        self.assertIn("Stops when the selected job is terminal", body["jobs"]["auto_refresh_honesty"])
+        self.assertIn("Does not invent progress", body["jobs"]["auto_refresh_honesty"])
+        self.assertIn("durable_hook", body["jobs"]["auto_refresh_honesty"])
+        self.assertIn("Not a SPA framework", body["jobs"]["auto_refresh_honesty"])
         self.assertEqual(body["jobs"]["progress"], "GET /v0/jobs/{id}/progress")
         self.assertEqual(body["jobs"]["events"], "GET /v0/jobs/{id}/events")
         self.assertIn("?kind=", body["jobs"]["events_filter"])
@@ -312,6 +325,21 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("PANORAMIX_SOS_JOBS_DIR", html)
             self.assertIn("typical_elapsed_s", html)
             self.assertIn("eta_elapsed_s", html)
+            self.assertIn('id="status-filter"', html)
+            self.assertIn('id="auto-refresh"', html)
+            self.assertIn('id="refresh-btn"', html)
+            self.assertIn('value="queued"', html)
+            self.assertIn('value="paused"', html)
+            self.assertIn('value="canceled"', html)
+            self.assertNotIn('value="cancelled"', html)
+            self.assertIn("/v0/jobs?status=", html)
+            self.assertIn("Does not invent progress", html)
+            self.assertIn("Stops when the selected job is terminal", html)
+            self.assertIn("durable_path", html)
+            self.assertIn("No jobs with status", html)
+            self.assertNotIn("setInterval(refresh, 1000)", html)
+            self.assertIn("REFRESH_MS = 2000", html)
+            self.assertIn("Not a SPA framework", html)
 
     def test_submit_list_get_opaque(self) -> None:
         created = self.app.handle(
@@ -1110,6 +1138,74 @@ class HttpAppTests(unittest.TestCase):
         resp = self.app.handle("POST", "/v0/jobs", b"{")
         self.assertEqual(resp.status, 400)
         self.assertEqual(_json(resp)["error"], "invalid_json")
+
+    def test_parse_job_status_filter(self) -> None:
+        self.assertIsNone(parse_job_status_filter({}))
+        self.assertIsNone(parse_job_status_filter({"status": [""]}))
+        self.assertEqual(parse_job_status_filter({"status": ["running"]}), frozenset({"running"}))
+        self.assertEqual(
+            parse_job_status_filter({"status": ["running,paused"]}),
+            frozenset({"running", "paused"}),
+        )
+        self.assertEqual(
+            parse_job_status_filter({"status": ["running", "paused"]}),
+            frozenset({"running", "paused"}),
+        )
+        with self.assertRaises(InvalidStatus) as ctx:
+            parse_job_status_filter({"status": ["cancelled"]})
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["error"], "invalid_status")
+        self.assertEqual(body["status"], "cancelled")
+        self.assertIn("canceled", body["allowed"])
+        self.assertNotIn("cancelled", body["allowed"])
+        with self.assertRaises(InvalidStatus):
+            parse_job_status_filter({"status": ["accepted"]})
+        with self.assertRaises(InvalidStatus):
+            parse_job_status_filter({"status": ["RUNNING"]})
+
+    def test_list_status_filter_http(self) -> None:
+        sleep = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "sleep", "seconds": 8}).encode(),
+        )
+        sleep_id = _json(sleep)["id"]
+        echo = self.app.handle(
+            "POST",
+            "/v0/jobs",
+            json.dumps({"demo": "echo", "message": "hi"}).encode(),
+        )
+        echo_id = _json(echo)["id"]
+        wait_http_status(self.app, echo_id, {"succeeded"})
+
+        all_jobs = _json(self.app.handle("GET", "/v0/jobs"))
+        self.assertNotIn("status", all_jobs)
+        all_ids = {job["id"] for job in all_jobs["jobs"]}
+        self.assertEqual(all_ids, {sleep_id, echo_id})
+
+        succeeded = _json(self.app.handle("GET", "/v0/jobs?status=succeeded"))
+        self.assertEqual(succeeded["status"], ["succeeded"])
+        self.assertEqual([job["id"] for job in succeeded["jobs"]], [echo_id])
+        self.assertTrue(all(job["status"] == "succeeded" for job in succeeded["jobs"]))
+
+        live = _json(self.app.handle("GET", "/v0/jobs?status=queued,running,paused"))
+        self.assertEqual(live["status"], ["queued", "running", "paused"])
+        live_ids = {job["id"] for job in live["jobs"]}
+        self.assertIn(sleep_id, live_ids)
+        self.assertNotIn(echo_id, live_ids)
+        self.assertTrue(all(job["status"] in {"queued", "running", "paused"} for job in live["jobs"]))
+
+        canceled = self.app.handle("POST", f"/v0/jobs/{sleep_id}/cancel")
+        self.assertEqual(_json(canceled)["status"], "canceled")
+        filtered = _json(self.app.handle("GET", "/v0/jobs?status=canceled"))
+        self.assertEqual([job["id"] for job in filtered["jobs"]], [sleep_id])
+
+        bad = self.app.handle("GET", "/v0/jobs?status=cancelled")
+        self.assertEqual(bad.status, 400)
+        self.assertEqual(_json(bad)["error"], "invalid_status")
+        accepted = self.app.handle("GET", "/v0/jobs?status=accepted")
+        self.assertEqual(accepted.status, 400)
+        self.assertEqual(_json(accepted)["error"], "invalid_status")
 
     def test_unit_yaml_has_no_engine_fields(self) -> None:
         text = Path(__file__).resolve().parents[1].joinpath(".platform/contract.yaml").read_text(
