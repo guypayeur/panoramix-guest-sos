@@ -122,6 +122,9 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("No pretend", hook["note"])
         self.assertEqual(body["jobs"]["progress"], "GET /v0/jobs/{id}/progress")
         self.assertEqual(body["jobs"]["events"], "GET /v0/jobs/{id}/events")
+        self.assertIn("?kind=", body["jobs"]["events_filter"])
+        self.assertIn("format=jsonl", body["jobs"]["events_export"])
+        self.assertIn("not regulatory defensibility", body["jobs"]["events_export_honesty"])
         self.assertEqual(body["jobs"]["compare"], "GET /v0/jobs/{id}/compare")
         self.assertEqual(body["jobs"]["pause"], "POST /v0/jobs/{id}/pause")
         self.assertEqual(body["jobs"]["resume"], "POST /v0/jobs/{id}/resume")
@@ -145,10 +148,12 @@ class HttpAppTests(unittest.TestCase):
             body["jobs"]["progress_honesty"],
         )
         self.assertIn("not a regulatory audit", body["jobs"]["events_honesty"])
+        self.assertIn("not regulatory defensibility", body["jobs"]["events_honesty"])
         self.assertIn("durable", body["jobs"]["events_honesty"])
         self.assertIn("jsonl", body["jobs"]["events_honesty"].lower())
         self.assertIn("not a siem", body["jobs"]["events_honesty"].lower())
         self.assertIn("/v1/audit/events", body["jobs"]["events_honesty"])
+        self.assertIn("filter by kind", body["jobs"]["events_honesty"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal events",
             body["jobs"]["events_honesty"],
@@ -256,6 +261,12 @@ class HttpAppTests(unittest.TestCase):
             self.assertIn("completed vs current vs pending", html)
             self.assertIn("not a regulatory audit", html)
             self.assertIn("not a SIEM", html)
+            self.assertIn("not regulatory defensibility", html)
+            self.assertIn("Download JSON", html)
+            self.assertIn("Download JSONL", html)
+            self.assertIn("StageCompleted", html)
+            self.assertIn("event-kind-filters", html)
+            self.assertIn("format=jsonl", html)
             self.assertIn("reserve-temporal events --id", html)
             self.assertIn("/events", html)
             self.assertIn("docs/ux-side-by-side.md", html)

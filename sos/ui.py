@@ -240,6 +240,18 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .trail li { margin: 0.2rem 0; }
     .trail .ts { font-family: var(--mono); color: var(--muted); font-size: 0.74rem; }
     .trail .kind { font-weight: 650; }
+    .kind-filters { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.45rem 0 0.25rem; }
+    .kind-filters button {
+      padding: 0.18rem 0.5rem;
+      font-size: 0.72rem;
+      font-weight: 550;
+    }
+    .kind-filters button.active {
+      background: var(--accent);
+      color: #1a1404;
+      border-color: transparent;
+      font-weight: 650;
+    }
     #cancel-modal {
       position: fixed;
       inset: 0;
@@ -301,8 +313,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
     Stub stays “stage i of n” without fake names (not iec planner
     parallelism / iec chunk progress).
     Event trail prefers durable reserve-temporal JSONL when a hook
-    provides it; otherwise process-memory (not a SIEM / not a
-    regulatory audit).
+    provides it; otherwise process-memory. Filter by kind and
+    download JSON / JSONL for local salvage (not a SIEM / not a
+    regulatory audit / not regulatory defensibility).
     Investigate is thinner: catalog identity already on the job
     (name + short digest) for cross-check — not a data-catalog product.
     Static path-slice ownership tags when hooked (not Slack, not a
@@ -406,8 +419,26 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
       <h2 style="margin-top:1.1rem">Event trail</h2>
       <p class="hint" style="margin-top:0">On this same panel. Durable reserve-temporal JSONL when a hook provides it;
-        otherwise process-memory. Not a SIEM, not a regulatory audit product.
+        otherwise process-memory. Filter by kind (admit / StageCompleted / pause /
+        resume / cancel / succeed/fail / …). Download JSON or JSONL for local salvage.
+        Not a SIEM, not a regulatory audit product, not regulatory defensibility.
         Operator/ctl: <code>python3 -m runtime.apply reserve-temporal events --id cw_…</code></p>
+      <div class="kind-filters" id="event-kind-filters" aria-label="Filter events by kind">
+        <button type="button" class="secondary event-kind active" data-kind="">All</button>
+        <button type="button" class="secondary event-kind" data-kind="admit">admit</button>
+        <button type="button" class="secondary event-kind" data-kind="StageCompleted">StageCompleted</button>
+        <button type="button" class="secondary event-kind" data-kind="pause">pause</button>
+        <button type="button" class="secondary event-kind" data-kind="resume">resume</button>
+        <button type="button" class="secondary event-kind" data-kind="cancel">cancel</button>
+        <button type="button" class="secondary event-kind" data-kind="succeed">succeed</button>
+        <button type="button" class="secondary event-kind" data-kind="fail">fail</button>
+      </div>
+      <div class="row" style="margin:0.35rem 0 0.55rem">
+        <button type="button" class="secondary" id="export-json-btn" disabled>Download JSON</button>
+        <button type="button" class="secondary" id="export-jsonl-btn" disabled>Download JSONL</button>
+      </div>
+      <p class="hint" style="margin-top:0">Local salvage only — not a SIEM, not regulatory defensibility.
+        Empty trail stays empty. <code>GET /v0/jobs/{id}/events?kind=…&amp;format=jsonl</code></p>
       <div id="events"><p class="empty">No events.</p></div>
       <h2 style="margin-top:1.1rem">Handoff / payload (ctl re-admit)</h2>
       <pre id="seam-view">Use View/copy handoff or Fetch payload for operator/ctl re-admit. Cancel/fail does not auto-retry. WorkHandoff emit only — no runtime.apply from this guest.</pre>
@@ -448,6 +479,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     let lastProgress = null;
     let lastEvents = null;
     let lastCompare = null;
+    let eventKindFilter = "";
 
     const $ = (id) => document.getElementById(id);
     const flash = (msg) => { $("flash").textContent = msg || ""; };
@@ -537,6 +569,43 @@ OPERATOR_HTML = """<!DOCTYPE html>
     });
     $("handoff-btn").addEventListener("click", () => fetchSeam("handoff"));
     $("payload-btn").addEventListener("click", () => fetchSeam("payload"));
+    $("event-kind-filters").addEventListener("click", async (ev) => {
+      const btn = ev.target.closest("button.event-kind");
+      if (!btn) return;
+      eventKindFilter = btn.getAttribute("data-kind") || "";
+      syncKindFilterButtons();
+      if (selectedId) {
+        await loadEvents(selectedId);
+        const job = jobs.find(j => j.id === selectedId);
+        if (job) renderEvents(job);
+      }
+    });
+    async function downloadEvents(format) {
+      if (!selectedId) return;
+      flash("");
+      try {
+        const res = await fetch("/v0/jobs/" + selectedId + "/events" + eventsQuery(format) + (eventsQuery(format) ? "&" : "?") + "download=1");
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sos-job-" + selectedId + "-events." + (format === "jsonl" ? "jsonl" : "json");
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        flash("export failed: " + e.message);
+      }
+    }
+    $("export-json-btn").addEventListener("click", () => downloadEvents("json"));
+    $("export-jsonl-btn").addEventListener("click", () => downloadEvents("jsonl"));
+    syncKindFilterButtons();
 
     function live(status) {
       return status !== "succeeded" && status !== "failed" && status !== "canceled";
@@ -1034,6 +1103,22 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return wrap;
     }
 
+    function eventsQuery(format) {
+      const q = [];
+      if (eventKindFilter) q.push("kind=" + encodeURIComponent(eventKindFilter));
+      if (format) q.push("format=" + encodeURIComponent(format));
+      return q.length ? ("?" + q.join("&")) : "";
+    }
+
+    function syncKindFilterButtons() {
+      const host = $("event-kind-filters");
+      if (!host) return;
+      host.querySelectorAll("button.event-kind").forEach((btn) => {
+        const kind = btn.getAttribute("data-kind") || "";
+        btn.classList.toggle("active", kind === eventKindFilter);
+      });
+    }
+
     function eventLabel(ev) {
       return String(ev.event || ev.type || ev.kind || "event");
     }
@@ -1058,16 +1143,25 @@ OPERATOR_HTML = """<!DOCTYPE html>
       if (source === "durable") {
         const n = (payload && payload.events_n != null) ? payload.events_n
           : (job && job.events_n != null) ? job.events_n : events.length;
+        const total = (payload && payload.events_total != null) ? payload.events_total : n;
         src.textContent = "Source: durable — reserve-temporal JSONL (n=" + n
-          + "). Survives runtime restart. Not a SIEM / not iec /v1/audit/events.";
+          + (payload && payload.kind_filter && payload.kind_filter.length
+            ? (" of " + total + " after kind filter")
+            : "")
+          + "). Survives runtime restart. Not a SIEM / not iec /v1/audit/events / not regulatory defensibility.";
       } else {
-        src.textContent = "Source: memory — process-local trail; dies on restart. Not a regulatory audit.";
+        const extra = (payload && payload.kind_filter && payload.kind_filter.length)
+          ? (" Kind filter: " + payload.kind_filter.join(", ") + ".")
+          : "";
+        src.textContent = "Source: memory — process-local trail; dies on restart. Not a SIEM / not a regulatory audit / not regulatory defensibility." + extra;
       }
       host.appendChild(src);
       if (!events.length) {
         const p = document.createElement("p");
         p.className = "empty";
-        p.textContent = "No events.";
+        p.textContent = (payload && payload.kind_filter && payload.kind_filter.length)
+          ? "No events match this kind filter."
+          : "No events.";
         host.appendChild(p);
         return;
       }
@@ -1109,6 +1203,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         $("events").appendChild(empty);
         $("handoff-btn").disabled = true;
         $("payload-btn").disabled = true;
+        $("export-json-btn").disabled = true;
+        $("export-jsonl-btn").disabled = true;
         $("pause-btn").disabled = true;
         $("resume-btn").disabled = true;
         return;
@@ -1163,6 +1259,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
       $("detail").textContent = JSON.stringify(job, null, 2);
       $("handoff-btn").disabled = false;
       $("payload-btn").disabled = false;
+      $("export-json-btn").disabled = false;
+      $("export-jsonl-btn").disabled = false;
       renderEvents(job);
     }
 
@@ -1179,6 +1277,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         $("cancel-btn").textContent = "Cancel selected job";
         $("pause-btn").disabled = true;
         $("resume-btn").disabled = true;
+        $("export-json-btn").disabled = true;
+        $("export-jsonl-btn").disabled = true;
         syncLifecycleButtons(null);
         return;
       }
@@ -1249,7 +1349,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         return;
       }
       try {
-        const res = await fetch("/v0/jobs/" + id + "/events");
+        const res = await fetch("/v0/jobs/" + id + "/events" + eventsQuery());
         const body = await res.json();
         lastEvents = res.ok ? body : null;
       } catch (e) {

@@ -62,6 +62,13 @@ from sos.handoff_vocab import (
     reserve_stage_names,
     short_digest,
 )
+from sos.events_export import (
+    DURABLE_EVENTS_NOTE,
+    EVENTS_EXPORT_NOTE,
+    MEMORY_EVENTS_NOTE,
+    export_meta,
+    filter_events,
+)
 from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
 
 DEFAULT_STEP_SECONDS = 0.15
@@ -89,13 +96,6 @@ TIMELINE_COMPLETED = "completed"
 TIMELINE_CURRENT = "current"
 TIMELINE_PENDING = "pending"
 _HOOK_STAGE_NAME_KEYS = ("stage_names", "timeline", "slices")
-MEMORY_EVENTS_NOTE = (
-    "Process-memory event trail — not a regulatory audit product"
-)
-DURABLE_EVENTS_NOTE = (
-    "Durable reserve-temporal JSONL trail — not a SIEM; "
-    "not iec /v1/audit/events product"
-)
 INVESTIGATE_NOTE = (
     "Thinner investigate — catalog identity + static path-slice owners "
     "when hooked; not Slack; not a data-catalog product; not a SIEM"
@@ -195,27 +195,54 @@ class Job:
         _attach_investigate(payload, self, hooked=False)
         return payload
 
-    def to_events(self) -> dict[str, Any]:
-        """Process-memory trail, or durable overlay already applied on the snapshot."""
-        if self.events_source == EVENTS_SOURCE_DURABLE:
-            payload: dict[str, Any] = {
-                "id": self.id,
-                "events": _copy_events(self.events),
-                "source": EVENTS_SOURCE_DURABLE,
-                "note": DURABLE_EVENTS_NOTE,
-                "events_durable": (
-                    True if self.events_durable is None else self.events_durable
-                ),
-            }
-            if self.events_n is not None:
-                payload["events_n"] = self.events_n
-            return payload
-        return {
+    def to_events(self, kinds: list[str] | None = None) -> dict[str, Any]:
+        """Process-memory trail, or durable overlay already applied on the snapshot.
+
+        ``kinds`` filters by event/kind/type (admit / StageCompleted /
+        pause / …). Empty filter returns the full trail. Empty match
+        stays empty — not a SIEM.
+        """
+        raw = _copy_events(self.events)
+        wanted = list(kinds) if kinds else []
+        trail = filter_events(raw, wanted)
+        payload: dict[str, Any] = {
             "id": self.id,
-            "events": _copy_events(self.events),
-            "source": EVENTS_SOURCE_MEMORY,
-            "note": MEMORY_EVENTS_NOTE,
+            "events": trail,
+            "export": export_meta(
+                job_id=self.id,
+                source=(
+                    EVENTS_SOURCE_DURABLE
+                    if self.events_source == EVENTS_SOURCE_DURABLE
+                    else EVENTS_SOURCE_MEMORY
+                ),
+                kinds=wanted,
+            ),
+            "export_note": EVENTS_EXPORT_NOTE,
         }
+        if wanted:
+            payload["kind_filter"] = wanted
+        if self.events_source == EVENTS_SOURCE_DURABLE:
+            payload["source"] = EVENTS_SOURCE_DURABLE
+            payload["note"] = DURABLE_EVENTS_NOTE
+            payload["events_durable"] = (
+                True if self.events_durable is None else self.events_durable
+            )
+            if wanted:
+                payload["events_n"] = len(trail)
+                payload["events_total"] = (
+                    self.events_n if self.events_n is not None else len(raw)
+                )
+            elif self.events_n is not None:
+                payload["events_n"] = self.events_n
+            else:
+                payload["events_n"] = len(trail)
+            return payload
+        payload["source"] = EVENTS_SOURCE_MEMORY
+        payload["note"] = MEMORY_EVENTS_NOTE
+        if wanted:
+            payload["events_n"] = len(trail)
+            payload["events_total"] = len(raw)
+        return payload
 
 
 def _catalog_identity(job: Job) -> dict[str, Any] | None:
@@ -714,13 +741,16 @@ class JobStore:
                 return _progress_from_durable(job, durable)
         return job.to_progress()
 
-    def events(self, job_id: str) -> dict[str, Any]:
+    def events(
+        self, job_id: str, kinds: list[str] | None = None
+    ) -> dict[str, Any]:
         """Prefer dedicated hook.events(); process-memory trail is fallback only.
 
         ``get()`` already overlays durable JSONL onto the job snapshot when
-        the hook returns events.
+        the hook returns events. Optional ``kinds`` filters that trail
+        (memory and durable). Empty match is an empty list.
         """
-        return self.get(job_id).to_events()
+        return self.get(job_id).to_events(kinds)
 
     def compare(self, job_id: str) -> dict[str, Any]:
         """Vs recent same-catalog or same-kind/class jobs in guest history.
