@@ -29,7 +29,8 @@ aa4f09e (PR #126 stamp link, or main); merge tip 5086d0f
 (PR #128 iec_parity_pack merge, or main); merge docs tip
 6ecb645 (PR #130 stamp link, or main); apply-metrics tip
 5d399f7 (PR #132 iec_parity_pack apply-metrics, or main);
-guest emit tip b859466 (#52); guest gap-report tip eb48605
+apply-metrics docs tip 3904ee4 (PR #134 stamp link, or
+main); guest emit tip b859466 (#52); guest gap-report tip eb48605
 (#60); guest merge tip 39064d5 (#64). Wall feature tip
 remains 9b6646e8. Guest fragment can feed optional tips /
 measured durable into python3 -m runtime.iec_parity_pack

@@ -22,6 +22,7 @@ from sos.lab_compose import (
     GUEST_PACK_TIP,
     HONESTY_LINES,
     OPAQUE_HANDOFF_BODY,
+    RUNTIME_PACK_APPLY_METRICS_DOCS_PIN,
     RUNTIME_PACK_APPLY_METRICS_PIN,
     RUNTIME_PACK_DOCS_PIN,
     RUNTIME_PACK_GAP_REPORT_DOCS_PIN,
@@ -113,6 +114,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_PACK_MERGE_PIN, "5086d0f")
         self.assertEqual(RUNTIME_PACK_MERGE_DOCS_PIN, "6ecb645")
         self.assertEqual(RUNTIME_PACK_APPLY_METRICS_PIN, "5d399f7")
+        self.assertEqual(RUNTIME_PACK_APPLY_METRICS_DOCS_PIN, "3904ee4")
         self.assertEqual(GAP_REPORT_CMD, "python3 -m runtime.iec_parity_pack gap-report")
         self.assertEqual(MERGE_CMD, "python3 -m runtime.iec_parity_pack merge")
         self.assertEqual(MERGE_FROM_JSON, "--from-json -")
@@ -269,6 +271,10 @@ class ComposePlanTests(unittest.TestCase):
             plan.honesty,
         )
         self.assertIn(
+            "pack-fill apply-metrics docs tip 3904ee4 / PR #134 (or main) links WSL apply-metrics stamp (apply-metrics ≠ fill; apply-metrics ≠ Done; assist ≠ Done)",
+            plan.honesty,
+        )
+        self.assertIn(
             "pack-fill apply-metrics hint is cd+cmd when PANORAMIX_RUNTIME_ROOT known else copy-paste template (does not run apply-metrics; does not supply wall numbers; apply-metrics ≠ fill; apply-metrics ≠ Done)",
             plan.honesty,
         )
@@ -305,6 +311,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(fill["merge_docs_pr"], 130)
         self.assertEqual(fill["apply_metrics_tip"], "5d399f7")
         self.assertEqual(fill["apply_metrics_pr"], 132)
+        self.assertEqual(fill["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["assist_ne_fill"], True)
@@ -330,6 +338,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(handoff["merge_docs_pr"], 130)
         self.assertEqual(handoff["apply_metrics_tip"], "5d399f7")
         self.assertEqual(handoff["apply_metrics_pr"], 132)
+        self.assertEqual(handoff["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(handoff["apply_metrics_docs_pr"], 134)
         self.assertEqual(handoff["guest_emit_tip"], GUEST_PACK_TIP)
         self.assertIs(handoff["from_json"], True)
         self.assertIs(handoff["invent_wall_time_sec"], False)
@@ -356,6 +366,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(gap["merge_docs_pr"], 130)
         self.assertEqual(gap["apply_metrics_tip"], "5d399f7")
         self.assertEqual(gap["apply_metrics_pr"], 132)
+        self.assertEqual(gap["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(gap["apply_metrics_docs_pr"], 134)
         self.assertEqual(gap["wall_feature_tip"], "9b6646e8")
         self.assertIn("cd /path/to/panoramix-runtime", gap["hint"])
         self.assertIn(GAP_REPORT_CMD, gap["hint"])
@@ -385,6 +397,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(merged["merge_docs_pr"], 130)
         self.assertEqual(merged["apply_metrics_tip"], "5d399f7")
         self.assertEqual(merged["apply_metrics_pr"], 132)
+        self.assertEqual(merged["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(merged["apply_metrics_docs_pr"], 134)
         self.assertEqual(merged["gap_report_tip"], "84cb202")
         self.assertEqual(merged["wall_feature_tip"], "9b6646e8")
         self.assertIn("cd /path/to/panoramix-runtime", merged["hint"])
@@ -415,6 +429,8 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(applied["runtime_tip"], "5d399f7")
         self.assertEqual(applied["or"], "main")
         self.assertEqual(applied["runtime_pr"], 132)
+        self.assertEqual(applied["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(applied["apply_metrics_docs_pr"], 134)
         self.assertEqual(applied["merge_tip"], "5086d0f")
         self.assertEqual(applied["merge_docs_tip"], "6ecb645")
         self.assertEqual(applied["gap_report_tip"], "84cb202")
@@ -744,6 +760,8 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertEqual(fill["merge_docs_pr"], 130)
         self.assertEqual(fill["apply_metrics_tip"], "5d399f7")
         self.assertEqual(fill["apply_metrics_pr"], 132)
+        self.assertEqual(fill["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertEqual(fill["schema_pr"], 118)
         self.assertIs(fill["invent_wall_time_sec"], False)
         self.assertIs(fill["apply_metrics_ne_fill"], True)
@@ -790,6 +808,7 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(applied["apply_metrics_ne_fill"], True)
         self.assertIs(applied["apply_metrics_ne_done"], True)
         self.assertEqual(applied["runtime_tip"], "5d399f7")
+        self.assertEqual(applied["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(applied["merge_tip"], "5086d0f")
         self.assertEqual(applied["gap_report_tip"], "84cb202")
         self.assertEqual(applied["wall_feature_tip"], "9b6646e8")
@@ -936,6 +955,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(fill["merge_docs_pr"], 130)
         self.assertEqual(fill["apply_metrics_tip"], "5d399f7")
         self.assertEqual(fill["apply_metrics_pr"], 132)
+        self.assertEqual(fill["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(fill["apply_metrics_docs_pr"], 134)
         self.assertIs(fill["apply_metrics_ne_fill"], True)
         self.assertIs(fill["apply_metrics_ne_done"], True)
         self.assertIs(fill["merge_ne_fill"], True)
@@ -1102,6 +1123,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(handoff["merge_docs_pr"], 130)
         self.assertEqual(handoff["apply_metrics_tip"], "5d399f7")
         self.assertEqual(handoff["apply_metrics_pr"], 132)
+        self.assertEqual(handoff["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(handoff["apply_metrics_docs_pr"], 134)
         self.assertTrue(handoff["guest_emit_tip"].startswith("b859466"))
         self.assertIn("--from-json", handoff["flags"])
         self.assertIs(handoff["durable_only_when_measured"], True)
@@ -1144,6 +1167,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["merge_docs_pr"], 130)
         self.assertEqual(hint["apply_metrics_tip"], "5d399f7")
         self.assertEqual(hint["apply_metrics_pr"], 132)
+        self.assertEqual(hint["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
         self.assertEqual(
             hint["hint"],
@@ -1176,6 +1201,7 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(known["merge_tip"], "5086d0f")
         self.assertEqual(known["merge_docs_tip"], "6ecb645")
         self.assertEqual(known["apply_metrics_tip"], "5d399f7")
+        self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
 
         fill = pack_fill_plan(
@@ -1225,6 +1251,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["merge_docs_pr"], 130)
         self.assertEqual(hint["apply_metrics_tip"], "5d399f7")
         self.assertEqual(hint["apply_metrics_pr"], 132)
+        self.assertEqual(hint["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["gap_report_tip"], "84cb202")
         self.assertEqual(hint["gap_report_pr"], 124)
         self.assertEqual(hint["wall_feature_tip"], "9b6646e8")
@@ -1261,6 +1289,7 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(known["runtime_tip"], "5086d0f")
         self.assertEqual(known["merge_docs_tip"], "6ecb645")
         self.assertEqual(known["apply_metrics_tip"], "5d399f7")
+        self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["gap_report_tip"], "84cb202")
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
 
@@ -1303,6 +1332,8 @@ class PackFillTests(unittest.TestCase):
         self.assertEqual(hint["runtime_tip"], "5d399f7")
         self.assertEqual(hint["or"], "main")
         self.assertEqual(hint["runtime_pr"], 132)
+        self.assertEqual(hint["apply_metrics_docs_tip"], "3904ee4")
+        self.assertEqual(hint["apply_metrics_docs_pr"], 134)
         self.assertEqual(hint["merge_tip"], "5086d0f")
         self.assertEqual(hint["merge_pr"], 128)
         self.assertEqual(hint["merge_docs_tip"], "6ecb645")
@@ -1344,6 +1375,7 @@ class PackFillTests(unittest.TestCase):
         self.assertIs(known["invent"], False)
         self.assertIs(known["invent_wall_time_sec"], False)
         self.assertEqual(known["runtime_tip"], "5d399f7")
+        self.assertEqual(known["apply_metrics_docs_tip"], "3904ee4")
         self.assertEqual(known["merge_tip"], "5086d0f")
         self.assertEqual(known["gap_report_tip"], "84cb202")
         self.assertEqual(known["wall_feature_tip"], "9b6646e8")
@@ -1373,6 +1405,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5086d0f", helper)
         self.assertIn("6ecb645", helper)
         self.assertIn("5d399f7", helper)
+        self.assertIn("3904ee4", helper)
         self.assertIn("eb48605", helper)
         self.assertIn("39064d5", helper)
         self.assertIn("b859466", helper)
@@ -1446,6 +1479,7 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("5086d0f", text, name)
             self.assertIn("6ecb645", text, name)
             self.assertIn("5d399f7", text, name)
+            self.assertIn("3904ee4", text, name)
             self.assertIn("eb48605", text, name)
             self.assertIn("39064d5", text, name)
             self.assertIn("b859466", text, name)
@@ -1479,6 +1513,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5086d0f", lab)
         self.assertIn("6ecb645", lab)
         self.assertIn("5d399f7", lab)
+        self.assertIn("3904ee4", lab)
         self.assertIn("eb48605", lab)
         self.assertIn("39064d5", lab)
         self.assertIn("b859466", lab)
@@ -1488,6 +1523,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("PR #128", lab)
         self.assertIn("PR #130", lab)
         self.assertIn("PR #132", lab)
+        self.assertIn("PR #134", lab)
         self.assertIn("gap-report ≠ Done", lab)
         self.assertIn("merge ≠ fill", lab)
         self.assertIn("merge ≠ Done", lab)
@@ -1548,6 +1584,7 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("5086d0f", ux)
         self.assertIn("6ecb645", ux)
         self.assertIn("5d399f7", ux)
+        self.assertIn("3904ee4", ux)
         self.assertIn("eb48605", ux)
         self.assertIn("39064d5", ux)
         self.assertIn("b859466", ux)
