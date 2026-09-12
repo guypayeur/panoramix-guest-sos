@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 from sos.compare import COMPARE_NOTE_EMPTY
-from sos.errors import JobNotFound, PayloadUnknown
+from sos.errors import JobNotFound, PayloadUnknown, ReAdmitUnavailable
 from sos.handoff_vocab import RECOVERABILITY_NOTE, RECORDED_PAYLOAD_DIGEST
 from sos.http import SosApp
 from sos.jobs import Job, JobStore
@@ -209,8 +209,33 @@ class PersistRestartTests(unittest.TestCase):
             self.assertEqual(body["recoverability"]["note"], RECOVERABILITY_NOTE)
             self.assertEqual(restarted.payload(canceled.id)["payload_digest"], canceled.payload_digest)
             self.assertEqual(restarted.handoff(canceled.id)["id"], canceled.id)
+            self.assertIs(body["recoverability"]["one_click"], False)
+            self.assertEqual(body["recoverability"]["one_click_reason"], "hook_inert")
             self.assertNotIn("typical_elapsed_s", body)
             self.assertIn("not a siem", body["terminal"]["note"].lower())
+
+            with self.assertRaises(ReAdmitUnavailable) as ctx:
+                restarted.readmit(canceled.id)
+            self.assertEqual(ctx.exception.to_dict()["reason"], "hook_inert")
+
+            class ReloadHook:
+                def admit(self, handoff, payload_bytes):
+                    return {"accepted": True}
+
+                def cancel(self, job_id, runtime_ref) -> bool:
+                    return False
+
+                def status(self, job_id, runtime_ref):
+                    return None
+
+            hooked = JobStore(
+                step_seconds=0.01, persist_dir=tmp, runtime_hook=ReloadHook()
+            )
+            fresh = hooked.readmit(canceled.id)
+            self.assertNotEqual(fresh.id, canceled.id)
+            self.assertEqual(fresh.payload_digest, canceled.payload_digest)
+            self.assertEqual(fresh.local["re_admit_from"], canceled.id)
+            self.assertEqual(fresh.local["backed"], "runtime")
 
             done = restarted.get(opaque.id)
             self.assertIsNone(done.payload_bytes)

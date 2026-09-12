@@ -11,7 +11,10 @@ durable path signals hook.cancel() first (same honesty as pause),
 then prefers hook.status() so Temporal-backed runs show ctl
 lifecycle — not a stale stub clock. Stub-only stays local cancel.
 Historical comparison uses list/get identity (in-process plus local
-lab files when persisted). Default hook stays inert. Does not close
+lab files when persisted). One-click re-admit posts the existing
+handoff/payload through the same hook seam as a new admit when a
+durable hook is active; fail-closed without hook or payload (no
+silent stub). Default hook stays inert. Does not close
 #70. Does not close #78.
 """
 
@@ -33,6 +36,7 @@ from sos.errors import (
     IllegalTransition,
     JobNotFound,
     PayloadUnknown,
+    ReAdmitUnavailable,
     StubOnly,
     lab_serve_affordance,
 )
@@ -79,7 +83,11 @@ from sos.events_export import (
     export_meta,
     filter_events,
 )
-from sos.runtime_hook import InertRuntimeHandoffHook, RuntimeHandoffHook
+from sos.runtime_hook import (
+    InertRuntimeHandoffHook,
+    RuntimeHandoffHook,
+    durable_hook_active,
+)
 
 DEFAULT_STEP_SECONDS = 0.15
 PROGRESS_SOURCE_STUB = "stub"
@@ -156,7 +164,7 @@ class Job:
             raise PayloadUnknown(self.id)
         return payload_export(self.payload_digest, self.payload_bytes)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, durable_hook: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             **self.to_seam(),
             "created_at": self.created_at,
@@ -179,7 +187,7 @@ class Job:
         terminal = _terminal_payload(self)
         if terminal:
             payload["terminal"] = terminal
-        recoverability = _recoverability_payload(self)
+        recoverability = _recoverability_payload(self, durable_hook=durable_hook)
         if recoverability:
             payload["recoverability"] = recoverability
         if self.error == ERROR_CTL_HTTP_UNREACHABLE:
@@ -333,19 +341,46 @@ def _terminal_payload(job: Job) -> dict[str, Any] | None:
     return payload
 
 
-def _recoverability_payload(job: Job) -> dict[str, Any] | None:
-    """Handoff/payload re-admit. Cancel/fail does not auto-retry."""
+def _recoverability_payload(
+    job: Job, *, durable_hook: bool = False
+) -> dict[str, Any] | None:
+    """Handoff/payload re-admit. Cancel/fail does not auto-retry.
+
+    ``one_click`` is true only when a durable hook is active **and**
+    payload bytes are known. Fail-closed otherwise — no silent stub.
+    """
     if job.status not in FAILED_OR_CANCELED:
         return None
-    return {
+    payload_known = job.payload_bytes is not None
+    one_click = bool(durable_hook and payload_known)
+    if payload_known:
+        reason = None if one_click else "hook_inert"
+    else:
+        reason = "payload_unknown"
+    payload: dict[str, Any] = {
         "auto_retry": False,
         "resume_from_failed": False,
+        "new_admit": True,
+        "one_click": one_click,
+        "one_click_path": f"POST /v0/jobs/{job.id}/re-admit",
         "handoff": f"GET /v0/jobs/{job.id}/handoff",
         "payload": f"GET /v0/jobs/{job.id}/payload",
-        "payload_known": job.payload_bytes is not None,
+        "payload_known": payload_known,
         "re_admit": CTL_ADMIT,
         "note": RECOVERABILITY_NOTE,
     }
+    if reason:
+        payload["one_click_reason"] = reason
+    return payload
+
+
+def _local_for_readmit(source: Job) -> dict[str, Any] | None:
+    """Copy catalog/demo identity; drop in-flight stage. New admit."""
+    local = _copy_local(source.local) or {}
+    for key in ("stage", "stage_index", "backed"):
+        local.pop(key, None)
+    local["re_admit_from"] = source.id
+    return local or None
 
 
 def _copy_local(local: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -804,11 +839,110 @@ class JobStore:
                 return _apply_durable_events(snap, durable)
         return snap
 
+    def public_dict(self, job: Job) -> dict[str, Any]:
+        """Job resource with recoverability one-click honesty for this hook."""
+        return job.to_dict(durable_hook=durable_hook_active(self.runtime_hook))
+
     def handoff(self, job_id: str) -> dict[str, str]:
         return self.get(job_id).to_handoff()
 
     def payload(self, job_id: str) -> dict[str, Any]:
         return self.get(job_id).to_payload()
+
+    def readmit(self, job_id: str) -> Job:
+        """New admit of the same handoff identity + payload. Not resume.
+
+        Fail-closed without a durable hook, when payload bytes are
+        missing, or when ``hook.admit`` refuses. Never falls back to
+        the in-process stub. New job id.
+        """
+        source = self.get(job_id)
+        if source.status not in FAILED_OR_CANCELED:
+            raise IllegalTransition(job_id, source.status, "re-admit")
+        if source.payload_bytes is None:
+            raise ReAdmitUnavailable(
+                job_id,
+                "payload_unknown",
+                detail=(
+                    "handoff or payload missing; cannot one-click re-admit. "
+                    "Fail-closed; no silent stub re-admit. "
+                    f"Operator/ctl: {CTL_ADMIT}"
+                ),
+            )
+        if not durable_hook_active(self.runtime_hook):
+            raise ReAdmitUnavailable(
+                job_id,
+                "hook_inert",
+                detail=(
+                    "re-admit requires an active durable hook "
+                    "(PANORAMIX_CTL_HTTP preferred or PANORAMIX_RUNTIME_ROOT). "
+                    "Fail-closed; no silent stub re-admit. "
+                    f"Operator/ctl: {CTL_ADMIT}"
+                ),
+            )
+
+        new_id = str(uuid.uuid4())
+        now = self._clock()
+        local = _local_for_readmit(source)
+        new_job = Job(
+            id=new_id,
+            kind=source.kind,
+            resource_class=source.resource_class,
+            payload_digest=source.payload_digest,
+            status=STATUS_QUEUED,
+            created_at=now,
+            updated_at=now,
+            local=local,
+            payload_bytes=source.payload_bytes,
+        )
+        try:
+            runtime_ref = self.runtime_hook.admit(
+                new_job.to_handoff(), new_job.payload_bytes
+            )
+        except CtlHttpUnreachable as exc:
+            exc.fields["id"] = job_id
+            exc.fields.setdefault("action", "re-admit")
+            raise
+        except Exception as exc:
+            raise ReAdmitUnavailable(
+                job_id,
+                "hook_refused",
+                detail=(
+                    f"hook.admit failed ({exc}); no silent stub re-admit. "
+                    "Not resume-from-failed."
+                ),
+            ) from exc
+        if runtime_ref is None:
+            raise ReAdmitUnavailable(
+                job_id,
+                "hook_refused",
+                detail=(
+                    "hook.admit returned None; no silent stub re-admit. "
+                    "Not resume-from-failed."
+                ),
+            )
+
+        cancel = threading.Event()
+        submit_detail = (
+            f"kind={new_job.kind} class={new_job.resource_class} "
+            f"re-admit from {source.id}"
+        )
+        with self._lock:
+            self._jobs[new_id] = new_job
+            self._cancel[new_id] = cancel
+            self._append_event_locked(new_job, "submitted", submit_detail)
+            new_job.runtime_ref = runtime_ref
+            new_job.message = (
+                "re-admitted via runtime hook (new admit; not resume-from-failed)"
+            )
+            new_job.updated_at = self._clock()
+            merged = dict(new_job.local) if new_job.local else {}
+            merged["backed"] = BACKED_RUNTIME
+            merged["re_admit_from"] = source.id
+            new_job.local = merged
+            self._append_event_locked(new_job, "backed", BACKED_RUNTIME)
+            self._persist_locked(new_job)
+        return self.get(new_id)
 
     def progress(self, job_id: str) -> dict[str, Any]:
         """Prefer dedicated hook.progress(); stub fields are fallback only.

@@ -5,7 +5,9 @@ No engine URL schemes in request or response bodies. Ctl exports
 ``GET /v0/jobs/{id}/handoff`` (WorkHandoff projection, no nested payload)
 and ``GET /v0/jobs/{id}/payload`` (canonical JSON bytes as hex/utf8).
 Pause/resume (``POST .../pause`` / ``POST .../resume``) require the
-durable path; stub-only jobs return 409 stub_only. Events prefer
+durable path; stub-only jobs return 409 stub_only. One-click
+re-admit (``POST .../re-admit``) is durable-hook only; inert or
+missing payload fail closed. Events prefer
 ``hook.events()`` JSONL when durable-backed. Compare uses guest
 history (in-process plus local lab files when persisted). Transport
 is operator/ctl-mediated: no guest→ctl HTTP, no
@@ -221,10 +223,16 @@ INFO_PAYLOAD = {
             "Failed/canceled jobs expose handoff + payload export for "
             "operator/ctl re-admit (payload bytes when known, including "
             "after a guest restart if history was persisted). "
+            "When a durable hook is active (PANORAMIX_CTL_HTTP preferred "
+            "or PANORAMIX_RUNTIME_ROOT), POST /v0/jobs/{id}/re-admit "
+            "posts that handoff/payload through the same hook seam as a "
+            "new admit (new job id). Fail-closed without hook or when "
+            "handoff/payload is missing (no silent stub re-admit). "
             "Cancel/fail does not auto-retry. "
             "No resume-from-failed. Pause/resume remains durable-only "
             f"(stub 409 stub_only). Operator/ctl: {CTL_ADMIT}"
         ),
+        "re_admit": "POST /v0/jobs/{id}/re-admit",
     },
     "ui": "/",
 }
@@ -238,6 +246,7 @@ _PAYLOAD_RE = re.compile(r"^/v0/jobs/([^/]+)/payload$")
 _PROGRESS_RE = re.compile(r"^/v0/jobs/([^/]+)/progress$")
 _EVENTS_RE = re.compile(r"^/v0/jobs/([^/]+)/events$")
 _COMPARE_RE = re.compile(r"^/v0/jobs/([^/]+)/compare$")
+_READMIT_RE = re.compile(r"^/v0/jobs/([^/]+)/re-admit$")
 
 
 def parse_job_status_filter(
@@ -328,7 +337,10 @@ class SosApp:
             if method == "GET":
                 statuses = parse_job_status_filter(query or {})
                 payload: dict[str, Any] = {
-                    "jobs": [j.to_dict() for j in self.store.list(statuses=statuses)]
+                    "jobs": [
+                        self.store.public_dict(j)
+                        for j in self.store.list(statuses=statuses)
+                    ]
                 }
                 if statuses is not None:
                     payload["status"] = [name for name in WORK_STATUSES if name in statuses]
@@ -341,19 +353,29 @@ class SosApp:
             if method != "POST":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.cancel(cancel.group(1))
-            return _json_response(200, job.to_dict())
+            return _json_response(200, self.store.public_dict(job))
         pause = _PAUSE_RE.match(path)
         if pause:
             if method != "POST":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.pause(pause.group(1))
-            return _json_response(200, job.to_dict())
+            return _json_response(200, self.store.public_dict(job))
         resume = _RESUME_RE.match(path)
         if resume:
             if method != "POST":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.resume(resume.group(1))
-            return _json_response(200, job.to_dict())
+            return _json_response(200, self.store.public_dict(job))
+        readmit = _READMIT_RE.match(path)
+        if readmit:
+            if method != "POST":
+                return _json_response(405, {"error": "method_not_allowed", "path": path})
+            job = self.store.readmit(readmit.group(1))
+            return _json_response(
+                201,
+                self.store.public_dict(job),
+                extra_headers={"Location": f"/v0/jobs/{job.id}"},
+            )
         handoff = _HANDOFF_RE.match(path)
         if handoff:
             if method != "GET":
@@ -384,7 +406,7 @@ class SosApp:
             if method != "GET":
                 return _json_response(405, {"error": "method_not_allowed", "path": path})
             job = self.store.get(job_match.group(1))
-            return _json_response(200, job.to_dict())
+            return _json_response(200, self.store.public_dict(job))
         return _json_response(404, {"error": "not_found", "path": path})
 
     def _info_payload(self) -> dict[str, Any]:
@@ -455,7 +477,7 @@ class SosApp:
         job = self.store.submit(payload)
         return _json_response(
             201,
-            job.to_dict(),
+            self.store.public_dict(job),
             extra_headers={"Location": f"/v0/jobs/{job.id}"},
         )
 

@@ -359,6 +359,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
     not iec <code>/v1/audit/events</code>. Recoverability is handoff +
     payload export for operator/ctl re-admit
     (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
+    When a durable hook is active, one-click re-admit posts that
+    handoff/payload through the same hook seam as a <strong>new</strong>
+    admit (new job id). Fail-closed without hook or when payload is
+    missing — no silent stub re-admit. Not resume-from-failed.
     Cancel/fail does not auto-retry. Pause/resume remains durable-only.
     Job list can filter by real status
     (queued / running / paused / succeeded / failed / canceled).
@@ -470,9 +474,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
       <p class="hint" id="pause-hint" style="margin-top:0">Pause/Resume require the durable path.
         Stub jobs stay disabled. Operator/ctl:
         <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code></p>
-      <p class="hint" id="recover-hint">Cancel/fail does not auto-retry. Use View/copy handoff
-        and Fetch payload for operator/ctl re-admit
-        (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
+      <p class="hint" id="recover-hint">Cancel/fail does not auto-retry. Re-admit is a new admit
+        (one-click when a durable hook is active; else View/copy handoff
+        and Fetch payload for operator/ctl
+        <code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
+        Fail-closed without hook or payload — no silent stub re-admit.
         Pause/resume remains durable-only (stub 409 stub_only).</p>
       <div id="detail-panel"><p class="empty">Select a job.</p></div>
       <h2 style="margin-top:1.1rem">Event trail</h2>
@@ -520,9 +526,10 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if it was still live (running or paused) — or follows hook
         <code>status()</code> when ctl already reports terminal.
         Fail-closed without hook (inert default — no pretend).
-        Re-admit is operator/ctl
-        <code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>
-        (handoff + payload export) — not resume-from-failed.</p>
+        Re-admit is a <strong>new</strong> admit (one-click when a durable
+        hook is active, else operator/ctl
+        <code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>)
+        — not resume-from-failed. Not SIEM. Not IFRS17.</p>
       <div class="row" style="margin-top:0.85rem">
         <button type="button" class="danger" id="cancel-confirm">End run (canceled)</button>
         <button type="button" class="secondary" id="cancel-dismiss">Keep running</button>
@@ -1039,7 +1046,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         : "Salvageable: WorkHandoff identity (digest only; payload_unknown). In-flight compute is not salvaged.";
       wrap.appendChild(salvage);
       const noRetry = document.createElement("p");
-      noRetry.textContent = "Cancel/fail does not auto-retry. No resume-from-failed.";
+      noRetry.textContent = "Cancel/fail does not auto-retry. Re-admit is a new admit. No resume-from-failed.";
       wrap.appendChild(noRetry);
       const ctl = document.createElement("p");
       ctl.className = "hint";
@@ -1049,6 +1056,19 @@ OPERATOR_HTML = """<!DOCTYPE html>
       wrap.appendChild(ctl);
       const row = document.createElement("div");
       row.className = "row";
+      const one = document.createElement("button");
+      one.type = "button";
+      one.id = "readmit-btn";
+      if (rec.one_click === true) {
+        one.textContent = "Re-admit as new job";
+        one.addEventListener("click", () => readmitJob(job.id));
+      } else {
+        one.className = "secondary";
+        one.disabled = true;
+        one.textContent = rec.one_click_reason === "payload_unknown"
+          ? "Cannot re-admit (payload missing)"
+          : "Cannot re-admit (no durable hook)";
+      }
       const h = document.createElement("button");
       h.type = "button";
       h.className = "secondary";
@@ -1059,13 +1079,37 @@ OPERATOR_HTML = """<!DOCTYPE html>
       p.className = "secondary";
       p.textContent = "Export payload for re-admit";
       p.addEventListener("click", () => fetchSeam("payload"));
-      row.append(h, p);
+      row.append(one, h, p);
       wrap.appendChild(row);
+      const closed = document.createElement("p");
+      closed.className = "hint";
+      if (rec.one_click === true) {
+        closed.textContent = "One-click posts the existing handoff/payload through the durable hook as a new admit (new job id). Not resume-from-failed.";
+      } else if (rec.one_click_reason === "payload_unknown") {
+        closed.textContent = "Payload unknown — fail-closed; no silent stub re-admit. Export handoff only.";
+      } else {
+        closed.textContent = "One-click re-admit requires PANORAMIX_CTL_HTTP or PANORAMIX_RUNTIME_ROOT. Fail-closed; no silent stub re-admit.";
+      }
+      wrap.appendChild(closed);
       const honesty = document.createElement("p");
       honesty.className = "hint";
-      honesty.textContent = "Not IFRS17. Guest does not call runtime.apply.";
+      honesty.textContent = "Not SIEM. Not IFRS17. Guest does not call runtime.apply.";
       wrap.appendChild(honesty);
       return wrap;
+    }
+
+    async function readmitJob(id) {
+      flash("");
+      const res = await fetch("/v0/jobs/" + id + "/re-admit", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        selectedId = id;
+        await refresh();
+        return;
+      }
+      selectedId = body.id;
+      await refresh();
     }
 
     function renderInvestigate(job) {

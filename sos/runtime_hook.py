@@ -135,6 +135,27 @@ def resolve_runtime_hook(
     return hook
 
 
+def durable_hook_active(hook: RuntimeHandoffHook) -> bool:
+    """True when one-click re-admit can use the hook seam.
+
+    Lab adapters follow ``describe_runtime_hook.durable_path``
+    (unreachable CTL_HTTP is False). Default inert is False.
+    An injected non-inert hook (tests / operator inject) is the
+    same seam. Not guest→mesh ctl. Does not close #70 / #78.
+    """
+    desc = describe_runtime_hook(hook)
+    if desc.get("durable_path") is True:
+        return True
+    if isinstance(hook, InertRuntimeHandoffHook):
+        return False
+    from sos.lab_ctl import LabReserveTemporalHook
+    from sos.lab_ctl_http import LabReserveTemporalHttpHook
+
+    if isinstance(hook, (LabReserveTemporalHttpHook, LabReserveTemporalHook)):
+        return False
+    return True
+
+
 def describe_runtime_hook(hook: RuntimeHandoffHook) -> dict[str, Any]:
     """Honest hook label for /v0/info + UI. No pretend when inert.
 
