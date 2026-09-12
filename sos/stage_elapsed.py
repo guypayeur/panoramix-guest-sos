@@ -7,9 +7,11 @@ pins that lineage on main. Older tips omit the field.
 Else derive from durable ``GET /v0/jobs/{id}/events`` timestamps
 when both ends parse. Otherwise omit — never invent.
 
-Optional job ``wall_elapsed_ms`` (or equivalent) is accepted from
-durable progress/status JSON when present. Omit when absent —
-never invent, never copy the guest created_at clock.
+Optional job ``wall_elapsed_ms`` / ``started_at`` (or equivalent)
+is accepted from durable progress/status JSON when present.
+Runtime tip ``9b6646e8`` (or main, PR #114) can supply those on
+reserve-temporal status/progress. Omit when absent — never invent,
+never copy the guest created_at clock.
 
 Not iec planner. Not a forecast. Not IFRS17. Not iec SPA.
 Not SIEM. Does not stamp ``north_star_done``.

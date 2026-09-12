@@ -24,6 +24,7 @@ from sos.lab_compose import (
     RUNTIME_DOCS_PIN,
     RUNTIME_ELAPSED_PIN,
     RUNTIME_SERVE_PIN,
+    RUNTIME_WALL_PIN,
     LabComposeReadmitHook,
     build_compose_plan,
     classify_lab_evidence,
@@ -75,6 +76,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(RUNTIME_SERVE_PIN, "fb901542")
         self.assertEqual(RUNTIME_ELAPSED_PIN, "9ba95bbb")
         self.assertEqual(RUNTIME_DOCS_PIN, "5dc191cb")
+        self.assertEqual(RUNTIME_WALL_PIN, "9b6646e8")
         self.assertEqual(recorded_reserve_body(), RECORDED_RESERVE_BODY)
         self.assertEqual(RECORDED_RESERVE_BODY["catalog"], "recorded")
 
@@ -154,8 +156,9 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIs(wall["ifrs17"], False)
         self.assertIs(wall["iec_spa"], False)
         self.assertIs(wall["north_star_done"], False)
-        self.assertEqual(wall["runtime_tip"], "5dc191cb")
-        self.assertEqual(wall["lineage"], "9ba95bbb")
+        self.assertEqual(wall["runtime_tip"], "9b6646e8")
+        self.assertEqual(wall["or"], "main")
+        self.assertEqual(wall["runtime_pr"], 114)
         self.assertEqual(wall_plan()["when"], wall["when"])
         docs = parsed["handoff_docs"]
         self.assertIs(docs["panel"], True)
@@ -164,7 +167,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(handoff_docs_plan()["note"], docs["note"])
         self.assertIn("path-slice elapsed omitted when timestamps missing (never invent)", plan.honesty)
         self.assertIn("optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)", plan.honesty)
-        self.assertIn("optional durable wall_elapsed_ms when hook provides it (omit when missing)", plan.honesty)
+        self.assertIn("optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)", plan.honesty)
         self.assertIn("handoff docs panel is operator clarity (not a second control plane)", plan.honesty)
 
     def test_runtime_root_usable_fail_closed(self) -> None:
@@ -443,8 +446,9 @@ class ScriptDryRunTests(unittest.TestCase):
         self.assertIs(elapsed["omit_when_missing"], True)
         self.assertIs(elapsed["invent"], False)
         wall = plan["wall_elapsed"]
-        self.assertEqual(wall["runtime_tip"], "5dc191cb")
-        self.assertEqual(wall["lineage"], "9ba95bbb")
+        self.assertEqual(wall["runtime_tip"], "9b6646e8")
+        self.assertEqual(wall["or"], "main")
+        self.assertEqual(wall["runtime_pr"], 114)
         self.assertIs(wall["omit_when_missing"], True)
         self.assertIs(wall["invent"], False)
         self.assertIs(wall["forecast"], False)
@@ -518,6 +522,7 @@ class HonestyTests(unittest.TestCase):
             self.assertIn("not resume-from-failed", text.lower(), name)
             self.assertIn("9ba95bbb", text, name)
             self.assertIn("5dc191cb", text, name)
+            self.assertIn("9b6646e8", text, name)
             self.assertIn("wall_elapsed_ms", text, name)
             self.assertIn("handoff docs", text.lower(), name)
             self.assertIn("omit when missing", text.lower(), name)
@@ -560,6 +565,8 @@ class HonestyTests(unittest.TestCase):
         self.assertIn("9ba95bbb", ux)
         self.assertIn("verified @ `9ba95bbb`", ux)
         self.assertIn("5dc191cb", ux)
+        self.assertIn("9b6646e8", ux)
+        self.assertIn("verified @ `9b6646e8`", ux)
         self.assertIn("wall_elapsed_ms", ux)
         self.assertIn("- [x] Optional durable wall_elapsed_ms", ux)
         self.assertNotIn("- [x] Operator/actuary path", ux)

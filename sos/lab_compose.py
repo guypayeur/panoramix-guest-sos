@@ -15,8 +15,9 @@ Honesty: fail-closed without env. Not guest→mesh ctl. Not SIEM.
 Not IFRS17. Pin 0.5. WorkHandoff triple only. Optional durable
 stage elapsed from runtime tip ``9ba95bbb`` / docs tip
 ``5dc191cb`` (PR #112, or main); omit when missing — never invent.
-Optional ``wall_elapsed_ms`` when hook progress/status JSON
-includes it; omit when missing — never invent. Handoff docs
+Optional durable ``wall_elapsed_ms`` / ``started_at`` from runtime
+tip ``9b6646e8`` (PR #114, or main); omit when missing — never
+invent. Not a forecast. Not IFRS17. Not iec SPA. Handoff docs
 panel is operator clarity, not a second control plane. Does not close runtime
 #70 / #78. Does not unlock #61 / #29. Does not
 stamp north_star_done. Cloud stays locked.
@@ -40,6 +41,7 @@ DEFAULT_BINDING_REL = "bindings/local-reserve-temporal.example.yaml"
 RUNTIME_SERVE_PIN = "fb901542"
 RUNTIME_ELAPSED_PIN = "9ba95bbb"
 RUNTIME_DOCS_PIN = "5dc191cb"
+RUNTIME_WALL_PIN = "9b6646e8"
 RECORDED_RESERVE_BODY: dict[str, Any] = {"demo": "reserve", "catalog": "recorded"}
 
 HONESTY_LINES = (
@@ -54,7 +56,7 @@ HONESTY_LINES = (
     "no silent stub re-admit",
     "path-slice elapsed omitted when timestamps missing (never invent)",
     "optional durable stage elapsed from runtime tip 9ba95bbb / docs tip 5dc191cb (or main)",
-    "optional durable wall_elapsed_ms when hook provides it (omit when missing)",
+    "optional durable wall_elapsed_ms from runtime tip 9b6646e8 (or main; omit when missing)",
     "handoff docs panel is operator clarity (not a second control plane)",
     "does not close runtime #70 / #78",
     "does not unlock #61 / #29",
@@ -173,10 +175,10 @@ def elapsed_plan() -> dict[str, Any]:
 def wall_plan() -> dict[str, Any]:
     """Dry-run honesty for optional durable job wall. No invented numbers."""
     return {
-        "when": "durable progress/status wall_elapsed_ms (or equivalent)",
-        "runtime_tip": RUNTIME_DOCS_PIN,
-        "lineage": RUNTIME_ELAPSED_PIN,
+        "when": "durable progress/status wall_elapsed_ms / started_at (or equivalent)",
+        "runtime_tip": RUNTIME_WALL_PIN,
         "or": "main",
+        "runtime_pr": 114,
         "omit_when_missing": True,
         "invent": False,
         "forecast": False,
@@ -185,11 +187,11 @@ def wall_plan() -> dict[str, Any]:
         "north_star_done": False,
         "note": (
             "Optional durable job wall on job detail / progress. "
-            "Accept when hook progress/status JSON includes "
-            "wall_elapsed_ms (or equivalent). Omit when missing. "
-            "Never invent. Not a forecast. Not IFRS17. Not iec SPA. "
-            f"Docs tip {RUNTIME_DOCS_PIN} / lineage {RUNTIME_ELAPSED_PIN}. "
-            "Not #70 Done."
+            f"Runtime tip {RUNTIME_WALL_PIN} (or main, PR #114) can "
+            "supply durable wall_elapsed_ms / started_at on "
+            "status/progress. Accept when hook JSON includes the field. "
+            "Omit when missing. Never invent. Not a forecast. "
+            "Not IFRS17. Not iec SPA. Not #70 Done."
         ),
     }
 
