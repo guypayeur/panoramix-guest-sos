@@ -233,7 +233,7 @@ OPAQUE_HANDOFF_BODY: dict[str, Any] = {
     "payload_digest": "sha256:" + ("ab" * 32),
 }
 _FAILED_OR_CANCELED = frozenset({"failed", "canceled"})
-LIVE_JOB_STATUSES = frozenset({"queued", "running", "paused"})
+LIVE_JOB_STATUSES = frozenset({"queued", "running", "paused", "held"})
 
 
 @dataclass(frozen=True)

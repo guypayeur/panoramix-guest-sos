@@ -7,6 +7,7 @@ import time
 import unittest
 
 from sos.errors import (
+    AlreadyCanceled,
     AlreadyTerminal,
     EngineSmuggle,
     IllegalTransition,
@@ -595,6 +596,18 @@ class JobStoreTests(unittest.TestCase):
         body = ctx.exception.to_dict()
         self.assertEqual(body["status"], "succeeded")
         self.assertIn("not pause", body["note"].lower())
+
+    def test_cancel_already_canceled(self) -> None:
+        job = self.store.submit({"demo": "sleep", "seconds": 8})
+        canceled = self.store.cancel(job.id)
+        self.assertEqual(canceled.status, "canceled")
+        with self.assertRaises(AlreadyCanceled) as ctx:
+            self.store.cancel(job.id)
+        self.assertEqual(ctx.exception.http_status, 409)
+        body = ctx.exception.to_dict()
+        self.assertEqual(body["error"], "already_canceled")
+        self.assertIs(body["already_canceled"], True)
+        self.assertEqual(body["status"], "canceled")
 
     def test_progress_and_events_reserve(self) -> None:
         job = self.store.submit(

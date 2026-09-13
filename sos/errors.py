@@ -80,7 +80,7 @@ class InvalidStatus(SosError):
             allowed=list(WORK_STATUSES),
             detail=(
                 "Job list filter uses real job.status only "
-                "(queued/running/paused/succeeded/failed/canceled). "
+                "(queued/running/paused/held/succeeded/failed/canceled). "
                 "Unknown values such as accepted or cancelled are rejected."
             ),
         )
@@ -116,14 +116,38 @@ class AlreadyTerminal(SosError):
             id=job_id,
             status=status,
             note=(
-                "Cancel ends a live run (status canceled), including paused. "
-                "Cancel is not pause. Durable cancel is ctl-mediated. "
+                "Cancel ends a live run (status canceled), including paused "
+                "or held. Cancel is not pause. This job is already "
+                f"{status} — not a new cancel. For an already-canceled "
+                "job the error is already_canceled (runtime tip d9b9948 "
+                "ctl cancel is idempotent). Durable cancel is ctl-mediated. "
                 "Pause/resume is durable-path only "
                 f"({CTL_PAUSE_RESUME}). Stub-backed cancel is local; "
                 "runtime-backed cancel signals the hook first "
                 f"({CTL_CANCEL}), then marks the guest job canceled if "
                 "it was still live or follows hook.status() when ctl "
                 "already reports terminal. Fail-closed without hook."
+            ),
+        )
+
+
+class AlreadyCanceled(SosError):
+    """Cancel of a job that is already canceled. Clearer than already_terminal."""
+
+    http_status = 409
+
+    def __init__(self, job_id: str, status: str = "canceled") -> None:
+        super().__init__(
+            "already_canceled",
+            id=job_id,
+            status=status,
+            already_canceled=True,
+            note=(
+                "Job is already canceled. Cancel of an already-canceled "
+                "run is not a new cancel. Durable ctl cancel is "
+                "idempotent (runtime tip d9b9948: ok / already_canceled). "
+                "Cancel is not pause. Not resume-from-canceled. "
+                "Succeeded/failed cancel stays already_terminal."
             ),
         )
 
@@ -147,14 +171,23 @@ class StubOnly(SosError):
 class IllegalTransition(SosError):
     http_status = 409
 
-    def __init__(self, job_id: str, status: str, action: str) -> None:
-        super().__init__(
-            "illegal_transition",
-            id=job_id,
-            status=status,
-            action=action,
-            detail=f"cannot {action} job in status {status}",
-        )
+    def __init__(
+        self,
+        job_id: str,
+        status: str,
+        action: str,
+        *,
+        detail: str | None = None,
+        **extra: Any,
+    ) -> None:
+        fields: dict[str, Any] = {
+            "id": job_id,
+            "status": status,
+            "action": action,
+            "detail": detail or f"cannot {action} job in status {status}",
+        }
+        fields.update(extra)
+        super().__init__("illegal_transition", **fields)
 
 
 class ReAdmitUnavailable(SosError):

@@ -8,6 +8,7 @@ WORK_STATUSES = (
     "queued",
     "running",
     "paused",
+    "held",
     "succeeded",
     "failed",
     "canceled",
@@ -16,9 +17,12 @@ TERMINAL = frozenset({"succeeded", "failed", "canceled"})
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_PAUSED = "paused"
+STATUS_HELD = "held"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_CANCELED = "canceled"
+# Non-terminal hold. Overlay when ctl/hook reports held; omit when missing.
+HELD_OR_PAUSED = frozenset({STATUS_PAUSED, STATUS_HELD})
 # Operator/ctl pointer — default guest does not invoke this.
 # Opt-in lab adapter may invoke reserve-temporal locally; not compute-work.
 CTL_PAUSE_RESUME = (
@@ -40,7 +44,13 @@ FAILED_OR_CANCELED = frozenset({STATUS_FAILED, STATUS_CANCELED})
 LAST_EVENTS_N = 5
 TERMINAL_NOTE = (
     "Terminal/failure summary — status + message + optional last events / "
-    "stage when known; not a SIEM; not iec /v1/audit/events product"
+    "stage / next_action / valuation when the hook supplies them; "
+    "not a SIEM; not iec /v1/audit/events product"
+)
+IEC_PAUSE_LIMIT_NOTE = (
+    "iec-local pause is pause-before-start (single-activity). "
+    "Mid-flight pause/held only when the hook/ctl supplies them — "
+    "omitted when missing; never invented. Runtime tip d9b9948+"
 )
 RECOVERABILITY_NOTE = (
     "Cancel/fail does not auto-retry. Re-admit is a new admit "
@@ -240,3 +250,79 @@ def short_digest(digest: str | None) -> str:
         return ""
     hex_part = raw[7:] if raw.startswith("sha256:") else raw
     return "sha256:" + hex_part[:8] + "…"
+
+
+# Optional ctl honesty fields. Omit when missing / unknown / empty.
+# Guest must not invent these; wire them when runtime/ctl supplies them
+# (iec-local tip d9b9948+ pause_limit / already_canceled; held + FAILED
+# next_action when ctl grows them).
+HONESTY_PASSTHROUGH_KEYS: tuple[str, ...] = (
+    "held",
+    "held_reason",
+    "pause_limit",
+    "can_pause",
+    "can_resume",
+    "pause_resume",
+    "next_action",
+    "error_code",
+    "valuation",
+    "valuation_status",
+    "stage_name",
+    "failure_stage",
+)
+
+_HONESTY_ALIASES: dict[str, str] = {
+    "nextAction": "next_action",
+    "errorCode": "error_code",
+    "valuationStatus": "valuation_status",
+    "stageName": "stage_name",
+    "failureStage": "failure_stage",
+    "heldReason": "held_reason",
+    "pauseLimit": "pause_limit",
+    "canPause": "can_pause",
+    "canResume": "can_resume",
+    "pauseResume": "pause_resume",
+}
+
+
+def _honesty_value_ok(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "unknown"}:
+        return False
+    return True
+
+
+def extract_lifecycle_overlay(*blobs: object) -> dict[str, object]:
+    """Collect optional pause/held/failure honesty fields. Omit when missing."""
+    out: dict[str, object] = {}
+    for blob in blobs:
+        if not isinstance(blob, dict):
+            continue
+        for src, dest in _HONESTY_ALIASES.items():
+            if dest in out:
+                continue
+            if src in blob and _honesty_value_ok(blob[src]):
+                out[dest] = blob[src]
+        for key in HONESTY_PASSTHROUGH_KEYS:
+            if key in out:
+                continue
+            if key in blob and _honesty_value_ok(blob[key]):
+                out[key] = blob[key]
+        nested_error = blob.get("error")
+        if isinstance(nested_error, dict):
+            for key in ("next_action", "error_code", "stage_name", "failure_stage"):
+                if key not in out and key in nested_error and _honesty_value_ok(
+                    nested_error[key]
+                ):
+                    out[key] = nested_error[key]
+            if "next_action" not in out and _honesty_value_ok(
+                nested_error.get("nextAction")
+            ):
+                out["next_action"] = nested_error["nextAction"]
+        nested_progress = blob.get("progress")
+        if isinstance(nested_progress, dict):
+            extra = extract_lifecycle_overlay(nested_progress)
+            for key, value in extra.items():
+                out.setdefault(key, value)
+    return out

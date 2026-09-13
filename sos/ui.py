@@ -129,6 +129,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .st-queued { color: #c9b36a; }
     .st-running { color: var(--run); }
     .st-paused { color: var(--warn); }
+    .st-held { color: var(--warn); }
     .st-succeeded { color: var(--ok); }
     .st-failed { color: var(--bad); }
     .st-canceled { color: var(--muted); }
@@ -346,7 +347,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
     <code>python3 -m runtime.apply reserve-temporal pause|resume --id cw_…</code>).
     Stub-only jobs refuse pause/resume (<code>409 stub_only</code>) —
     this page does not pretend otherwise. Cancel ends the run
-    (<code>canceled</code>) from running or paused; cancel is not pause.
+    (<code>canceled</code>) from running, paused, or held; cancel is not pause.
+    Same-job iec-local pause/held/resume and FAILED next-action /
+    stage naming appear only when the hook supplies them — omitted
+    when missing. Cancel of an already-canceled job is
+    <code>409 already_canceled</code>.
     Durable cancel is ctl-mediated. Fail-closed without hook.
     Progress prefers durable path-slice counters when a runtime hook
     provides them; the job-detail panel shows named stages
@@ -383,7 +388,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
     succeeded prior walls when enough samples exist.
     Not a forecast. Not IFRS17. Not iec SPA historical widget.
     Failed/canceled jobs show a terminal/failure summary
-    (status + message + optional last events / stage) — not a SIEM,
+    (status + message + optional last events / stage / next_action /
+    valuation when the hook supplies them) — not a SIEM,
     not iec <code>/v1/audit/events</code>. Recoverability is handoff +
     payload export for operator/ctl re-admit
     (<code>python3 -m runtime.apply reserve-temporal admit --handoff JSON</code>).
@@ -397,7 +403,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     and lab-compose (<code>docs/lab-compose.md</code>) — operator
     clarity, not a second control plane.
     Job list can filter by real status
-    (queued / running / paused / succeeded / failed / canceled).
+    (queued / running / paused / held / succeeded / failed / canceled).
     Light auto-refresh is opt-in, or on when
     <code>durable_hook</code> is active; it stops when the selected
     job is terminal and does not invent progress.
@@ -512,6 +518,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
           <option value="queued">queued</option>
           <option value="running">running</option>
           <option value="paused">paused</option>
+          <option value="held">held</option>
           <option value="succeeded">succeeded</option>
           <option value="failed">failed</option>
           <option value="canceled">canceled</option>
@@ -586,7 +593,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
         (opt-in <code>PANORAMIX_CTL_HTTP</code> preferred, or
         <code>PANORAMIX_RUNTIME_ROOT</code>) signal ctl cancel first,
         then the guest job is marked <code>canceled</code>
-        if it was still live (running or paused) — or follows hook
+        if it was still live (running, paused, or held) — or follows hook
         <code>status()</code> when ctl already reports terminal.
         Fail-closed without hook (inert default — no pretend).
         Re-admit is a <strong>new</strong> admit (one-click when a durable
@@ -784,8 +791,9 @@ OPERATOR_HTML = """<!DOCTYPE html>
       $("cancel-btn").textContent = canCancel
         ? "Cancel selected job"
         : (job ? "Cannot cancel (terminal)" : "Cancel selected job");
-      const canPause = !!(job && durable(job) && job.status === "running");
-      const canResume = !!(job && durable(job) && job.status === "paused");
+      const pauseResume = !!(job && job.pause_resume === true);
+      const canPause = !!(job && pauseResume && job.status === "running" && job.can_pause !== false);
+      const canResume = !!(job && pauseResume && (job.status === "paused" || job.status === "held") && job.can_resume !== false);
       $("pause-btn").disabled = !canPause;
       $("resume-btn").disabled = !canResume;
       const hint = $("pause-hint");
@@ -793,7 +801,15 @@ OPERATOR_HTML = """<!DOCTYPE html>
         hint.textContent = "Pause/Resume require the durable path. Stub jobs stay disabled. Operator/ctl: python3 -m runtime.apply reserve-temporal pause|resume --id cw_…";
         return;
       }
-      if (!durable(job)) {
+      if (job.pause_limit) {
+        hint.textContent = job.pause_limit + " Pause/held/resume only when the hook supplies them — omit when missing. Cancel is not pause.";
+        return;
+      }
+      if (!durable(job) || !pauseResume) {
+        if (isSameJob(job)) {
+          hint.textContent = "iec-local same-job: mid-flight pause/held omitted unless the hook supplies can_pause / held. Cancel is not pause.";
+          return;
+        }
         hint.textContent = "Stub-only job: Pause/Resume disabled (409 stub_only). Durable path or operator/ctl: python3 -m runtime.apply reserve-temporal pause|resume --id cw_…";
         return;
       }
@@ -801,8 +817,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
         hint.textContent = "Durable-backed: Pause is enabled. Cancel is not pause.";
         return;
       }
-      if (job.status === "paused") {
-        hint.textContent = "Durable-backed: Resume is enabled. Cancel from paused still ends the run.";
+      if (job.status === "paused" || job.status === "held") {
+        hint.textContent = "Durable-backed: Resume is enabled. Cancel from paused/held still ends the run.";
         return;
       }
       hint.textContent = "Durable-backed pause/resume is idle on this status. Cancel is not pause.";
@@ -813,7 +829,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const res = await fetch("/v0/jobs/" + id + "/" + action, { method: "POST" });
       const body = await res.json();
       if (!res.ok) {
-        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        if (body && body.error === "already_canceled") {
+          flash("Already canceled — not a new cancel (already_canceled).");
+        } else {
+          flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        }
       }
       selectedId = id;
       await refresh();
@@ -831,7 +851,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const res = await fetch("/v0/jobs/" + id + "/cancel", { method: "POST" });
       const body = await res.json();
       if (!res.ok) {
-        flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        if (body && body.error === "already_canceled") {
+          flash("Already canceled — not a new cancel (already_canceled).");
+        } else {
+          flash(body.error ? JSON.stringify(body) : ("HTTP " + res.status));
+        }
       }
       selectedId = id;
       await refresh();
@@ -1069,6 +1093,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
           extras.push("chunk " + prog.chunk_idx + " / " + prog.n_chunks);
         }
         if (prog && prog.updated_at) extras.push("updated " + fmtTs(prog.updated_at));
+        if (job.status === "held" || job.held === true || (prog && prog.held === true)) {
+          extras.push("held" + (job.held_reason ? (" · " + job.held_reason) : ""));
+        }
+        if (job.pause_limit || (prog && prog.pause_limit)) {
+          extras.push("pause_limit: " + (job.pause_limit || prog.pause_limit));
+        }
         if (extras.length) {
           const extra = document.createElement("p");
           extra.className = "hint";
@@ -1197,7 +1227,8 @@ OPERATOR_HTML = """<!DOCTYPE html>
       line.appendChild(pill(status));
       line.appendChild(document.createTextNode(" — " + (term.message || job.message || status)));
       wrap.appendChild(line);
-      const stage = term.stage || (job.local && job.local.stage);
+      const stage = term.stage_name || term.failure_stage || term.stage
+        || (job.local && job.local.stage);
       if (stage) {
         const st = document.createElement("p");
         const idx = term.stage_index != null ? term.stage_index
@@ -1207,9 +1238,24 @@ OPERATOR_HTML = """<!DOCTYPE html>
           " — how far it got; not resume-from-failed.";
         wrap.appendChild(st);
       }
-      if (term.error) {
+      if (term.valuation || term.valuation_status) {
+        const val = document.createElement("p");
+        val.textContent = "Valuation: " + (term.valuation || term.valuation_status)
+          + " — hook/ctl field when present; omit when missing.";
+        wrap.appendChild(val);
+      }
+      if (term.next_action) {
+        const next = document.createElement("p");
+        next.textContent = "Next action: " + term.next_action
+          + " — hook/ctl field when present; not resume-from-failed.";
+        wrap.appendChild(next);
+      }
+      if (term.error || term.error_code) {
         const err = document.createElement("p");
-        err.textContent = "Error: " + term.error;
+        const bits = [];
+        if (term.error_code) bits.push(String(term.error_code));
+        if (term.error) bits.push(String(term.error));
+        err.textContent = "Error: " + bits.join(" · ");
         wrap.appendChild(err);
       }
       const last = term.last_events || [];
@@ -1619,6 +1665,21 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       if (ids.cw_id) {
         rows.push(...dlRow("cw id", ids.cw_id, true));
+      }
+      if (job.held === true || job.status === "held") {
+        rows.push(...dlRow("held", job.held_reason || "held — hook/ctl supplied; omit when missing"));
+      }
+      if (job.pause_limit) {
+        rows.push(...dlRow("pause limit", job.pause_limit));
+      }
+      if (job.can_pause === true || job.can_resume === true) {
+        const bits = [];
+        if (job.can_pause === true) bits.push("can_pause");
+        if (job.can_resume === true) bits.push("can_resume");
+        rows.push(...dlRow("pause/resume", bits.join(" · ")));
+      }
+      if (job.next_action) {
+        rows.push(...dlRow("next action", job.next_action));
       }
       if (prog && prog.source) {
         rows.push(...dlRow("progress source", prog.source));

@@ -106,6 +106,7 @@ INFO_PAYLOAD = {
             "script": LAB_COMPOSE_IEC_SCRIPT,
             "runtime_docs": "docs/iec-local.md",
             "runtime_tip": "d480dc8",
+            "ux_runtime_tip": "d9b9948",
             "admit": CTL_IEC_LOCAL_ADMIT,
             "north_star_done": False,
             "note": (
@@ -114,7 +115,10 @@ INFO_PAYLOAD = {
                 "iec checkout (POST /v1/jobs). Phase/fraction omit when "
                 "missing (Platform unknown/0 defaults) — never invent. "
                 "Walls (api_e2e_ms) omit when missing — never invent. "
-                "Not #70 Done. north_star_done false. Cloud locked."
+                "Pause/held/resume and FAILED next_action / stage_name "
+                "pass through when ctl supplies them (runtime tip "
+                "d9b9948+ pause_limit / already_canceled) — omit when "
+                "missing. Not #70 Done. north_star_done false. Cloud locked."
             ),
         },
         "runtime_reserve": "docs/reserve.md",
@@ -182,7 +186,7 @@ INFO_PAYLOAD = {
             "north_star_done false."
         ),
         "list": "GET /v0/jobs",
-        "list_status": "GET /v0/jobs?status=queued|running|paused|succeeded|failed|canceled",
+        "list_status": "GET /v0/jobs?status=queued|running|paused|held|succeeded|failed|canceled",
         "list_status_honesty": (
             "Filter is the real job.status from the store. "
             "Repeat or comma-separate to OR known statuses. "
@@ -210,6 +214,9 @@ INFO_PAYLOAD = {
             "defaults — never invent; no invented SPA chunk/ETA/"
             "heartbeat chrome); optional nested iec_job_id / cw_id when "
             "the hook/ctl supplies them — omitted when missing; "
+            "optional pause_limit / held / can_pause / next_action / "
+            "valuation / stage_name when ctl supplies them (runtime "
+            "tip d9b9948+) — omitted when missing; "
             "guest does not run IFRS17 math; "
             "optional per-stage elapsed from durable progress "
             "stages[].elapsed_ms (runtime tip 9ba95bbb / docs tip 5dc191cb / "
@@ -282,23 +289,31 @@ INFO_PAYLOAD = {
         "pause_resume_honesty": (
             "durable path only (runtime-backed / injected hook). "
             "Stub-only jobs return 409 stub_only. Cancel is not pause. "
+            "iec-local same-job pause/held/resume stay omitted unless "
+            "the hook supplies can_pause / can_resume / held "
+            "(runtime tip d9b9948+ pause_limit). "
             f"Operator/ctl: {CTL_PAUSE_RESUME}"
         ),
         "cancel_note": (
-            "Cancel ends a live run (canceled), including paused. "
+            "Cancel ends a live run (canceled), including paused or held. "
             "Cancel is not pause. Durable cancel is ctl-mediated "
             "(PANORAMIX_CTL_HTTP preferred or PANORAMIX_RUNTIME_ROOT). "
             "Pause/resume is durable-path only. "
             "Stub-backed cancel is local; runtime-backed cancel signals "
             "the hook first (same honesty as pause), then marks the guest "
             "job canceled if still live or follows hook.status() when ctl "
-            "already reports terminal. Fail-closed without hook (inert default). "
+            "already reports terminal. Cancel of an already-canceled job "
+            "is 409 already_canceled (runtime tip d9b9948 ctl cancel is "
+            "idempotent). Succeeded/failed cancel stays 409 already_terminal. "
+            "Fail-closed without hook (inert default). "
             "Cancel/fail does not auto-retry. "
             f"Operator/ctl: {CTL_CANCEL}"
         ),
         "terminal": (
             "Failed/canceled job resources expose a terminal summary "
-            "(status + message + optional last events / stage). "
+            "(status + message + optional last events / stage / "
+            "next_action / valuation / stage_name when the hook "
+            "supplies them). Omit when missing. "
             "Not a SIEM; not iec /v1/audit/events product."
         ),
         "recoverability": (
