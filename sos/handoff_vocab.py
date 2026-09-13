@@ -50,7 +50,9 @@ TERMINAL_NOTE = (
 IEC_PAUSE_LIMIT_NOTE = (
     "iec-local pause is pause-before-start (single-activity). "
     "Mid-flight pause/held only when the hook/ctl supplies them — "
-    "omitted when missing; never invented. Runtime tip d9b9948+"
+    "omitted when missing; never invented. Runtime tip d9b9948+. "
+    "pause_signaled / resume_signaled pass through when ctl returns "
+    "them (runtime tip e2f41fd+) — omit when missing; never invent held"
 )
 RECOVERABILITY_NOTE = (
     "Cancel/fail does not auto-retry. Re-admit is a new admit "
@@ -254,8 +256,9 @@ def short_digest(digest: str | None) -> str:
 
 # Optional ctl honesty fields. Omit when missing / unknown / empty.
 # Guest must not invent these; wire them when runtime/ctl supplies them
-# (iec-local tip d9b9948+ pause_limit / already_canceled; held + FAILED
-# next_action when ctl grows them).
+# (iec-local tip d9b9948+ pause_limit / already_canceled; e2f41fd+
+# pause_signaled / resume_signaled; held + FAILED next_action when
+# ctl grows them).
 HONESTY_PASSTHROUGH_KEYS: tuple[str, ...] = (
     "held",
     "held_reason",
@@ -263,12 +266,26 @@ HONESTY_PASSTHROUGH_KEYS: tuple[str, ...] = (
     "can_pause",
     "can_resume",
     "pause_resume",
+    "pause_signaled",
+    "resume_signaled",
+    "is_paused",
+    "held_while_paused",
     "next_action",
     "error_code",
     "valuation",
     "valuation_status",
     "stage_name",
     "failure_stage",
+)
+# Pause/resume POST outcomes. Sticky until ctl contradicts them so a
+# later status poll that omits the keys does not hide the signal.
+HONESTY_SIGNAL_KEYS: frozenset[str] = frozenset(
+    {
+        "pause_signaled",
+        "resume_signaled",
+        "is_paused",
+        "held_while_paused",
+    }
 )
 
 _HONESTY_ALIASES: dict[str, str] = {
@@ -282,6 +299,10 @@ _HONESTY_ALIASES: dict[str, str] = {
     "canPause": "can_pause",
     "canResume": "can_resume",
     "pauseResume": "pause_resume",
+    "pauseSignaled": "pause_signaled",
+    "resumeSignaled": "resume_signaled",
+    "isPaused": "is_paused",
+    "heldWhilePaused": "held_while_paused",
 }
 
 

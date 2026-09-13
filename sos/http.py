@@ -107,6 +107,7 @@ INFO_PAYLOAD = {
             "runtime_docs": "docs/iec-local.md",
             "runtime_tip": "d480dc8",
             "ux_runtime_tip": "d9b9948",
+            "ux_runtime_signal_tip": "e2f41fd",
             "admit": CTL_IEC_LOCAL_ADMIT,
             "north_star_done": False,
             "note": (
@@ -118,7 +119,11 @@ INFO_PAYLOAD = {
                 "Pause/held/resume and FAILED next_action / stage_name "
                 "pass through when ctl supplies them (runtime tip "
                 "d9b9948+ pause_limit / already_canceled) — omit when "
-                "missing. Not #70 Done. north_star_done false. Cloud locked."
+                "missing. pause_signaled / resume_signaled pass through "
+                "when iec-local ctl returns them after pause/resume "
+                "(runtime tip e2f41fd+) — omit when missing; never "
+                "invent held; do not enable pause without can_pause. "
+                "Not #70 Done. north_star_done false. Cloud locked."
             ),
         },
         "runtime_reserve": "docs/reserve.md",
@@ -217,6 +222,9 @@ INFO_PAYLOAD = {
             "optional pause_limit / held / can_pause / next_action / "
             "valuation / stage_name when ctl supplies them (runtime "
             "tip d9b9948+) — omitted when missing; "
+            "optional pause_signaled / resume_signaled / is_paused when "
+            "iec-local ctl returns them after pause/resume (runtime "
+            "tip e2f41fd+) — omitted when missing; never invent held; "
             "guest does not run IFRS17 math; "
             "optional per-stage elapsed from durable progress "
             "stages[].elapsed_ms (runtime tip 9ba95bbb / docs tip 5dc191cb / "
@@ -292,6 +300,9 @@ INFO_PAYLOAD = {
             "iec-local same-job pause/held/resume stay omitted unless "
             "the hook supplies can_pause / can_resume / held "
             "(runtime tip d9b9948+ pause_limit). "
+            "pause_signaled / resume_signaled surface when ctl returns "
+            "them (runtime tip e2f41fd+) — not invented held; pause "
+            "stays disabled without can_pause. "
             f"Operator/ctl: {CTL_PAUSE_RESUME}"
         ),
         "cancel_note": (

@@ -554,6 +554,66 @@ class CtlKindTests(unittest.TestCase):
         self.assertNotIn("phase", progress)
         self.assertNotIn("timeline", progress)
 
+    def test_http_pause_caches_pause_signaled(self) -> None:
+        def transport(method, url, headers, body):
+            del headers, body
+            path = url.split("?")[0]
+            if path.endswith("/iec-local/admit"):
+                return 200, json.dumps(
+                    {
+                        "ok": True,
+                        "id": COMPOSE_HOOK_ID,
+                        "handoff": {"id": COMPOSE_HOOK_ID, "status": "running"},
+                    }
+                )
+            if path.endswith("/iec-local/status"):
+                return 200, json.dumps(
+                    {
+                        "id": COMPOSE_HOOK_ID,
+                        "status": "running",
+                        "handoff": {"id": COMPOSE_HOOK_ID, "status": "running"},
+                        "pause_signaled": True,
+                    }
+                )
+            if path.endswith("/iec-local/progress"):
+                return 200, json.dumps(
+                    {
+                        "same_job": True,
+                        "status": "running",
+                        "pause_signaled": True,
+                    }
+                )
+            if method == "POST" and path.endswith("/iec-local/pause"):
+                return 200, json.dumps(
+                    {
+                        "ok": True,
+                        "id": COMPOSE_HOOK_ID,
+                        "pause_signaled": True,
+                        "handoff": {"id": COMPOSE_HOOK_ID, "status": "running"},
+                    }
+                )
+            return 404, json.dumps({"error": url})
+
+        hook = LabReserveTemporalHttpHook(
+            LOOPBACK_IEC,
+            transport=transport,
+            ctl=CTL_KIND_IEC_LOCAL,
+        )
+        self.assertTrue(
+            hook.pause("job", {"id": COMPOSE_HOOK_ID})
+        )
+        self.assertIs(hook.last_status_payload["pause_signaled"], True)
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        public = store.public_dict(store.get(job.id))
+        self.assertEqual(public["status"], "running")
+        self.assertIs(public["pause_signaled"], True)
+        self.assertNotIn("held", public)
+        self.assertIs(public["pause_resume"], False)
+        progress = store.progress(job.id)
+        self.assertIs(progress["pause_signaled"], True)
+        self.assertNotIn("held", progress)
+
     def test_admit_then_status_timeout_is_201_not_lab_serve_down(self) -> None:
         """#79: slow-but-up ctl after admit must not stamp lab-serve-down."""
 
@@ -739,6 +799,11 @@ class ComposePlanTests(unittest.TestCase):
         self.assertIn("already_canceled", html)
         self.assertIn("pause_limit", html)
         self.assertIn("can_pause", html)
+        self.assertIn("pause_signaled", html)
+        self.assertIn("resume_signaled", html)
+        self.assertIn("e2f41fd", html)
+        self.assertIn("signalOutcome", html)
+        self.assertIn("st-signaled", html)
         self.assertIn("next_action", html)
         self.assertIn('value="held"', html)
         self.assertIn("st-held", html)
@@ -752,6 +817,8 @@ class DayOneHonestyTests(unittest.TestCase):
             {
                 "pause_limit": "iec pause-before-start",
                 "can_pause": False,
+                "pause_signaled": True,
+                "resumeSignaled": False,
                 "next_action": "unknown",
                 "nextAction": "retry fold",
                 "valuation": "",
@@ -761,10 +828,13 @@ class DayOneHonestyTests(unittest.TestCase):
         )
         self.assertEqual(overlay["pause_limit"], "iec pause-before-start")
         self.assertIs(overlay["can_pause"], False)
+        self.assertIs(overlay["pause_signaled"], True)
+        self.assertIs(overlay["resume_signaled"], False)
         self.assertEqual(overlay["next_action"], "retry fold")
         self.assertEqual(overlay["held_reason"], "operator hold")
         self.assertEqual(overlay["error_code"], "VALUATION_FAILED")
         self.assertNotIn("valuation", overlay)
+        self.assertNotIn("held", overlay)
         from sos.lab_ctl import _lifecycle_status
 
         self.assertEqual(_lifecycle_status({"status": "HELD"}), "held")
@@ -800,6 +870,98 @@ class DayOneHonestyTests(unittest.TestCase):
         paused = store.pause(job.id)
         self.assertEqual(paused.status, "paused")
         self.assertNotIn("can_pause", store.handoff(job.id))
+
+    def test_pause_signaled_passes_through_without_inventing_held(self) -> None:
+        hook = IecLocalComposeHook()
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        hook.last_status_payload = {
+            "status": "running",
+            "pause_signaled": True,
+            "is_paused": True,
+            "pause_limit": "Platform GET stays RUNNING; never invent held",
+        }
+        public = store.public_dict(store.get(job.id))
+        self.assertEqual(public["status"], "running")
+        self.assertIs(public["pause_signaled"], True)
+        self.assertIs(public["is_paused"], True)
+        self.assertIs(public["pause_resume"], False)
+        self.assertNotIn("can_pause", public)
+        self.assertNotIn("held", public)
+        self.assertNotIn("pause_signaled", store.handoff(job.id))
+        progress = store.progress(job.id)
+        self.assertIs(progress["pause_signaled"], True)
+        self.assertIs(progress["is_paused"], True)
+        self.assertNotIn("held", progress)
+        with self.assertRaises(IllegalTransition):
+            store.pause(job.id)
+        still = store.public_dict(store.get(job.id))
+        self.assertEqual(still["status"], "running")
+        self.assertNotIn("held", still)
+
+        hook.last_status_payload = {
+            "status": "running",
+            "resume_signaled": True,
+        }
+        resumed = store.public_dict(store.get(job.id))
+        self.assertEqual(resumed["status"], "running")
+        self.assertIs(resumed["resume_signaled"], True)
+        self.assertNotIn("pause_signaled", resumed)
+        self.assertNotIn("held", resumed)
+        self.assertIs(resumed["pause_resume"], False)
+
+    def test_guest_pause_surfaces_signaled_without_inventing_paused(self) -> None:
+        class SignalHook(IecLocalComposeHook):
+            def pause(self, job_id, runtime_ref) -> bool:
+                del job_id, runtime_ref
+                self.last_status_payload = {
+                    "status": "running",
+                    "handoff": {"status": "running"},
+                    "pause_signaled": True,
+                    "can_pause": True,
+                }
+                return True
+
+            def resume(self, job_id, runtime_ref) -> bool:
+                del job_id, runtime_ref
+                self.last_status_payload = {
+                    "status": "running",
+                    "handoff": {"status": "running"},
+                    "resume_signaled": True,
+                }
+                return True
+
+        hook = SignalHook()
+        store = JobStore(runtime_hook=hook, step_seconds=0.01)
+        job = store.submit(same_job_body())
+        hook.last_status_payload = {
+            "status": "running",
+            "can_pause": True,
+        }
+        store.get(job.id)
+        out = store.pause(job.id)
+        public = store.public_dict(out)
+        self.assertEqual(public["status"], "running")
+        self.assertIs(public["pause_signaled"], True)
+        self.assertNotIn("held", public)
+        self.assertIn("pause_signaled", [item["event"] for item in public["events"]])
+        self.assertIn("not invented held", public["message"])
+        progress = store.progress(job.id)
+        self.assertIs(progress["pause_signaled"], True)
+        self.assertEqual(progress["status"], "running")
+
+        hook.last_status_payload = {
+            "status": "held",
+            "held": True,
+            "can_resume": True,
+        }
+        held = store.public_dict(store.get(job.id))
+        self.assertEqual(held["status"], "held")
+        resumed = store.public_dict(store.resume(job.id))
+        self.assertEqual(resumed["status"], "running")
+        self.assertIs(resumed["resume_signaled"], True)
+        self.assertNotIn("pause_signaled", resumed)
+        self.assertNotIn("held", resumed)
 
     def test_held_and_failure_fields_pass_through(self) -> None:
         hook = IecLocalComposeHook()

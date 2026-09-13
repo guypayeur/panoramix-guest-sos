@@ -130,6 +130,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
     .st-running { color: var(--run); }
     .st-paused { color: var(--warn); }
     .st-held { color: var(--warn); }
+    .st-signaled { color: var(--warn); }
     .st-succeeded { color: var(--ok); }
     .st-failed { color: var(--bad); }
     .st-canceled { color: var(--muted); }
@@ -350,7 +351,11 @@ OPERATOR_HTML = """<!DOCTYPE html>
     (<code>canceled</code>) from running, paused, or held; cancel is not pause.
     Same-job iec-local pause/held/resume and FAILED next-action /
     stage naming appear only when the hook supplies them — omitted
-    when missing. Cancel of an already-canceled job is
+    when missing. <code>pause_signaled</code> / <code>resume_signaled</code>
+    pass through when iec-local ctl returns them after pause/resume
+    (runtime tip <code>e2f41fd</code>) — a brief signaled cue, not
+    invented <code>held</code>, and pause stays disabled without
+    <code>can_pause</code>. Cancel of an already-canceled job is
     <code>409 already_canceled</code>.
     Durable cancel is ctl-mediated. Fail-closed without hook.
     Progress prefers durable path-slice counters when a runtime hook
@@ -785,6 +790,20 @@ OPERATOR_HTML = """<!DOCTYPE html>
       return false;
     }
 
+    function signalOutcome(job, prog) {
+      const pause = !!(job && (job.pause_signaled === true || (prog && prog.pause_signaled === true)));
+      const resume = !!(job && (job.resume_signaled === true || (prog && prog.resume_signaled === true)));
+      const isPaused = !!(job && (job.is_paused === true || (prog && prog.is_paused === true)));
+      return { pause: pause, resume: resume, isPaused: isPaused };
+    }
+
+    function signaledPill(kind) {
+      const span = document.createElement("span");
+      span.className = "pill st-signaled";
+      span.textContent = kind + " signaled";
+      return span;
+    }
+
     function syncLifecycleButtons(job) {
       const canCancel = !!(job && live(job.status));
       $("cancel-btn").disabled = !canCancel;
@@ -797,12 +816,22 @@ OPERATOR_HTML = """<!DOCTYPE html>
       $("pause-btn").disabled = !canPause;
       $("resume-btn").disabled = !canResume;
       const hint = $("pause-hint");
+      const prog = (lastProgress && job && lastProgress.id === job.id) ? lastProgress : null;
+      const signaled = signalOutcome(job, prog);
       if (!job) {
         hint.textContent = "Pause/Resume require the durable path. Stub jobs stay disabled. Operator/ctl: python3 -m runtime.apply reserve-temporal pause|resume --id cw_…";
         return;
       }
-      if (job.pause_limit) {
-        hint.textContent = job.pause_limit + " Pause/held/resume only when the hook supplies them — omit when missing. Cancel is not pause.";
+      if (job.pause_limit || signaled.pause || signaled.resume) {
+        let text = job.pause_limit || "";
+        if (signaled.pause) {
+          text += (text ? " " : "") + "Pause signaled (pause_signaled). Status stays running unless ctl reports held/paused — not invented held.";
+        }
+        if (signaled.resume) {
+          text += (text ? " " : "") + "Resume signaled (resume_signaled).";
+        }
+        text += " Pause/held/resume only when the hook supplies can_pause / held — omit when missing. Cancel is not pause.";
+        hint.textContent = text;
         return;
       }
       if (!durable(job) || !pauseResume) {
@@ -1095,6 +1124,12 @@ OPERATOR_HTML = """<!DOCTYPE html>
         if (prog && prog.updated_at) extras.push("updated " + fmtTs(prog.updated_at));
         if (job.status === "held" || job.held === true || (prog && prog.held === true)) {
           extras.push("held" + (job.held_reason ? (" · " + job.held_reason) : ""));
+        }
+        const signaled = signalOutcome(job, prog);
+        if (signaled.pause) extras.push("pause_signaled");
+        if (signaled.resume) extras.push("resume_signaled");
+        if (signaled.isPaused && job.held !== true && job.status !== "held") {
+          extras.push("is_paused (not held)");
         }
         if (job.pause_limit || (prog && prog.pause_limit)) {
           extras.push("pause_limit: " + (job.pause_limit || prog.pause_limit));
@@ -1668,6 +1703,16 @@ OPERATOR_HTML = """<!DOCTYPE html>
       }
       if (job.held === true || job.status === "held") {
         rows.push(...dlRow("held", job.held_reason || "held — hook/ctl supplied; omit when missing"));
+      }
+      const signaled = signalOutcome(job, prog);
+      if (signaled.pause) {
+        rows.push(...dlRow("pause", signaledPill("pause")));
+      }
+      if (signaled.resume) {
+        rows.push(...dlRow("resume", signaledPill("resume")));
+      }
+      if (signaled.isPaused && job.held !== true && job.status !== "held") {
+        rows.push(...dlRow("is_paused", "hook/ctl supplied — not invented held"));
       }
       if (job.pause_limit) {
         rows.push(...dlRow("pause limit", job.pause_limit));
