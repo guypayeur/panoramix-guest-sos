@@ -103,17 +103,18 @@ RESERVE_CATALOG_ALIASES = {
     "parity": RESERVE_CATALOG_PARITY,
     "parity-scale": RESERVE_CATALOG_PARITY,
 }
-# Same-job iec identity (runtime #146 / #156 / #157 /
-# docs/iec-local.md @ af3843b). Not a thinner recorded/live/parity
-# catalog. Guest copies the digest; it does not run IFRS17 math.
-# Runtime binding wraps the operator iec checkout (POST /v1/jobs).
-# Alias same-job → reserve_ifrs17.
+# Same-job iec identity (runtime #146 / #156 / #157 / #161 /
+# docs/iec-local.md @ 0baa354). Method pin lockstep with iec
+# 89fd962 (iec-proto-c #27 / #28). Not a thinner recorded/live/
+# parity catalog. Guest copies the digest; it does not run IFRS17
+# math. Runtime binding wraps the operator iec checkout
+# (POST /v1/jobs). Alias same-job → reserve_ifrs17.
 RESERVE_CATALOG_SAME_JOB = "reserve_ifrs17"
 SAME_JOB_CATALOG_ALIASES = {
     "reserve_ifrs17": RESERVE_CATALOG_SAME_JOB,
     "same-job": RESERVE_CATALOG_SAME_JOB,
 }
-IEC_METHOD_PIN = "69b1b1d896221c3658e6b46e33cc1d0062d20dae"
+IEC_METHOD_PIN = "89fd962f5cebdd7033c887a05a382032da5560cd"
 IEC_SOURCE_FILE = "reserve_ifrs17/reserve_ifrs17.adsl"
 IEC_MODE = "STANDARD"
 IEC_WORKLOAD = "reserve_ifrs17"
@@ -125,13 +126,14 @@ SAME_JOB_PARAMS: dict[str, str] = {
 }
 # sha256 of canonical JSON (sort_keys, separators=(",", ":")) of
 # same_job_payload. Must equal runtime.reserve_iec.SAME_JOB_DIGEST
-# on panoramix-runtime main @ af3843b (docs/iec-local.md; #156 / #157).
+# once runtime pins 89fd962 (lockstep; main @ 0baa354 is #161 GPU
+# class; digest identity is still the four-field payload).
 SAME_JOB_PAYLOAD_DIGEST = (
-    "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017"
+    "sha256:21c3210960116f17ba30ec9fb19a33727c41a2616377c490419680c5cf4e182c"
 )
 SAME_JOB_CANONICAL_JSON = (
     '{"mode":"STANDARD",'
-    '"revision":"69b1b1d896221c3658e6b46e33cc1d0062d20dae",'
+    '"revision":"89fd962f5cebdd7033c887a05a382032da5560cd",'
     '"source_file":"reserve_ifrs17/reserve_ifrs17.adsl",'
     '"workload":"reserve_ifrs17"}'
 )
