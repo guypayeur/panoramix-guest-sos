@@ -103,16 +103,17 @@ RESERVE_CATALOG_ALIASES = {
     "parity": RESERVE_CATALOG_PARITY,
     "parity-scale": RESERVE_CATALOG_PARITY,
 }
-# Same-job iec identity (runtime #146 / docs/iec-local.md @ d480dc8).
-# Not a thinner recorded/live/parity catalog. Guest copies the digest;
-# it does not run IFRS17 math. Runtime binding wraps the operator iec
-# checkout (POST /v1/jobs). Alias same-job → reserve_ifrs17.
+# Same-job iec identity (runtime #146 / #156 / #157 /
+# docs/iec-local.md @ af3843b). Not a thinner recorded/live/parity
+# catalog. Guest copies the digest; it does not run IFRS17 math.
+# Runtime binding wraps the operator iec checkout (POST /v1/jobs).
+# Alias same-job → reserve_ifrs17.
 RESERVE_CATALOG_SAME_JOB = "reserve_ifrs17"
 SAME_JOB_CATALOG_ALIASES = {
     "reserve_ifrs17": RESERVE_CATALOG_SAME_JOB,
     "same-job": RESERVE_CATALOG_SAME_JOB,
 }
-IEC_METHOD_PIN = "4d5d44d3747b0700eba7b4af1987184f76cc56a8"
+IEC_METHOD_PIN = "69b1b1d896221c3658e6b46e33cc1d0062d20dae"
 IEC_SOURCE_FILE = "reserve_ifrs17/reserve_ifrs17.adsl"
 IEC_MODE = "STANDARD"
 IEC_WORKLOAD = "reserve_ifrs17"
@@ -124,13 +125,13 @@ SAME_JOB_PARAMS: dict[str, str] = {
 }
 # sha256 of canonical JSON (sort_keys, separators=(",", ":")) of
 # same_job_payload. Must equal runtime.reserve_iec.SAME_JOB_DIGEST
-# on panoramix-runtime main @ d480dc8 (docs/iec-local.md).
+# on panoramix-runtime main @ af3843b (docs/iec-local.md; #156 / #157).
 SAME_JOB_PAYLOAD_DIGEST = (
-    "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c"
+    "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017"
 )
 SAME_JOB_CANONICAL_JSON = (
     '{"mode":"STANDARD",'
-    '"revision":"4d5d44d3747b0700eba7b4af1987184f76cc56a8",'
+    '"revision":"69b1b1d896221c3658e6b46e33cc1d0062d20dae",'
     '"source_file":"reserve_ifrs17/reserve_ifrs17.adsl",'
     '"workload":"reserve_ifrs17"}'
 )

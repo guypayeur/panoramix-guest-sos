@@ -81,7 +81,11 @@ class SameJobIdentityTests(unittest.TestCase):
         self.assertEqual(digest, SAME_JOB_PAYLOAD_DIGEST)
         self.assertEqual(
             digest,
-            "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c",
+            "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017",
+        )
+        self.assertEqual(
+            IEC_METHOD_PIN,
+            "69b1b1d896221c3658e6b46e33cc1d0062d20dae",
         )
         self.assertEqual(same_job_params()["revision"], IEC_METHOD_PIN)
         self.assertEqual(same_job_params()["source_file"], IEC_SOURCE_FILE)
@@ -703,7 +707,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertNotIn("PANORAMIX_RESERVE_TEMPORAL_LIVE", plan.guest_env)
         self.assertIs(plan.north_star_done, False)
         self.assertIn("guest does not run IFRS17 math", HONESTY_LINES)
-        self.assertTrue(RUNTIME_IEC_PIN.startswith("d480dc8"))
+        self.assertTrue(RUNTIME_IEC_PIN.startswith("af3843b"))
         blob = plan.to_dict()
         self.assertNotIn("pack_fill", blob)
         self.assertIs(blob["closes_runtime_70"], False)
@@ -778,12 +782,15 @@ class ComposePlanTests(unittest.TestCase):
         iec = info["jobs"]["iec_local"]
         self.assertEqual(iec["catalog"], "reserve_ifrs17")
         self.assertEqual(iec["digest"], SAME_JOB_PAYLOAD_DIGEST)
+        self.assertEqual(iec["revision"], IEC_METHOD_PIN)
+        self.assertEqual(iec["runtime_tip"], "af3843b")
         self.assertEqual(iec["ctl_port"], DEFAULT_IEC_CTL_PORT)
         self.assertIs(iec["ifrs17_guest"], False)
         self.assertIs(iec["north_star_done"], False)
         self.assertIn("Phase/fraction omit when", iec["note"])
         html = app.handle("GET", "/").body.decode("utf-8")
         self.assertIn('value="reserve_ifrs17"', html)
+        self.assertIn(SAME_JOB_PAYLOAD_DIGEST, html)
         self.assertIn("iec-local same-job", html)
         self.assertIn("Guest does", html)
         self.assertIn("does not run ifrs17", html.lower())
