@@ -960,7 +960,7 @@ OPERATOR_HTML = """<!DOCTYPE html>
       const local = (job && job.local) || {};
       if (local.same_job === true || isSameJobCatalog(local.catalog)) return true;
       const digest = job && job.payload_digest;
-      return digest === "sha256:1a1e14a08f08b7fd310c335bf863b475c86919cf0e59e9326207b49e8ae2206c";
+      return digest === "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017";
     }
 
     function nestedIdentities(job, prog) {
