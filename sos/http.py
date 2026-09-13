@@ -105,7 +105,7 @@ INFO_PAYLOAD = {
             "lab_compose": LAB_COMPOSE_IEC_DOCS,
             "script": LAB_COMPOSE_IEC_SCRIPT,
             "runtime_docs": "docs/iec-local.md",
-            "runtime_tip": "af3843b",
+            "runtime_tip": "0baa354",
             "ux_runtime_tip": "d9b9948",
             "ux_runtime_signal_tip": "e2f41fd",
             "admit": CTL_IEC_LOCAL_ADMIT,

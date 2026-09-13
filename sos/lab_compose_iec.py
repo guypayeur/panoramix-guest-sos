@@ -65,8 +65,9 @@ from sos.lab_ctl_http import ENV_CTL_BEARER, ENV_CTL_HTTP, normalize_ctl_http_ba
 
 DEFAULT_IEC_CTL_PORT = 19216
 DEFAULT_IEC_BINDING_REL = "bindings/local-iec.example.yaml"
-# panoramix-runtime main tip after #156 / #157 (docs/iec-local.md).
-RUNTIME_IEC_PIN = "af3843b8f8fa6b487d0317c53a12013ac3e90339"
+# panoramix-runtime main tip after #161 GPU class (docs/iec-local.md).
+# Method pin is iec 89fd962 lockstep (runtime pin PR may follow).
+RUNTIME_IEC_PIN = "0baa3544e97ebde170e42ef172e69786360c8fad"
 # iec-local UX honesty (pause_limit / already_canceled / pause_signaled).
 # Held + FAILED next_action stay omit-when-missing until ctl supplies them.
 RUNTIME_IEC_UX_TIP = "d9b9948"

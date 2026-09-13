@@ -2,7 +2,7 @@
 
 Thin local lab so an operator can start **runtime.serve** (binding [`bindings/local-iec.example.yaml`](https://github.com/guypayeur/panoramix-runtime/blob/main/bindings/local-iec.example.yaml), ctl **19216**) and this guest with `PANORAMIX_CTL_HTTP`, POST the pinned iec **same-job**, and watch durable progress on `:18280` (phase/fraction **when the hook supplies them**).
 
-This is the guest follow-up for runtime [#146](https://github.com/guypayeur/panoramix-runtime/issues/146) / [PR #148](https://github.com/guypayeur/panoramix-runtime/pull/148) so [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) north-star compare can admit the **same** `reserve_ifrs17` job iec measures. Same-job identity now matches runtime **main** @ [`af3843b`](https://github.com/guypayeur/panoramix-runtime/commit/af3843b8f8fa6b487d0317c53a12013ac3e90339) ([#156](https://github.com/guypayeur/panoramix-runtime/pull/156) / [#157](https://github.com/guypayeur/panoramix-runtime/pull/157) / `docs/iec-local.md`): pin `69b1b1d…`, digest `sha256:8b8cfda0…`. Sibling reserve-temporal compose stays [`docs/lab-compose.md`](lab-compose.md) (ctl **19215**).
+This is the guest follow-up for runtime [#146](https://github.com/guypayeur/panoramix-runtime/issues/146) / [PR #148](https://github.com/guypayeur/panoramix-runtime/pull/148) so [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) north-star compare can admit the **same** `reserve_ifrs17` job iec measures. Same-job identity now matches iec method tip [`89fd962`](https://github.com/guypayeur/iec-proto-c/commit/89fd962f5cebdd7033c887a05a382032da5560cd) ([iec-proto-c #27](https://github.com/guypayeur/iec-proto-c/pull/27) / [#28](https://github.com/guypayeur/iec-proto-c/pull/28); lockstep with runtime **main** @ [`0baa354`](https://github.com/guypayeur/panoramix-runtime/commit/0baa3544e97ebde170e42ef172e69786360c8fad) / [#161](https://github.com/guypayeur/panoramix-runtime/pull/161) GPU class; `docs/iec-local.md`): pin `89fd962…`, digest `sha256:21c32109…`. Sibling reserve-temporal compose stays [`docs/lab-compose.md`](lab-compose.md) (ctl **19215**).
 
 **Honesty:** guest does **not** run IFRS17 math. The runtime binding wraps the operator iec checkout (`POST /v1/jobs`). Fail-closed without env. Not guest→mesh ctl. Not a second control plane. Not SIEM. Pin **0.5**. Phase/fraction **omit when missing** — guest matches runtime [#149](https://github.com/guypayeur/panoramix-runtime/issues/149) / [PR #150](https://github.com/guypayeur/panoramix-runtime/pull/150) (`docs/iec-local.md`: omit Platform `unknown`/`0` defaults; map only when present). Walls (`api_e2e_ms` / `wall_elapsed_ms`) **omit when missing — never invent**. Recorded fixture **omits** measured walls. Does **not** invent SPA chunk/ETA/heartbeat chrome. Does **not** stamp `north_star_done`. Does **not** close runtime [#70](https://github.com/guypayeur/panoramix-runtime/issues/70) / [#78](https://github.com/guypayeur/panoramix-runtime/issues/78). Does **not** unlock cloud [#61](https://github.com/guypayeur/panoramix-runtime/issues/61) / [#29](https://github.com/guypayeur/panoramix-runtime/issues/29). This page does **not** grow pack_fill.
 
@@ -14,23 +14,23 @@ Guest POST (or UI catalog **reserve_ifrs17**):
 {"demo":"reserve","catalog":"reserve_ifrs17"}
 ```
 
-Alias `same-job` → `reserve_ifrs17`. Digest must match runtime `reserve_iec.SAME_JOB_DIGEST` on **main** @ `af3843b` ([#156](https://github.com/guypayeur/panoramix-runtime/pull/156) / [#157](https://github.com/guypayeur/panoramix-runtime/pull/157)):
+Alias `same-job` → `reserve_ifrs17`. Digest must match runtime `reserve_iec.SAME_JOB_DIGEST` for pin `89fd962` (canonical four-field identity; lockstep with runtime **main** @ `0baa354`, [#161](https://github.com/guypayeur/panoramix-runtime/pull/161)):
 
-`sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017`
+`sha256:21c3210960116f17ba30ec9fb19a33727c41a2616377c490419680c5cf4e182c`
 
 Pinned payload (canonical JSON, sort_keys, separators `(",", ":")`):
 
 ```json
-{"mode":"STANDARD","revision":"69b1b1d896221c3658e6b46e33cc1d0062d20dae","source_file":"reserve_ifrs17/reserve_ifrs17.adsl","workload":"reserve_ifrs17"}
+{"mode":"STANDARD","revision":"89fd962f5cebdd7033c887a05a382032da5560cd","source_file":"reserve_ifrs17/reserve_ifrs17.adsl","workload":"reserve_ifrs17"}
 ```
 
-Prior same-job `api_e2e` walls stay cited at pin `4d5d44d` (pack `iec-parity-same-job-20260912-b`). Pin `69b1b1d` **enables held UX** (GET `is_paused` / `PAUSED`; ctl `can_pause` / `can_resume`). It does **not** invent new comparable walls.
+Prior same-job `api_e2e` walls stay cited at pin `4d5d44d` (pack `iec-parity-same-job-20260912-b`). Pin `69b1b1d` **enabled held UX** (GET `is_paused` / `PAUSED`; ctl `can_pause` / `can_resume`). Pin `89fd962` is iec [#27](https://github.com/guypayeur/iec-proto-c/pull/27) / [#28](https://github.com/guypayeur/iec-proto-c/pull/28) (Platform GPU + `N_ACCOUNTS` resolution). Default same-job shape remains **40×100** (accounts × scenarios). Do **not** bake 200k as the default. It does **not** invent new comparable walls.
 
-This is **not** the thinner recorded / live / parity kernel. `class: gpu` is refused. Thinner reserve ints (`accounts`, `horizon`, …) are refused. Without a durable hook the guest **fail-closes** (`durable_admit_failed` / `same_job_stub`) — no in-guest IFRS17 stub.
+This is **not** the thinner recorded / live / parity kernel. `class: gpu` is refused on the guest POST (runtime [#161](https://github.com/guypayeur/panoramix-runtime/pull/161) GPU class lives on the binding). Thinner reserve ints (`accounts`, `horizon`, …) are refused. Without a durable hook the guest **fail-closes** (`durable_admit_failed` / `same_job_stub`) — no in-guest IFRS17 stub.
 
 ## What it starts
 
-1. `python3 -m runtime.serve --binding bindings/local-iec.example.yaml` from a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout (**main** @ `af3843b`, [#156](https://github.com/guypayeur/panoramix-runtime/pull/156) / [#157](https://github.com/guypayeur/panoramix-runtime/pull/157)). Binding `publish.ctl_port` is **19216**.
+1. `python3 -m runtime.serve --binding bindings/local-iec.example.yaml` from a [panoramix-runtime](https://github.com/guypayeur/panoramix-runtime) checkout (**main** @ `0baa354`, [#161](https://github.com/guypayeur/panoramix-runtime/pull/161); method pin lockstep `89fd962`). Binding `publish.ctl_port` is **19216**.
 2. This guest: `PLATFORM_LISTEN_HTTP=18280`, `PANORAMIX_CTL_HTTP=http://127.0.0.1:19216`, `PANORAMIX_CTL_KIND=iec-local` (port **19216** also selects iec-local when kind is unset).
 3. `POST /v0/jobs` with `{"demo":"reserve","catalog":"reserve_ifrs17"}`.
 4. Show `local.backed=runtime` and durable `GET /progress` (`source: durable`). `phase` / `fraction` only when the hook supplies them — **omit** Platform `unknown` / `0` defaults (runtime [#149](https://github.com/guypayeur/panoramix-runtime/issues/149) / [PR #150](https://github.com/guypayeur/panoramix-runtime/pull/150)). Richer hook fields surface when present (no invented SPA chunk/ETA/heartbeat chrome). Nested `iec_job_id` / `cw_id` pass through on job detail + progress when ctl `/iec-local/status|progress` supplies them — **omit when missing**. **Events are not required** (iec-local has no events verb). **pause_resume is not required** (iec pause is pause-before-start only). Mid-flight **pause / held / resume**, `pause_limit`, and FAILED **next_action / stage_name / valuation** pass through when ctl supplies them (runtime tip [`d9b9948`](https://github.com/guypayeur/panoramix-runtime/commit/d9b9948)+: `pause_limit` always; `already_canceled` on idempotent ctl cancel) — **omit when missing**. `pause_signaled` / `resume_signaled` (and related pause outcome fields) pass through when iec-local ctl returns them after pause/resume (runtime tip [`e2f41fd`](https://github.com/guypayeur/panoramix-runtime/commit/e2f41fd)+) — **omit when missing**; **never invent** `held`; do **not** enable pause without `can_pause`. Walls only when the hook supplies them (`walls.api_e2e_ms` per runtime [#145](https://github.com/guypayeur/panoramix-runtime/issues/145)) — omit when missing.
@@ -82,7 +82,7 @@ Without `PANORAMIX_CTL_HTTP` the same-job POST is **409** `durable_admit_failed`
 
 When ctl is listening but admit is slow, guest fail-closes with **`ctl_admit_timeout`** — not **`ctl_http_unreachable`** / lab-serve-down. A later progress poll may still show durable running (nested iec job created). True serve-down (origin not listening) stays **`ctl_http_unreachable`**. Does not invent UX progress. `north_star_done` false.
 
-Ctl verbs (runtime `docs/iec-local.md` @ `af3843b`):
+Ctl verbs (runtime `docs/iec-local.md` @ `0baa354`):
 
 ```text
 POST /iec-local/admit

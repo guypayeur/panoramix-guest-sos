@@ -81,15 +81,37 @@ class SameJobIdentityTests(unittest.TestCase):
         self.assertEqual(digest, SAME_JOB_PAYLOAD_DIGEST)
         self.assertEqual(
             digest,
-            "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017",
+            "sha256:21c3210960116f17ba30ec9fb19a33727c41a2616377c490419680c5cf4e182c",
         )
         self.assertEqual(
             IEC_METHOD_PIN,
-            "69b1b1d896221c3658e6b46e33cc1d0062d20dae",
+            "89fd962f5cebdd7033c887a05a382032da5560cd",
         )
         self.assertEqual(same_job_params()["revision"], IEC_METHOD_PIN)
         self.assertEqual(same_job_params()["source_file"], IEC_SOURCE_FILE)
         self.assertEqual(same_job_params()["workload"], "reserve_ifrs17")
+
+    def test_docs_needles_cite_new_pin_and_default_shape(self) -> None:
+        lab = (ROOT / "docs" / "lab-compose-iec-local.md").read_text(encoding="utf-8")
+        ux = (ROOT / "docs" / "ux-side-by-side.md").read_text(encoding="utf-8")
+        for text in (lab, ux):
+            self.assertIn("89fd962", text)
+            self.assertIn(
+                "sha256:21c3210960116f17ba30ec9fb19a33727c41a2616377c490419680c5cf4e182c",
+                text,
+            )
+            self.assertIn("40×100", text)
+        self.assertIn("Pin **0.5**", lab)
+        self.assertIn("pin 0.5", ux)
+        self.assertIn("Do **not** bake 200k", lab)
+        self.assertNotIn(
+            "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017",
+            lab,
+        )
+        self.assertNotIn(
+            "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017",
+            ux,
+        )
 
     def test_parse_same_job_and_alias(self) -> None:
         for catalog in ("reserve_ifrs17", "same-job"):
@@ -707,7 +729,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertNotIn("PANORAMIX_RESERVE_TEMPORAL_LIVE", plan.guest_env)
         self.assertIs(plan.north_star_done, False)
         self.assertIn("guest does not run IFRS17 math", HONESTY_LINES)
-        self.assertTrue(RUNTIME_IEC_PIN.startswith("af3843b"))
+        self.assertTrue(RUNTIME_IEC_PIN.startswith("0baa354"))
         blob = plan.to_dict()
         self.assertNotIn("pack_fill", blob)
         self.assertIs(blob["closes_runtime_70"], False)
@@ -783,7 +805,7 @@ class ComposePlanTests(unittest.TestCase):
         self.assertEqual(iec["catalog"], "reserve_ifrs17")
         self.assertEqual(iec["digest"], SAME_JOB_PAYLOAD_DIGEST)
         self.assertEqual(iec["revision"], IEC_METHOD_PIN)
-        self.assertEqual(iec["runtime_tip"], "af3843b")
+        self.assertEqual(iec["runtime_tip"], "0baa354")
         self.assertEqual(iec["ctl_port"], DEFAULT_IEC_CTL_PORT)
         self.assertIs(iec["ifrs17_guest"], False)
         self.assertIs(iec["north_star_done"], False)

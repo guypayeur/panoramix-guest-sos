@@ -98,13 +98,13 @@ class HttpAppTests(unittest.TestCase):
         self.assertEqual(iec["catalog"], "reserve_ifrs17")
         self.assertEqual(
             iec["digest"],
-            "sha256:8b8cfda0c4745c930586a0fe137213b6f431e1c45da66c2187f25a8d5f978017",
+            "sha256:21c3210960116f17ba30ec9fb19a33727c41a2616377c490419680c5cf4e182c",
         )
         self.assertEqual(
             iec["revision"],
-            "69b1b1d896221c3658e6b46e33cc1d0062d20dae",
+            "89fd962f5cebdd7033c887a05a382032da5560cd",
         )
-        self.assertEqual(iec["runtime_tip"], "af3843b")
+        self.assertEqual(iec["runtime_tip"], "0baa354")
         self.assertIs(iec["ifrs17_guest"], False)
         self.assertIs(iec["north_star_done"], False)
         self.assertIn("does not run IFRS17", iec["note"])

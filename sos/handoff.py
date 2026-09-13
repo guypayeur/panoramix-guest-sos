@@ -311,8 +311,8 @@ def parse_same_job_demo(body: dict[str, Any]) -> ParsedSubmit:
     """iec-local same-job identity. Guest does not run IFRS17 math.
 
     Payload bytes match ``runtime.reserve_iec.same_job_payload`` /
-    ``SAME_JOB_DIGEST`` on panoramix-runtime **main** @ ``af3843b``
-    (docs/iec-local.md; runtime #156 / #157). Class is cpu only. Thinner reserve ints
+    ``SAME_JOB_DIGEST`` for iec method pin ``89fd962`` (lockstep with
+    runtime main @ ``0baa354``, #161; docs/iec-local.md). Class is cpu only. Thinner reserve ints
     (accounts/horizon/…) are refused. Optional label/stages/seconds
     are local UX only and are **not** in the digest. Fail-closed on
     the stub — runtime binding runs the iec checkout.
