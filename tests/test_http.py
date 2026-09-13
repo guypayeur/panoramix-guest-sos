@@ -171,6 +171,8 @@ class HttpAppTests(unittest.TestCase):
         self.assertIs(body["jobs"]["pause_resume"], True)
         self.assertIn("durable path only", body["jobs"]["pause_resume_honesty"])
         self.assertIn("stub_only", body["jobs"]["pause_resume_honesty"])
+        self.assertIn("pause_signaled", body["jobs"]["pause_resume_honesty"])
+        self.assertIn("e2f41fd", body["jobs"]["pause_resume_honesty"])
         self.assertIn(
             "python3 -m runtime.apply reserve-temporal pause|resume",
             body["jobs"]["pause_resume_honesty"],
@@ -193,6 +195,8 @@ class HttpAppTests(unittest.TestCase):
         self.assertIn("cw_id", body["jobs"]["progress_honesty"])
         self.assertIn("pause_limit", body["jobs"]["progress_honesty"])
         self.assertIn("d9b9948", body["jobs"]["progress_honesty"])
+        self.assertIn("pause_signaled", body["jobs"]["progress_honesty"])
+        self.assertIn("e2f41fd", body["jobs"]["progress_honesty"])
         self.assertIn("9ba95bbb", body["jobs"]["progress_honesty"])
         self.assertIn("5dc191cb", body["jobs"]["progress_honesty"])
         self.assertIn("9b6646e8", body["jobs"]["progress_honesty"])

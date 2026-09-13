@@ -67,9 +67,10 @@ DEFAULT_IEC_CTL_PORT = 19216
 DEFAULT_IEC_BINDING_REL = "bindings/local-iec.example.yaml"
 # panoramix-runtime main tip for #146 / PR #148 (docs/iec-local.md).
 RUNTIME_IEC_PIN = "d480dc826e2f8e98502224c3230ab561f48c8114"
-# iec-local UX honesty (pause_limit / already_canceled). Held + FAILED
-# next_action stay omit-when-missing until ctl supplies them.
+# iec-local UX honesty (pause_limit / already_canceled / pause_signaled).
+# Held + FAILED next_action stay omit-when-missing until ctl supplies them.
 RUNTIME_IEC_UX_TIP = "d9b9948"
+RUNTIME_IEC_SIGNAL_TIP = "e2f41fd"
 SAME_JOB_BODY: dict[str, Any] = {
     "demo": "reserve",
     "catalog": RESERVE_CATALOG_SAME_JOB,
@@ -92,6 +93,7 @@ HONESTY_LINES = (
     "iec-local has no events verb",
     "pause is pause-before-start only (iec single-activity limit)",
     "pause/held/failure honesty fields omit when missing (runtime d9b9948+)",
+    "pause_signaled / resume_signaled pass through when ctl returns them (runtime e2f41fd+; never invent held)",
     "recorded fixture needs no iec checkout",
     "opt-in --live wraps operator Platform API",
     "pin 0.5",

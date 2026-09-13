@@ -405,17 +405,23 @@ class LabReserveTemporalHook:
             return None
         return _lifecycle_status(payload)
 
+    def _remember_payload(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Keep last ctl JSON so pause_signaled can surface on job/progress."""
+        if isinstance(payload, dict) and payload:
+            self.last_status_payload = payload
+        return payload
+
     def pause(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)
         if work_id is None:
             return False
-        return self._invoke("pause", work_id=work_id) is not None
+        return self._remember_payload(self._invoke("pause", work_id=work_id)) is not None
 
     def resume(self, job_id: str, runtime_ref: dict[str, Any] | None) -> bool:
         work_id = _ctl_id(job_id, runtime_ref)
         if work_id is None:
             return False
-        return self._invoke("resume", work_id=work_id) is not None
+        return self._remember_payload(self._invoke("resume", work_id=work_id)) is not None
 
     def progress(
         self, job_id: str, runtime_ref: dict[str, Any] | None

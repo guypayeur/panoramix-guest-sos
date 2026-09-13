@@ -82,6 +82,7 @@ from sos.handoff_vocab import (
     HANDOFF_DOCS_NOTE,
     HELD_OR_PAUSED,
     HONESTY_PASSTHROUGH_KEYS,
+    HONESTY_SIGNAL_KEYS,
     IEC_PAUSE_LIMIT_NOTE,
     LAB_COMPOSE_DOCS,
     LAB_COMPOSE_IEC_DOCS,
@@ -547,6 +548,25 @@ def _attach_lifecycle_overlay(payload: dict[str, Any], overlay: dict[str, Any]) 
     for key, value in overlay.items():
         if key not in payload and key in HONESTY_PASSTHROUGH_KEYS:
             payload[key] = value
+
+
+def _signal_outcome_only(
+    action: str, job: Job, overlay: dict[str, Any]
+) -> bool:
+    """True when ctl reported a signal without held/paused.
+
+    Do not invent held or flip same-job status to paused from
+    pause_signaled alone. Buttons stay disabled without can_pause.
+    """
+    if action == "pause":
+        return (
+            overlay.get("pause_signaled") is True
+            and overlay.get("held") is not True
+            and job.status not in HELD_OR_PAUSED
+        )
+    if action == "resume":
+        return overlay.get("resume_signaled") is True
+    return False
 
 
 def _pause_resume_honest(
@@ -1598,9 +1618,18 @@ class JobStore:
                     if ref.get(key) != overlay[key]:
                         ref[key] = overlay[key]
                         changed = True
+                elif key in HONESTY_SIGNAL_KEYS:
+                    # Keep last pause/resume outcome until ctl contradicts.
+                    continue
                 elif key in ref:
                     del ref[key]
                     changed = True
+            if overlay.get("pause_signaled") is True and ref.get("resume_signaled"):
+                del ref["resume_signaled"]
+                changed = True
+            if overlay.get("resume_signaled") is True and ref.get("pause_signaled"):
+                del ref["pause_signaled"]
+                changed = True
             if not changed:
                 return
             if not ref:
@@ -1739,6 +1768,10 @@ class JobStore:
             runtime_ref = job.runtime_ref
             same_job = _same_job(job)
         signaled = self._try_runtime_signal(action, job_id, runtime_ref)
+        signal_payload = _hook_status_payload(self.runtime_hook)
+        if signal_payload:
+            self._store_lifecycle_overlay(job_id, signal_payload)
+        self._refresh_runtime_status(job_id)
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -1747,11 +1780,7 @@ class JobStore:
                 raise StubOnly(job_id, action)
             if job.status in TERMINAL:
                 raise AlreadyTerminal(job_id, job.status)
-            overlay = _lifecycle_overlay(job)
-            if action == "pause":
-                self._pause_allowed(job, overlay)
-            else:
-                self._resume_allowed(job, overlay)
+            overlay = _lifecycle_overlay(job, signal_payload)
             if same_job and not signaled:
                 note = str(overlay.get("pause_limit") or IEC_PAUSE_LIMIT_NOTE)
                 raise IllegalTransition(
@@ -1764,6 +1793,35 @@ class JobStore:
             if not signaled and job.runtime_ref is None:
                 raise StubOnly(job_id, action)
             now = self._clock()
+            if _signal_outcome_only(action, job, overlay):
+                key = (
+                    "pause_signaled" if action == "pause" else "resume_signaled"
+                )
+                detail = (
+                    f"{action} signaled via runtime hook "
+                    f"(status stays {job.status}; not invented held)"
+                )
+                job.message = detail
+                job.updated_at = now
+                self._append_event_locked(job, key, detail)
+                self._persist_locked(job)
+                return self._snapshot(job)
+            if action == "pause" and job.status in HELD_OR_PAUSED:
+                detail = f"{job.status} via runtime hook"
+                job.message = detail
+                job.updated_at = now
+                self._persist_locked(job)
+                return self._snapshot(job)
+            if action == "resume" and job.status == STATUS_RUNNING:
+                detail = "running via runtime hook"
+                job.message = detail
+                job.updated_at = now
+                self._persist_locked(job)
+                return self._snapshot(job)
+            if action == "pause":
+                self._pause_allowed(job, overlay)
+            else:
+                self._resume_allowed(job, overlay)
             job.status = next_status
             job.updated_at = now
             detail = f"{next_status} via runtime hook"
